@@ -10,7 +10,7 @@
 록 박스를 설치하고 설치하셔야 전원종료 기능을 모두 사용하실 수 있습니다 
 1. 록박스 설치
 2. Reboot to Stock Firmware
-3. adb tool 새로운 런처설치
+3. adb tool로 새로운 런처설치
   adb install app-release.apk
 4. 기본 런처 막기
   adb shell pm disable com.innioasis.y1
@@ -20,3 +20,7 @@ adb tool
 https://dl.google.com/android/repository/platform-tools-latest-windows.zip?hl=ko
 
 
+주의 사항
+1. 블루투스 헤드폰이 없어서 아직 테스트를 못해봤습니다
+2. 일부 한국어로 되어있는 것이 있는데 나중에 모두 영어로 바꿀 예정입니다
+3. 스크린이 꺼진 상태에서 휠이나 버튼은 작동하지 않습니다
