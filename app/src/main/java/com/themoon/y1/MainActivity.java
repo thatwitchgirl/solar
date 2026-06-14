@@ -55,7 +55,24 @@ import android.media.session.MediaSession;
 import android.media.session.PlaybackState;
 
 public class MainActivity extends Activity {
+    // 💡 [추가] 퀵 스크롤 (알파벳 인덱스) 관련 변수들
+    private TextView tvFastScrollLetter;
+    private Handler fastScrollHandler = new Handler();
+    private Runnable hideFastScrollTask = new Runnable() {
+        @Override
+        public void run() {
+            if (tvFastScrollLetter != null) {
+                tvFastScrollLetter.setVisibility(View.GONE);
+            }
+        }
+    };
     public static MainActivity instance;
+    private long lastTrackChangeTime = 0; // 🚀 기기의 중복 키 신호를 막아줄 방어막 변수
+    // 💡 [추가] 오디오 스펙트럼 관련 변수들
+    private android.media.audiofx.Visualizer audioVisualizer;
+    private AudioVisualizerView visualizerView;
+    private boolean isVisualizerShowing = false;
+    private int currentAlbumColor = 0xFFFFFFFF; // 스펙트럼 바의 색상
     private static final int STATE_MENU = 1;
     private static final int STATE_BROWSER = 2;
     private static final int STATE_PLAYER = 3;
@@ -365,6 +382,21 @@ public class MainActivity extends Activity {
         getWindow().setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN, WindowManager.LayoutParams.FLAG_FULLSCREEN);
         setContentView(R.layout.activity_main);
 
+        // 🚀 [여기에 새로 추가!] 퀵 스크롤 알파벳을 띄워줄 플로팅 UI 생성
+        android.view.ViewGroup root = findViewById(android.R.id.content);
+        tvFastScrollLetter = new TextView(this);
+        tvFastScrollLetter.setTextSize(50); // 글자 크기를 아주 큼직하게!
+        tvFastScrollLetter.setGravity(android.view.Gravity.CENTER);
+        tvFastScrollLetter.setVisibility(View.GONE);
+
+        android.widget.FrameLayout.LayoutParams flp = new android.widget.FrameLayout.LayoutParams(
+                (int)(80 * getResources().getDisplayMetrics().density), // 가로 80dp
+                (int)(80 * getResources().getDisplayMetrics().density)  // 세로 80dp
+        );
+        flp.gravity = android.view.Gravity.CENTER_VERTICAL | android.view.Gravity.RIGHT; // 오른쪽 가운데 정렬
+        flp.rightMargin = (int)(30 * getResources().getDisplayMetrics().density); // 오른쪽에서 30dp 띄움
+        root.addView(tvFastScrollLetter, flp);
+
         audioManager = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
         // 🚀 [시스템 공식 등록] 화면이 꺼져도 버튼 신호를 받을 수 있도록 수신기를 장착합니다!
         ComponentName componentName = new ComponentName(getPackageName(), MediaBtnReceiver.class.getName());
@@ -632,6 +664,21 @@ public class MainActivity extends Activity {
         tvPlayerTimeCurrent = findViewById(R.id.tv_player_time_current);
         tvPlayerTimeTotal = findViewById(R.id.tv_player_time_total);
         ivAlbumArt = findViewById(R.id.iv_album_art);
+
+        // 🚀 [수정] 좁은 정사각형 액자(FrameLayout)가 아니라, 화면 전체 넓이를 쓰는 부모(LinearLayout)에게 붙입니다!
+        android.widget.FrameLayout albumContainer = (android.widget.FrameLayout) ivAlbumArt.getParent();
+        android.widget.LinearLayout playerInnerLayout = (android.widget.LinearLayout) albumContainer.getParent();
+
+        visualizerView = new AudioVisualizerView(this);
+        visualizerView.setVisibility(View.GONE);
+
+        int height190 = (int)(190 * getResources().getDisplayMetrics().density);
+        android.widget.LinearLayout.LayoutParams lp = new android.widget.LinearLayout.LayoutParams(
+                android.widget.LinearLayout.LayoutParams.MATCH_PARENT, height190);
+        lp.setMargins(0, 0, 0, (int)(8 * getResources().getDisplayMetrics().density));
+
+        playerInnerLayout.addView(visualizerView, 0, lp); // 곡 제목 바로 위에 끼워 넣습니다.
+
         ivPlayerBgBlur = findViewById(R.id.iv_player_bg_blur);
         ivPauseOverlay = findViewById(R.id.iv_pause_overlay);
         playerProgress = findViewById(R.id.player_progress);
@@ -802,6 +849,37 @@ public class MainActivity extends Activity {
             btnNowPlaying.requestFocus(); // 평소 앱을 켤 때는 원래대로 메인 메뉴 포커스
         }
     }
+    // 💡 [추가] 문자열에서 첫 글자를 뽑아내어 화면에 띄워주는 함수
+    private void showFastScrollLetter(String rawText) {
+        // 브라우저 모드(리스트 화면)가 아니면 띄우지 않습니다.
+        if (tvFastScrollLetter == null || currentScreenState != STATE_BROWSER) return;
+
+        // 버튼 텍스트 앞에 붙어있는 꾸밈용 이모지들을 싹 지우고 순수 제목만 남깁니다.
+        String clean = rawText.replace("📁 ", "").replace("👤 ", "")
+                .replace("💿 ", "").replace("🎵 ", "")
+                .replace("📦 [INSTALL] ", "").trim();
+
+        if (clean.isEmpty()) return;
+
+        // 첫 글자 1개만 추출 (무조건 대문자로 변환)
+        String firstChar = clean.substring(0, 1).toUpperCase();
+        tvFastScrollLetter.setText(firstChar);
+
+        // 🚀 현재 적용된 테마의 강조 색상으로 박스를 예쁘게 색칠합니다!
+        tvFastScrollLetter.setTextColor(ThemeManager.getTextColorPrimary());
+        tvFastScrollLetter.setTypeface(ThemeManager.getCustomFont(), android.graphics.Typeface.BOLD);
+        android.graphics.drawable.GradientDrawable letterBg = new android.graphics.drawable.GradientDrawable();
+        letterBg.setColor(ThemeManager.getListButtonFocusedBg() | 0xDD000000); // 살짝 반투명하게 덮기
+        letterBg.setCornerRadius(15 * getResources().getDisplayMetrics().density); // 둥근 모서리
+        tvFastScrollLetter.setBackground(letterBg);
+
+        tvFastScrollLetter.setVisibility(View.VISIBLE);
+
+        // 0.8초 동안 휠 조작이 없으면 글자가 자동으로 스르륵 사라지도록 타이머 리셋
+        fastScrollHandler.removeCallbacks(hideFastScrollTask);
+        fastScrollHandler.postDelayed(hideFastScrollTask, 800);
+    }
+
     // 💡 [추가] XML의 고정값을 무시하고, 메인 화면 전체를 테마에 맞게 강제로 칠해주는 함수
     private void applyThemeToMainMenu() {
         try {
@@ -1069,7 +1147,6 @@ public class MainActivity extends Activity {
                 if (hasFocus) {
                     btn.setBackground(createButtonBackground(ThemeManager.getListButtonFocusedBg())); // 🚀 둥글기 적용
                     btn.setTextColor(ThemeManager.getListButtonFocusedTextColor());
-
                     // 🚀 [수정] 재생 상태를 확인하여 초기 아이콘(원형)과 빈 앨범 아이콘(사각형)을 완벽하게 구분합니다!
                     if (btn.getId() == R.id.btn_now_playing) {
 
@@ -1262,7 +1339,11 @@ public class MainActivity extends Activity {
         }
     }
     private void handleCenterShortClick() {
-        if (currentScreenState == STATE_WIFI_KEYBOARD) {
+        if (currentScreenState == STATE_PLAYER) {
+            toggleVisualizer();
+            clickFeedback();
+        }
+        else if (currentScreenState == STATE_WIFI_KEYBOARD) {
             handleKeyboardInput();
         } else if (currentScreenState != STATE_BRIGHTNESS && currentScreenState != STATE_STORAGE
                 && currentScreenState != STATE_PLAYER) {
@@ -1741,6 +1822,8 @@ public class MainActivity extends Activity {
                     // 🚀 포커스 상태 둥근 배경 적용! (단색 덮어쓰기 제거)
                     btn.setBackground(createButtonBackground(ThemeManager.getListButtonFocusedBg()));
                     btn.setTextColor(ThemeManager.getListButtonFocusedTextColor());
+                    showFastScrollLetter(((Button) v).getText().toString());
+
                 } else {
                     // 🚀 일반 상태 둥근 배경 적용! (단색 덮어쓰기 제거)
                     btn.setBackground(createButtonBackground(ThemeManager.getListButtonNormalBg()));
@@ -2422,7 +2505,18 @@ public class MainActivity extends Activity {
             else if (!isPickingBackground && isApkFile(f))
                 apkFiles.add(f);
         }
-
+// 🚀 [여기에 10줄 새로 추가!!] 수집된 파일과 폴더들을 이름순(알파벳 A-Z 대소문자 구분 없이)으로 정렬합니다!
+        java.util.Comparator<File> fileSorter = new java.util.Comparator<File>() {
+            @Override
+            public int compare(File f1, File f2) {
+                return f1.getName().compareToIgnoreCase(f2.getName());
+            }
+        };
+        java.util.Collections.sort(folders, fileSorter);
+        java.util.Collections.sort(audioFiles, fileSorter);
+        java.util.Collections.sort(apkFiles, fileSorter);
+        java.util.Collections.sort(imageFiles, fileSorter);
+        // 🚀 (추가 끝)
         for (final File folder : folders) {
             Button b = createListButton("📁 " + folder.getName());
             b.setOnClickListener(new View.OnClickListener() {
@@ -2497,7 +2591,6 @@ public class MainActivity extends Activity {
         }
     }
 
-    // 💡 1. 가상의 리스트(아티스트, 앨범 등)를 통째로 플레이어에 밀어 넣는 핵심 함수
     private void playTrackList(List<File> playlist, int startIndex) {
         originalPlaylist.clear();
         originalPlaylist.addAll(playlist);
@@ -2521,12 +2614,9 @@ public class MainActivity extends Activity {
         prepareMusicTrack(currentIndex);
         try {
             if (mediaPlayer != null) {
-                try {
-                    audioManager.requestAudioFocus(null, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN);
-                } catch (Exception e) {
-                }
                 mediaPlayer.start();
                 isPausedByHand = false;
+
             }
         } catch (Exception e) {
         }
@@ -2619,7 +2709,13 @@ public class MainActivity extends Activity {
                     optsCenter.inSampleSize = 2;
                     android.graphics.Bitmap bmpCenter = android.graphics.BitmapFactory.decodeByteArray(lastAlbumArtBytes, 0, lastAlbumArtBytes.length, optsCenter);
                     ivAlbumArt.setImageBitmap(bmpCenter);
-
+                    try {
+                        int centerX = bmpCenter.getWidth() / 2;
+                        int centerY = (int)(bmpCenter.getHeight() * 0.8);
+                        currentAlbumColor = bmpCenter.getPixel(centerX, centerY) | 0xFF000000;
+                    } catch (Exception e) {
+                        currentAlbumColor = ThemeManager.getListButtonFocusedBg() | 0xFF000000;
+                    }
                     android.graphics.BitmapFactory.Options optsBg = new android.graphics.BitmapFactory.Options();
                     optsBg.inSampleSize = 4;
                     android.graphics.Bitmap sourceBg = android.graphics.BitmapFactory.decodeByteArray(lastAlbumArtBytes, 0, lastAlbumArtBytes.length, optsBg);
@@ -2635,6 +2731,7 @@ public class MainActivity extends Activity {
             } else {
 
                 ivAlbumArt.setImageResource(R.drawable.default_album);
+                currentAlbumColor = ThemeManager.getListButtonFocusedBg() | 0xFF000000;
                 ivPlayerBgBlur.setImageResource(0); // 뒷배경 블러 비우기
                 updateMainMenuBackground();
                 refreshNowPlayingPreview();
@@ -2663,17 +2760,40 @@ public class MainActivity extends Activity {
         }
 
         try {
+            // 🚀 [가장 우아하고 근본적인 해결책]
+            // 1. 플레이어를 리셋하기 전에 현재 사용 중인 '오디오 회선 번호(Session ID)'를 기억해 둡니다.
+            int previousSessionId = 0;
+            if (mediaPlayer != null) {
+                try { previousSessionId = mediaPlayer.getAudioSessionId(); } catch (Exception e) {}
+            }
+
+            // 🚀 [추가] 시각화 엔진(Visualizer)은 안드로이드 내부 버그로 인해 살려둔 채로 3곡 이상 넘기면
+            // 메모리가 터져서 시스템을 다운시켜버립니다(3곡 프리징의 원인!).
+            // 따라서 곡이 바뀔 때는 반드시 '완전히 파괴(release)' 해 주어야 합니다.
+            if (audioVisualizer != null) {
+                try {
+                    audioVisualizer.setEnabled(false);
+                    audioVisualizer.release(); // 🚀 숨통을 완전히 끊어버립니다!
+                    audioVisualizer = null;
+                } catch (Exception e) {}
+            }
+
             if (mediaPlayer == null) {
                 mediaPlayer = new MediaPlayer();
             } else {
                 mediaPlayer.reset();
             }
+
+            // 2. 리셋된 플레이어에 방금 기억해둔 회선 번호를 다시 연결해 줍니다!
+            // 이렇게 하면 이퀄라이저가 유지한 회선에 다시 탑승하게 되어, 볼륨이 리셋되는 버그가 원천 차단됩니다.
+            if (previousSessionId != 0) {
+                try { mediaPlayer.setAudioSessionId(previousSessionId); } catch (Exception e) {}
+            }
+
             // 🚀 [버그 수정] 권한 누락으로 인해 음악 재생이 통째로 취소되는 것을 막는 방어막!
             try {
                 mediaPlayer.setWakeMode(getApplicationContext(), PowerManager.PARTIAL_WAKE_LOCK);
-            } catch (Exception e) {
-                // 권한이 없어서 에러가 나더라도 무시하고 다음 단계(음악 준비)로 무사히 넘어가게 합니다.
-            }
+            } catch (Exception e) { }
             mediaPlayer.setAudioStreamType(AudioManager.STREAM_MUSIC);
 
             mediaPlayer.setOnErrorListener(new MediaPlayer.OnErrorListener() {
@@ -2702,15 +2822,13 @@ public class MainActivity extends Activity {
 
             mediaPlayer.setDataSource(currentFileInputStream.getFD());
             mediaPlayer.prepare();
-
-            // 💡 [이퀄라이저(EQ) 연결] 현재 재생되는 트랙에 EQ를 적용시킵니다.
+            setupVisualizer();
+            // 🚀 [근본적 해결책 1] 이퀄라이저를 매번 부수지 않고 한 번 만든 것을 재사용합니다! (DAC 리셋 방지)
             try {
-                if (equalizer != null) {
-                    equalizer.release();
-                    equalizer = null;
+                if (equalizer == null) {
+                    equalizer = new Equalizer(0, mediaPlayer.getAudioSessionId());
+                    equalizer.setEnabled(true);
                 }
-                equalizer = new Equalizer(0, mediaPlayer.getAudioSessionId());
-                equalizer.setEnabled(true);
                 if (currentEqPresetIndex < equalizer.getNumberOfPresets()) {
                     equalizer.usePreset((short) currentEqPresetIndex);
                 }
@@ -2750,7 +2868,59 @@ public class MainActivity extends Activity {
             tvPlayerTitle.setText("Load Failed: " + track.getName());
         }
     }
+    // 💡 [수정] 액자 전체를 숨기도록 개조
+    private void toggleVisualizer() {
+        if (android.os.Build.VERSION.SDK_INT >= 23) {
+            if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(new String[]{android.Manifest.permission.RECORD_AUDIO}, 101);
+                Toast.makeText(this, "Please grant Audio Permission first!", Toast.LENGTH_SHORT).show();
+                return;
+            }
+        }
 
+        isVisualizerShowing = !isVisualizerShowing;
+        View albumContainer = (View) ivAlbumArt.getParent(); // 🚀 앨범 아트의 부모(액자)를 통째로 숨깁니다!
+
+        if (isVisualizerShowing) {
+            albumContainer.setVisibility(View.GONE);
+            visualizerView.setVisibility(View.VISIBLE);
+            visualizerView.invalidate(); // 애니메이션 킥스타트
+            if (audioVisualizer != null) audioVisualizer.setEnabled(true);
+        } else {
+            visualizerView.setVisibility(View.GONE);
+            albumContainer.setVisibility(View.VISIBLE);
+            if (audioVisualizer != null) audioVisualizer.setEnabled(false);
+        }
+    }
+    // 💡 [수정] 오디오 엔진에 빨대를 꽂아 주파수 데이터를 빼오는 함수
+    private void setupVisualizer() {
+        try {
+            // 🚀 [완벽 해결] 매번 새롭게 엔진을 만들어서 장착합니다! (메모리 누수 원천 차단)
+            if (audioVisualizer != null) {
+                audioVisualizer.setEnabled(false);
+                audioVisualizer.release();
+                audioVisualizer = null;
+            }
+
+            audioVisualizer = new android.media.audiofx.Visualizer(mediaPlayer.getAudioSessionId());
+            audioVisualizer.setCaptureSize(android.media.audiofx.Visualizer.getCaptureSizeRange()[1]);
+            audioVisualizer.setDataCaptureListener(new android.media.audiofx.Visualizer.OnDataCaptureListener() {
+                @Override
+                public void onWaveFormDataCapture(android.media.audiofx.Visualizer visualizer, byte[] waveform, int samplingRate) {}
+
+                @Override
+                public void onFftDataCapture(android.media.audiofx.Visualizer visualizer, byte[] fft, int samplingRate) {
+                    if (isVisualizerShowing && visualizerView != null && visualizerView.getVisibility() == View.VISIBLE) {
+                        visualizerView.updateVisualizer(fft, currentAlbumColor);
+                    }
+                }
+            }, android.media.audiofx.Visualizer.getMaxCaptureRate() / 2, false, true);
+
+            if (isVisualizerShowing) {
+                audioVisualizer.setEnabled(true);
+            }
+        } catch (Exception e) {}
+    }
     private String getRepeatModeText(int mode) {
         switch (mode) {
             case 1:
@@ -2847,30 +3017,26 @@ public class MainActivity extends Activity {
                 mediaPlayer.pause();
                 isPausedByHand = true;
             } else {
-                try {
-                    audioManager.requestAudioFocus(null, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN);
-                } catch (Exception e) {
-                }
                 mediaPlayer.start();
                 isPausedByHand = false;
+
             }
             updatePlayerUI();
         } catch (Throwable e) {
         }
     }
-
     private void nextTrack() {
+        lastTrackChangeTime = System.currentTimeMillis();
         if (currentPlaylist.isEmpty())
             return;
         currentIndex = (currentIndex + 1) % currentPlaylist.size();
         prepareMusicTrack(currentIndex);
         if (!isPausedByHand) {
             try {
-                try {
-                    audioManager.requestAudioFocus(null, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN);
-                } catch (Exception e) {
-                }
                 mediaPlayer.start();
+
+               ;
+
                 updatePlayerUI();
             } catch (Exception e) {
             }
@@ -2880,17 +3046,16 @@ public class MainActivity extends Activity {
     }
 
     private void prevTrack() {
+        lastTrackChangeTime = System.currentTimeMillis();
         if (currentPlaylist.isEmpty())
             return;
         currentIndex = (currentIndex - 1 + currentPlaylist.size()) % currentPlaylist.size();
         prepareMusicTrack(currentIndex);
         if (!isPausedByHand) {
             try {
-                try {
-                    audioManager.requestAudioFocus(null, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN);
-                } catch (Exception e) {
-                }
                 mediaPlayer.start();
+
+
                 updatePlayerUI();
             } catch (Exception e) {
             }
@@ -2947,13 +3112,18 @@ public class MainActivity extends Activity {
 
             if (isScreenOffControlEnabled && currentScreenState == STATE_PLAYER) {
                 if (keyCode == 21) {
-                    adjustVolume(false);
-                    clickFeedback();
+                    // 🚀 방어막: 곡 넘김 직후 0.3초(300ms) 안에는 볼륨 조절을 차단합니다!
+                    if (System.currentTimeMillis() - lastTrackChangeTime > 300) {
+                        adjustVolume(false);
+                        clickFeedback();
+                    }
                     return true;
                 }
                 if (keyCode == 22) {
-                    adjustVolume(true);
-                    clickFeedback();
+                    if (System.currentTimeMillis() - lastTrackChangeTime > 300) {
+                        adjustVolume(true);
+                        clickFeedback();
+                    }
                     return true;
                 }
                 if (keyCode == KeyEvent.KEYCODE_MEDIA_PREVIOUS || keyCode == 88) {
@@ -3575,6 +3745,15 @@ public class MainActivity extends Activity {
             android.graphics.Bitmap bmpCenter = android.graphics.BitmapFactory.decodeFile(imagePath, optsCenter);
             ivAlbumArt.setImageBitmap(bmpCenter);
 
+            // 🚀 [완벽 수정] 앨범 아트의 하단 중앙 색상을 스포이드로 정확히 뽑아냅니다!
+            try {
+                int centerX = bmpCenter.getWidth() / 2;
+                int centerY = (int)(bmpCenter.getHeight() * 0.8); // 정중앙보다 약간 아래의 포인트 색상
+                currentAlbumColor = bmpCenter.getPixel(centerX, centerY) | 0xFF000000;
+            } catch (Exception e) {
+                currentAlbumColor = ThemeManager.getListButtonFocusedBg() | 0xFF000000;
+            }
+
             // 뒷배경 블러 처리
             android.graphics.BitmapFactory.Options optsBg = new android.graphics.BitmapFactory.Options();
             optsBg.inSampleSize = 4;
@@ -3797,6 +3976,62 @@ public class MainActivity extends Activity {
                 if (current != null) style = current.getStyle();
 
                 ((android.widget.TextView) child).setTypeface(font, style);
+            }
+        }
+    }
+    // 💡 [완벽 수정] 60fps 부드러운 애니메이션과 높이 제한이 적용된 와이드 스펙트럼 뷰!
+    public static class AudioVisualizerView extends View {
+        private byte[] fftData;
+        private float[] currentHeights; // 🚀 부드러운 움직임을 위한 이전 높이 기억 장치
+        private android.graphics.Paint paint;
+        private int barCount = 40; // 🚀 막대기 개수를 늘려서 옆으로 쫙 퍼지게!
+
+        public AudioVisualizerView(Context context) {
+            super(context);
+            paint = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+            paint.setStyle(android.graphics.Paint.Style.FILL);
+            paint.setStrokeCap(android.graphics.Paint.Cap.ROUND);
+            currentHeights = new float[barCount];
+        }
+
+        public void updateVisualizer(byte[] fft, int color) {
+            this.fftData = fft;
+            paint.setColor(color);
+            // invalidate() 대신 onDraw 내부에서 무한 루프를 돌려 60fps를 방어합니다!
+        }
+
+        @Override
+        protected void onDraw(android.graphics.Canvas canvas) {
+            super.onDraw(canvas);
+
+            int width = getWidth();
+            int height = getHeight();
+            float barWidth = width / (float) barCount;
+            paint.setStrokeWidth(barWidth * 0.4f); // 🚀 막대기 두께를 얇고 세련되게 (40%)
+
+            if (fftData != null) {
+                for (int i = 0; i < barCount && (i * 2 + 2) < fftData.length; i++) {
+                    byte rfk = fftData[i * 2 + 2];
+                    byte ifk = fftData[i * 2 + 3];
+                    float magnitude = (float) Math.hypot(rfk, ifk);
+
+                    // 🚀 1. 높이 제한: 아무리 소리가 커도 화면 높이의 85%를 넘지 못하게 캡을 씌웁니다.
+                    float targetHeight = Math.min(height * 0.85f, (magnitude * height) / 100f);
+
+                    // 🚀 2. 부드러운 보간: 목표 지점까지 한 번에 점프하지 않고 15%씩 스무스하게 따라갑니다.
+                    currentHeights[i] += (targetHeight - currentHeights[i]) * 0.15f;
+                }
+            }
+
+            // 그려내기
+            for (int i = 0; i < barCount; i++) {
+                float x = i * barWidth + (barWidth / 2f);
+                canvas.drawLine(x, height, x, height - currentHeights[i], paint);
+            }
+
+            // 🚀 3. 화면에 보일 때는 초당 60번(16ms) 강제 새로고침하여 버벅임을 없앱니다.
+            if (getVisibility() == View.VISIBLE) {
+                postInvalidateDelayed(16);
             }
         }
     }
