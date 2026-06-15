@@ -68,3 +68,61 @@ Platform Tools for Windows (Latest)
 ---
 ## ⚠️ Caveats / Notes
 1. Regarding Bluetooth Headphones: Due to the lack of a Bluetooth test device in the developer's environment, this specific feature has not been fully tested yet. Please keep this in mind during use.
+
+
+
+---
+# How to Create a Custom Theme for Y1 Launcher
+
+Creating a custom theme is the ultimate way to make this DAP (Digital Audio Player) truly yours! The launcher dynamically loads theme resources (colors, icons, and fonts) directly from the device's internal storage.
+
+## 🛠️ Step 1: Create the Theme Folder
+1. Connect your device to a PC or open your file manager app.
+2. Navigate to the root theme directory: `/storage/sdcard0/Y1_Themes/`
+3. Create a new folder inside it and give it a name without spaces (e.g., `/storage/sdcard0/Y1_Themes/Cyberpunk_Dark/`).
+
+## 🛠️ Step 2: Prepare Custom Icons & Fonts (Optional)
+Drop your custom assets directly into your new theme folder.
+
+* **Custom Icons:** Must be `.png` files with a transparent background. Name them exactly as follows:
+  * `icon_now_playing.png` (Now Playing menu)
+  * `icon_music.png` (All Songs / Library menu)
+  * `icon_bluetooth.png` (Bluetooth setup)
+  * `icon_setting.png` (Settings menu)
+  * `icon_radio.png` (FM Radio)
+  * `icon_server.png` (Web Server menu)
+  * `icon_default_album.png` (Fallback image for missing album art)
+* **Custom Font:** Drop a `.ttf` or `.otf` font file into the folder (e.g., `myfont.ttf`).
+
+## 🛠️ Step 3: Create the `config.json` File
+This is the core of your theme. Create a text file named exactly `config.json` inside your theme folder and paste the following template:
+
+
+```json
+{
+  "name": "My Awesome Theme",
+  "font": "myfont.ttf",
+  "textPrimary": "#FFFFFF",
+  "textSecondary": "#88AADD",
+  "bgOverlay": "#DD0F172A",
+  "statusBarBg": "#99002255",
+  "btnNormal": "#221E40AF",
+  "btnFocused": "#DD3B82F6",
+  "btnFocusedText": "#000000",
+  "button_radius": 30
+}
+```
+
+## 🛠️ Step 4: Understanding the Configuration Values
+* `name`: The display name of your theme in the Settings menu.
+* `font`: The exact filename of the custom font (delete this line to use the system default font).
+* `textPrimary`: Color for main titles, active text, and the clock.
+* `textSecondary`: Color for artist names and inactive text.
+* `bgOverlay`: Background color for menus. The first two characters dictate transparency (e.g., `DD`).
+* `statusBarBg`: Background color for the top status bar. (Delete this line to default to `bgOverlay`).
+* `btnNormal`: Default background color of list buttons.
+* `btnFocused`: Highlight color when a button is selected (also applies to battery ring and volume bars).
+* `btnFocusedText`: Text color inside a highlighted button.
+* `button_radius`: Controls button roundness (`0` = sharp square, `10` = slightly rounded, `30+` = fully rounded pill).
+
+> **💡 Quick Tip:** Always use **8-character Hex Codes** (e.g., `#DD0F172A`) for background colors if you want transparency. The first two characters (`DD`) control the opacity (`00` for invisible, `FF` for solid).
