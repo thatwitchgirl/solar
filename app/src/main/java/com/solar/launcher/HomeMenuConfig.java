@@ -124,7 +124,7 @@ public final class HomeMenuConfig {
         return loadVisibleForDisplay(prefs, online, online);
     }
 
-    /** @param internetAvailable gates Reach / Themes; @param localNetworkAvailable gates PC Upload */
+    /** @param internetAvailable gates Reach; @param localNetworkAvailable gates PC Upload */
     public static List<Entry> loadVisibleForDisplay(SharedPreferences prefs,
             boolean internetAvailable, boolean localNetworkAvailable) {
         return loadVisibleForDisplay(prefs, internetAvailable, localNetworkAvailable,

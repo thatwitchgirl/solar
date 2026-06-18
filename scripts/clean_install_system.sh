@@ -28,24 +28,26 @@ sleep 1
 adb remount 2>/dev/null || run_su "mount -o remount,rw /system" || true
 
 echo "== Launcher packages (before) =="
-adb shell pm list packages 2>/dev/null | grep -iE 'slide|solar|jj|themoon|y1|launcher' || true
+adb shell pm list packages 2>/dev/null | grep -iE 'solar|launcher' || true
 
 echo "== System APK dir =="
-adb shell "ls -la /system/app/ 2>/dev/null" | grep -iE 'slide|solar|jj|launcher|themoon|y1' || echo "(none matched)"
+adb shell "ls -la /system/app/ 2>/dev/null" | grep -iE 'solar|launcher' || echo "(none matched)"
 
-# User uninstall (data partition installs)
-for pkg in com.slide.launcher com.solar.launcher com.themoon.y1 com.jj.launcher com.innioasis.launcher; do
+# User uninstall (data partition); ponytail: any non-Solar launcher package on device
+while IFS= read -r pkg; do
+  [[ -z "$pkg" ]] && continue
   if adb shell pm path "$pkg" 2>/dev/null | grep -q .; then
     echo "== pm uninstall $pkg =="
     adb shell pm uninstall "$pkg" 2>/dev/null || adb shell pm clear "$pkg" 2>/dev/null || true
   fi
-done
+done < <(adb shell pm list packages 2>/dev/null | sed 's/package://' | tr -d '\r' \
+  | grep -iE 'launcher|innioasis' | grep -v '^com\.solar\.launcher$' || true)
 
 echo "== Remove launcher APKs from /system/app =="
 adb shell "ls /system/app/ 2>/dev/null" | tr -d '\r' | while read -r f; do
   [[ -z "$f" ]] && continue
   case "$f" in
-    *[Ss]lide*|*[Ss]olar*|*[Jj][Jj]*|*[Ll]auncher*|*themoon*|*Y1*|*y1*)
+    *[Ss]olar*|*[Ll]auncher*|*innioasis*|*[Yy]1*)
       echo "rm /system/app/$f"
       run_su "rm -rf /system/app/$f" || true
       ;;
@@ -56,7 +58,7 @@ echo "== Remove from /system/priv-app (if any) =="
 adb shell "ls /system/priv-app/ 2>/dev/null" | tr -d '\r' | while read -r f; do
   [[ -z "$f" ]] && continue
   case "$f" in
-    *[Ss]lide*|*[Ss]olar*|*[Jj][Jj]*|*[Ll]auncher*|*themoon*|*Y1*|*y1*)
+    *[Ss]olar*|*[Ll]auncher*|*innioasis*|*[Yy]1*)
       echo "rm /system/priv-app/$f"
       run_su "rm -f /system/priv-app/$f" || true
       ;;
@@ -83,7 +85,7 @@ fi
 
 echo "== After =="
 adb shell "ls -la /system/app/com.solar.launcher.apk /system/lib/libconscrypt_jni.so"
-adb shell pm list packages 2>/dev/null | grep -iE 'slide|solar|jj|launcher' || true
+adb shell pm list packages 2>/dev/null | grep -iE 'solar|launcher' || true
 
 echo "== Rebooting =="
 adb reboot

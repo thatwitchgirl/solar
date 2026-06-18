@@ -74,13 +74,11 @@ public final class ConnectivityHelper {
         return null;
     }
 
-    /** Needs routable internet for online discovery (Reach, Themes catalog). */
+    /** Needs routable internet before showing a home shortcut (Reach only; Themes works offline). */
     public static boolean itemNeedsInternetForDiscovery(String id) {
         if (id == null) return false;
         id = HomeMenuConfig.migrateIdStatic(id);
-        if (HomeMenuConfig.ID_SOULSEEK.equals(id)) return true;
-        if (HomeMenuConfig.ID_THEMES.equals(id)) return true;
-        return false;
+        return HomeMenuConfig.ID_SOULSEEK.equals(id);
     }
 
     /** Needs routable internet before starting an online-only action. */

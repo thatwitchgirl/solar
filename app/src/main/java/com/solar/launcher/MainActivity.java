@@ -2142,6 +2142,7 @@ public class MainActivity extends Activity {
         updateStatusBarTitle();
         setThemesListVisible(true);
         containerSettingsItems.removeAllViews();
+        if (listThemes != null) listThemes.bringToFront();
         final int gen = ++unifiedThemesUiGen;
         themeBrowserOnlineRows.clear();
         themeCatalogAvailable = false;
@@ -3006,6 +3007,27 @@ public class MainActivity extends Activity {
     private void openAppearanceSubmenu(Runnable action) {
         settingsParentKey = SettingsScreens.APPEARANCE;
         action.run();
+    }
+
+    private void openThemesScreen(String parentKey) {
+        settingsParentKey = parentKey;
+        settingsSubScreenKey = SettingsScreens.THEMES;
+        changeScreen(STATE_SETTINGS);
+    }
+
+    private boolean isThemeListActive() {
+        return listThemes != null && listThemes.getVisibility() == View.VISIBLE
+                && (isThemeGalleryActive() || isThemeVariantPickerActive());
+    }
+
+    private void dispatchThemeListKey(int keyCode) {
+        if (keyCode == 21) {
+            listThemes.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_UP));
+            listThemes.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_UP));
+        } else if (keyCode == 22) {
+            listThemes.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_DOWN));
+            listThemes.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_DOWN));
+        }
     }
 
     private void clearThemeGalleryPreview() {
@@ -4106,8 +4128,7 @@ public class MainActivity extends Activity {
             if (!requireInternet(R.string.toast_internet_required)) return;
             openSoulseekScreen();
         } else if (HomeMenuConfig.ID_THEMES.equals(id) || HomeMenuConfig.ID_GET_THEMES.equals(id)) {
-            changeScreen(STATE_SETTINGS);
-            buildUnifiedThemesUI();
+            openThemesScreen(null);
         } else if (HomeMenuConfig.ID_MORE.equals(id)) {
             changeScreen(STATE_MORE);
         } else if (HomeMenuConfig.ID_VIDEOS.equals(id)) {
@@ -4478,6 +4499,12 @@ public class MainActivity extends Activity {
                     homeScreenMoveModeId = null;
                     refreshHomeArrangeMoveUi(false);
                 }
+                return;
+            }
+            if (currentScreenState == STATE_SETTINGS && isThemeListActive()) {
+                clickFeedback();
+                ThemeBrowser.Row row = themeBrowserFocusedRow();
+                if (row != null) onThemeBrowserRowClick(row);
                 return;
             }
             if (currentScreenState == STATE_SETTINGS && isMusicQueueEditorScreen()) {
@@ -14314,6 +14341,12 @@ public class MainActivity extends Activity {
                     listMusicQueue.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_DOWN));
                     listMusicQueue.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_DOWN));
                 }
+                clickFeedback();
+                return true;
+            }
+            if (currentScreenState == STATE_SETTINGS && isThemeListActive()
+                    && (keyCode == 21 || keyCode == 22)) {
+                dispatchThemeListKey(keyCode);
                 clickFeedback();
                 return true;
             }

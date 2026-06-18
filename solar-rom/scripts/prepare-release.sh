@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
-# Emit release tag and metadata for CI from app/build.gradle + git.
-# Writes release.json and, when GITHUB_OUTPUT is set: tag, version_name, version_code
+# Emit release tag and metadata for CI from branch + app/build.gradle.
+# main: stable tag v{versionName}; nightly: nightly-{run_number}
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+# shellcheck source=/dev/null
+source "$SCRIPT_DIR/solar-repo.sh"
 GRADLE="$REPO_ROOT/app/build.gradle"
 
 die() {
@@ -12,16 +14,42 @@ die() {
     exit 1
 }
 
+apply_gradle_version() {
+    local name="$1" code="$2"
+    python3 - "$GRADLE" "$name" "$code" <<'PY'
+import re, sys
+path, name, code = sys.argv[1], sys.argv[2], sys.argv[3]
+text = open(path, encoding="utf-8").read()
+text = re.sub(r'versionName\s+"[^"]+"', f'versionName "{name}"', text, count=1)
+text = re.sub(r'versionCode\s+\d+', f"versionCode {code}", text, count=1)
+open(path, "w", encoding="utf-8").write(text)
+PY
+}
+
 [ -f "$GRADLE" ] || die "missing $GRADLE"
 
-VERSION_NAME="$(sed -n 's/.*versionName "\([^"]*\)".*/\1/p' "$GRADLE" | head -1)"
-VERSION_CODE="$(sed -n 's/.*versionCode \([0-9]*\).*/\1/p' "$GRADLE" | head -1)"
+BRANCH="${GITHUB_REF_NAME:-$(git -C "$REPO_ROOT" branch --show-current 2>/dev/null || echo "")}"
+BUILD_NUM="${GITHUB_RUN_NUMBER:-}"
 SHORT_SHA="$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+
+if [ "$BRANCH" = "nightly" ]; then
+    CHANNEL="nightly"
+    [ -n "$BUILD_NUM" ] || BUILD_NUM="$(date +%Y%m%d%H%M)"
+    TAG="nightly-${BUILD_NUM}"
+    VERSION_NAME="nightly-${BUILD_NUM}"
+    VERSION_CODE="$BUILD_NUM"
+    apply_gradle_version "$VERSION_NAME" "$VERSION_CODE"
+elif [ "$BRANCH" = "main" ]; then
+    CHANNEL="stable"
+    VERSION_NAME="$(sed -n 's/.*versionName "\([^"]*\)".*/\1/p' "$GRADLE" | head -1)"
+    VERSION_CODE="$(sed -n 's/.*versionCode \([0-9]*\).*/\1/p' "$GRADLE" | head -1)"
+    TAG="v${VERSION_NAME}"
+else
+    die "releases only from main or nightly (branch: ${BRANCH:-unknown})"
+fi
 
 [ -n "$VERSION_NAME" ] || die "could not read versionName"
 [ -n "$VERSION_CODE" ] || die "could not read versionCode"
-
-TAG="v${VERSION_NAME}-${VERSION_CODE}+${SHORT_SHA}"
 
 python3 - <<PY
 import json
@@ -29,9 +57,11 @@ import os
 
 meta = {
     "tag": "${TAG}",
+    "channel": "${CHANNEL}",
     "version_name": "${VERSION_NAME}",
     "version_code": int("${VERSION_CODE}"),
     "short_sha": "${SHORT_SHA}",
+    "github_repo": "${SOLAR_GITHUB_REPO}",
 }
 with open("release.json", "w", encoding="utf-8") as handle:
     json.dump(meta, handle, indent=2)
@@ -40,8 +70,6 @@ print(json.dumps(meta))
 github_output = os.environ.get("GITHUB_OUTPUT")
 if github_output:
     with open(github_output, "a", encoding="utf-8") as handle:
-        handle.write(f"tag={meta['tag']}\n")
-        handle.write(f"version_name={meta['version_name']}\n")
-        handle.write(f"version_code={meta['version_code']}\n")
-        handle.write(f"short_sha={meta['short_sha']}\n")
+        for key in ("tag", "channel", "version_name", "version_code", "short_sha"):
+            handle.write(f"{key}={meta[key]}\n")
 PY

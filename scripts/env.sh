@@ -7,3 +7,4 @@ export PATH="$JAVA_HOME/bin:$ANDROID_HOME/platform-tools:$ANDROID_HOME/cmdline-t
 # AOSP test platform keys (device ro.build.tags=test-keys). Override if yours live elsewhere.
 export SOLAR_PLATFORM_KEY_PK8="${SOLAR_PLATFORM_KEY_PK8:-/home/deck/Documents/Rocksayr/rockbox/android/platform.pk8}"
 export SOLAR_PLATFORM_KEY_PEM="${SOLAR_PLATFORM_KEY_PEM:-/home/deck/Documents/Rocksayr/rockbox/android/platform.x509.pem}"
+export SOLAR_GITHUB_REPO="${SOLAR_GITHUB_REPO:-thatwitchgirl/solar}"

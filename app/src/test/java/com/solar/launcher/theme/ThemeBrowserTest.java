@@ -127,6 +127,24 @@ public class ThemeBrowserTest {
     }
 
     @Test
+    public void buildInstalledRows_getMoreBottomWhenInstalledFitsPage() {
+        List<ThemeManager.ThemeEntry> installed = new ArrayList<ThemeManager.ThemeEntry>();
+        for (int i = 0; i < 4; i++) {
+            installed.add(new ThemeManager.ThemeEntry("/" + i, "f" + i, "T" + i, new JSONObject()));
+        }
+        List<ThemeBrowser.Row> rows = ThemeBrowser.buildInstalledRows(installed, 0, true, 5, labels());
+        int getMoreIdx = -1;
+        int firstInstalledIdx = -1;
+        for (int i = 0; i < rows.size(); i++) {
+            if (rows.get(i).kind == ThemeBrowser.KIND_GET_MORE) getMoreIdx = i;
+            if (firstInstalledIdx < 0 && rows.get(i).kind == ThemeBrowser.KIND_INSTALLED) {
+                firstInstalledIdx = i;
+            }
+        }
+        assertTrue(getMoreIdx > firstInstalledIdx);
+    }
+
+    @Test
     public void nextFilterAndToggleSort() {
         assertEquals(ThemeBrowser.FILTER_INSTALLED, ThemeBrowser.nextFilter(ThemeBrowser.FILTER_ALL));
         assertEquals(ThemeBrowser.SORT_AUTHOR, ThemeBrowser.toggleSort(ThemeBrowser.SORT_NAME));

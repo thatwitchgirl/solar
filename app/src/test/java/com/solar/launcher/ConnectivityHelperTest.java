@@ -4,12 +4,12 @@ import org.junit.Test;
 
 public class ConnectivityHelperTest {
     @Test
-    public void itemNeedsInternetForDiscovery_reachAndThemesOnly() {
+    public void itemNeedsInternetForDiscovery_reachOnly() {
         if (!ConnectivityHelper.itemNeedsInternetForDiscovery(HomeMenuConfig.ID_SOULSEEK)) {
             throw new AssertionError("reach");
         }
-        if (!ConnectivityHelper.itemNeedsInternetForDiscovery(HomeMenuConfig.ID_THEMES)) {
-            throw new AssertionError("themes");
+        if (ConnectivityHelper.itemNeedsInternetForDiscovery(HomeMenuConfig.ID_THEMES)) {
+            throw new AssertionError("themes works offline");
         }
         if (ConnectivityHelper.itemNeedsInternetForDiscovery(HomeMenuConfig.ID_PODCASTS)) {
             throw new AssertionError("podcasts not discovery-gated");
@@ -52,6 +52,13 @@ public class ConnectivityHelperTest {
         }
         if (!ConnectivityHelper.shouldShowHomeShortcut(HomeMenuConfig.ID_PODCASTS, true, true, false)) {
             throw new AssertionError("podcasts online");
+        }
+    }
+
+    @Test
+    public void shouldShowHomeShortcut_themesOffline() {
+        if (!ConnectivityHelper.shouldShowHomeShortcut(HomeMenuConfig.ID_THEMES, false, false, false)) {
+            throw new AssertionError("themes offline");
         }
     }
 

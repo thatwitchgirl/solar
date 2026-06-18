@@ -15,13 +15,16 @@ MOUNT_SYS=""
 MOUNT_USER=""
 SYSTEM_APK_NAME="com.solar.launcher.apk"
 
+# shellcheck source=/dev/null
+source "$SCRIPT_DIR/solar-repo.sh"
+
 usage() {
     cat >&2 <<EOF
 usage: $0 <a|b> (--apk PATH | [--solar-tag TAG] [--solar-apk-url URL]) [output.zip]
 
   a|b                 Type A (firmware 2.0.0+) or Type B (firmware before 2.0.0)
   --apk PATH          Local signed app-release.apk (CI / local builds)
-  --solar-tag         GitHub release tag on ryan-specter/s (default: latest)
+  --solar-tag         GitHub release tag on ${SOLAR_GITHUB_REPO} (default: latest)
   --solar-apk-url     Direct APK download URL (skips GitHub HTML lookup)
   output.zip          Output archive path
 EOF
@@ -105,7 +108,7 @@ resolve_latest_solar_tag() {
     local release_url tag
     release_url="$(
         curl -fsSIL -A 'solar-rom-build/1.0' \
-            'https://github.com/ryan-specter/s/releases/latest' \
+            "${SOLAR_GITHUB_URL}/releases/latest" \
         | awk -F': ' 'tolower($1) ~ /^location$/ { print $2 }' \
         | tr -d '\r' \
         | tail -1
@@ -133,8 +136,8 @@ download_solar_apk() {
 
     apk_url="$(
         curl -fsSL -A 'solar-rom-build/1.0' \
-            "https://github.com/ryan-specter/s/releases/expanded_assets/${tag}" \
-        | grep -Eo 'href="/ryan-specter/s/releases/download/[^"]+app-release[^"]*\.apk"' \
+            "${SOLAR_GITHUB_URL}/releases/expanded_assets/${tag}" \
+        | grep -Eo "href=\"/${SOLAR_GITHUB_REPO}/releases/download/[^\"]+app-release[^\"]*\\.apk\"" \
         | head -1 \
         | sed 's/^href="//; s/"$//'
     )"
@@ -188,7 +191,7 @@ audit_rom_contents() {
         errors=$((errors + 1))
     fi
 
-    if [ -f "$user_mount/jj_launcher.apk" ] || [ -f "$user_mount/solar_launcher.apk" ]; then
+    if [ -n "$(find "$user_mount" -maxdepth 1 -name '*_launcher.apk' ! -name 'com.solar.launcher.apk' -print -quit 2>/dev/null)" ]; then
         echo "audit fail: legacy launcher APK in userdata" >&2
         errors=$((errors + 1))
     fi
@@ -246,9 +249,16 @@ while IFS= read -r apk; do
     [ -n "$apk" ] || continue
     echo "  removing $apk"
     sudo rm -f "$apk"
-done < <(find "$MOUNT_SYS/app" "$MOUNT_SYS/priv-app" -iname '*innioasis*' 2>/dev/null || true)
+done < <(find "$MOUNT_SYS/priv-app" -iname '*innioasis*' 2>/dev/null || true)
 
-sudo rm -f "$MOUNT_SYS/app/com.themoon.y1.apk"
+for apk in "$MOUNT_SYS/app"/com.*.apk; do
+    [ -e "$apk" ] || continue
+    base=$(basename "$apk")
+    [ "$base" = "$SYSTEM_APK_NAME" ] && continue
+    echo "  removing system/app/$base"
+    sudo rm -f "$apk"
+done
+
 sudo rm -f "$MOUNT_SYS/app/org.rockbox.apk"
 sudo rm -f "$MOUNT_SYS/lib/librockbox.so"
 sudo rm -f "$MOUNT_SYS/etc/init.d/99Y1ButtonScript"
@@ -268,10 +278,9 @@ echo "==> Patching userdata partition"
 sudo rm -rf "$MOUNT_USER/org.rockbox"
 sudo rm -f "$MOUNT_USER/com.innioasis.y1.apk"
 sudo rm -f "$MOUNT_USER/data/com.innioasis.y1.apk"
-sudo rm -f "$MOUNT_USER/jj_launcher.apk"
-sudo rm -f "$MOUNT_USER/solar_launcher.apk"
+sudo rm -f "$MOUNT_USER"/*_launcher.apk
+sudo rm -f "$MOUNT_USER/data/*_launcher_initialized"
 sudo rm -f "$MOUNT_USER/data/initialized"
-sudo rm -f "$MOUNT_USER/data/jj_launcher_initialized"
 
 audit_rom_contents "$BASE_DIR" "$MOUNT_SYS" "$MOUNT_USER"
 

@@ -19,9 +19,11 @@ with open(sys.argv[1], encoding="utf-8") as handle:
 
 tag = meta["tag"]
 version = meta.get("version_name", "")
+channel = meta.get("channel", "stable")
 sha = meta.get("short_sha", "")
 
-print(f"# Solar {version} ({sha})")
+label = "nightly" if channel == "nightly" else "stable"
+print(f"# Solar {version} ({sha}) — {label}")
 print()
 print("## Assets")
 print()

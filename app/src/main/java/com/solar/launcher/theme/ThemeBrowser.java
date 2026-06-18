@@ -354,17 +354,17 @@ public final class ThemeBrowser {
         sortRows(installedRows, SORT_NAME);
 
         boolean showGetMore = online;
-        int capacity = pageCapacityRows > 1 ? pageCapacityRows - 1 : 1;
-        boolean needsScroll = showGetMore && installedRows.size() > capacity - 1;
+        // ponytail: Get More at top only when Back + all installed rows overflow one page
+        boolean installedOverflowsPage = 1 + installedRows.size() > pageCapacityRows;
         Row getMore = showGetMore ? new Row(KIND_GET_MORE, t.getMore, "", "→ ", -1, null, null, false, false) : null;
 
-        if (showGetMore && getMore != null && needsScroll) out.add(getMore);
+        if (showGetMore && getMore != null && installedOverflowsPage) out.add(getMore);
         if (!installedRows.isEmpty()) {
             out.addAll(installedRows);
         } else {
             out.add(Row.status(t.noInstalledMatch));
         }
-        if (showGetMore && getMore != null && !needsScroll) out.add(getMore);
+        if (showGetMore && getMore != null && !installedOverflowsPage) out.add(getMore);
         return out;
     }
 

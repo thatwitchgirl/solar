@@ -2,7 +2,7 @@ name: Build Solar APK and ROMs
 
 on:
   push:
-    branches: [master]
+    branches: [main, nightly]
   workflow_dispatch:
 
 permissions:
@@ -22,7 +22,12 @@ jobs:
 
       - name: Prepare release metadata
         id: meta
-        run: ./solar-rom/scripts/prepare-release.sh
+        env:
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+          GITHUB_RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          chmod +x solar-rom/scripts/prepare-release.sh solar-rom/scripts/bump-stable-version.sh
+          ./solar-rom/scripts/prepare-release.sh
 
       - name: Set up JDK 21
         uses: actions/setup-java@v4
@@ -70,6 +75,7 @@ jobs:
           APK="$GITHUB_WORKSPACE/app/build/outputs/apk/release/app-release.apk"
           test -f "$APK"
           mkdir -p dist
+          chmod +x solar-rom/scripts/build-rom.sh
           ./solar-rom/scripts/build-rom.sh a --apk "$APK" "$GITHUB_WORKSPACE/dist/rom.zip"
           ./solar-rom/scripts/build-rom.sh b --apk "$APK" "$GITHUB_WORKSPACE/dist/rom_type_b.zip"
 
@@ -87,7 +93,25 @@ jobs:
             dist/rom.zip
             dist/rom_type_b.zip
           fail_on_unmatched_files: true
-          make_latest: true
+          make_latest: ${{ github.ref == 'refs/heads/main' }}
+          prerelease: ${{ github.ref == 'refs/heads/nightly' }}
+
+      - name: Bump stable version for next release
+        if: github.ref == 'refs/heads/main'
+        run: ./solar-rom/scripts/bump-stable-version.sh
+
+      - name: Commit stable version bump
+        if: github.ref == 'refs/heads/main'
+        run: |
+          git config user.name "ThatWitchGirl"
+          git config user.email "anonymous@local"
+          git add app/build.gradle
+          if git diff --staged --quiet; then
+            echo "No version bump to commit"
+            exit 0
+          fi
+          git commit -m "Bump stable version for next release."
+          git push
 
       - name: Remove signing keys
         if: always()
