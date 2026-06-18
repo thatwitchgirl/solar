@@ -3409,6 +3409,7 @@ public class MainActivity extends Activity {
 
     private void onWifiConnectivityChanged() {
         refreshConnectivityGatedMenus();
+        updateSoulseekSharePolicy();
     }
 
     private void triggerAutoReconnect() {
@@ -10756,7 +10757,9 @@ public class MainActivity extends Activity {
         boolean reachUi = currentScreenState == STATE_SOULSEEK || hasActiveReachDownload();
         boolean wifi = hasInternetConnection();
         soulseekSharePolicy.update(soulseekCharging, wifi, reachUi);
-        SoulseekClient client = soulseekClient;
+        if (!soulseekSharePolicy.announceShares() && soulseekClient == null) return;
+        SoulseekClient client = soulseekSharePolicy.announceShares()
+                ? ensureSoulseekClient() : soulseekClient;
         if (client == null) return;
         client.setSharePolicy(soulseekSharePolicy);
         if (soulseekSharePolicy.announceShares() && !soulseekShareScanRunning) {

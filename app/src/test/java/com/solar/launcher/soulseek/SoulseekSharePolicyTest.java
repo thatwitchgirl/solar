@@ -30,6 +30,15 @@ public class SoulseekSharePolicyTest {
   }
 
   @Test
+  public void staysActiveWhenLeaveReachWhileCharging() {
+    SoulseekSharePolicy p = new SoulseekSharePolicy();
+    p.update(true, true, true);
+    p.update(true, true, false);
+    if (p.state() != SoulseekSharePolicy.State.ACTIVE) throw new AssertionError("charging without reach");
+    if (!p.acceptNewUploads()) throw new AssertionError("accept while charging");
+  }
+
+  @Test
   public void drainingWhenLeaveReachOnBattery() {
     SoulseekSharePolicy p = new SoulseekSharePolicy();
     p.update(false, true, true);

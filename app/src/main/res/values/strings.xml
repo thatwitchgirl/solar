@@ -415,8 +415,8 @@
     <string name="soulseek_download_from">from user: %1$s</string>
     <string name="soulseek_sharing_on">Sharing: on (%1$d files)</string>
     <string name="soulseek_sharing_draining">Sharing: finishing uploads…</string>
-    <string name="soulseek_sharing_off">Sharing: off (plug in or open Reach)</string>
-    <string name="soulseek_sharing_hint">Music and Podcasts folders are shared while charging with Wi‑Fi, or while Reach is open. Uploads finish in the background when you leave on battery.</string>
+    <string name="soulseek_sharing_off">Sharing: off (plug in with Wi‑Fi, or open Reach on battery)</string>
+    <string name="soulseek_sharing_hint">Plugged in with Wi‑Fi, Music and Podcasts are shared in the background — Reach can be closed and you can listen to music or leave the device idle. On battery, sharing runs only while Reach is open; uploads finish briefly after you leave.</string>
     <string name="soulseek_from_user">from user: %1$s</string>
     <string name="soulseek_recent_searches">Recent searches</string>
     <string name="soulseek_add_to_library">Add to library</string>

@@ -1,6 +1,10 @@
 package com.solar.launcher.soulseek;
 
-/** Charger / Reach-UI gates for Soulseek library sharing. */
+/**
+ * Charger / Reach-UI gates for Soulseek library sharing.
+ * Charging + Wi‑Fi shares in the background (Reach closed, music, idle).
+ * On battery, sharing is limited to Reach UI; leaving drains uploads quickly.
+ */
 public final class SoulseekSharePolicy {
     public enum State { OFF, ACTIVE, DRAINING }
 
