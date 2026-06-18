@@ -49,7 +49,7 @@ jobs:
 
       - name: Install ROM build dependencies
         run: |
-          sudo apt-get update && sudo apt-get install -y unzip zip e2fsprogs curl util-linux kmod
+          sudo apt-get update && sudo apt-get install -y unzip zip e2fsprogs curl util-linux kmod openssl
           sudo modprobe loop || true
 
       - name: Verify Rockbox-Y1 base firmware URLs
@@ -78,6 +78,7 @@ jobs:
           JAVA_HOME: ${{ env.JAVA_HOME }}
           ANDROID_HOME: ${{ env.ANDROID_HOME }}
           ANDROID_SDK_ROOT: ${{ env.ANDROID_HOME }}
+          SOLAR_UPDATES_PAT: ${{ secrets.SOLAR_UPDATES_PAT }}
         run: |
           chmod +x gradlew scripts/build.sh
           ./scripts/build.sh

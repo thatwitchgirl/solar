@@ -65,22 +65,22 @@ adb shell "ls /system/priv-app/ 2>/dev/null" | tr -d '\r' | while read -r f; do
   esac
 done
 
-echo "== Install Solar system APK + Conscrypt native lib =="
+echo "== Install Solar system APK + TLS prep (Conscrypt JNI + modern CA roots) =="
 # ponytail: Y1 PackageManager only scans flat /system/app/*.apk — JNI must live in /system/lib
-CONSCRYPT_SO="$(mktemp)"
-trap 'rm -f "$CONSCRYPT_SO"' EXIT
-unzip -p "$APK" lib/armeabi-v7a/libconscrypt_jni.so > "$CONSCRYPT_SO"
-[[ -s "$CONSCRYPT_SO" ]] || { echo "Missing libconscrypt_jni.so in APK" >&2; exit 1; }
+TLS_STAGING="$(mktemp -d)"
+trap 'rm -rf "$TLS_STAGING"' EXIT
+chmod +x "$ROOT/scripts/stage-y1-system-prep.sh" "$ROOT/scripts/push-y1-system-prep.sh" "$ROOT/scripts/apply-y1-system-prep.sh"
+"$ROOT/scripts/stage-y1-system-prep.sh" "$TLS_STAGING" "$APK" "$ROOT"
 
 adb push "$APK" /system/app/com.solar.launcher.apk
-adb push "$CONSCRYPT_SO" /system/lib/libconscrypt_jni.so
-run_su "chmod 644 /system/app/com.solar.launcher.apk /system/lib/libconscrypt_jni.so"
+run_su "chmod 644 /system/app/com.solar.launcher.apk"
 
-echo "== Modern CA roots (system trust for MediaPlayer + all apps) =="
-if [[ "${SOLAR_SKIP_CACERTS:-0}" != "1" ]]; then
-  "$ROOT/scripts/install_modern_cacerts.sh" --no-reboot || echo "WARN: cacerts install failed — run ./scripts/install_modern_cacerts.sh manually" >&2
+if [[ "${SOLAR_SKIP_CACERTS:-0}" == "1" ]]; then
+  echo "== Push Conscrypt only (SOLAR_SKIP_CACERTS=1) =="
+  adb push "$TLS_STAGING/lib/libconscrypt_jni.so" /system/lib/libconscrypt_jni.so
+  run_su "chmod 644 /system/lib/libconscrypt_jni.so"
 else
-  echo "Skipped (SOLAR_SKIP_CACERTS=1)"
+  "$ROOT/scripts/push-y1-system-prep.sh" "$TLS_STAGING" || echo "WARN: TLS prep push failed" >&2
 fi
 
 echo "== After =="
@@ -89,4 +89,4 @@ adb shell pm list packages 2>/dev/null | grep -iE 'solar|launcher' || true
 
 echo "== Rebooting =="
 adb reboot
-echo "DONE: Solar at /system/app/com.solar.launcher.apk + /system/lib/libconscrypt_jni.so — device rebooting"
+echo "DONE: Solar + TLS prep + boot init — device rebooting"

@@ -126,6 +126,7 @@
     <string name="toast_time_applied">시간이 적용되었습니다!</string>
     <string name="toast_time_failed">실패: 루트 권한이 필요합니다.</string>
     <string name="toast_install_ok">업데이트가 설치되었습니다.</string>
+    <string name="toast_install_reboot">업데이트가 설치되었습니다. 재부팅 중…</string>
     <string name="toast_install_failed">설치에 실패했습니다.</string>
     <string name="toast_corrupted_file">손상된 파일이 감지되어 건너뜁니다…</string>
     <string name="toast_audio_permission">먼저 오디오 권한을 허용해 주세요!</string>
@@ -155,6 +156,7 @@
     <string name="settings_soulseek">Reach</string>
     <string name="settings_auto_fetch">앨범 아트 자동 검색</string>
     <string name="settings_system_update">시스템 업데이트</string>
+    <string name="settings_app_version">앱 버전</string>
     <string name="settings_bluetooth_setup">블루투스 설정</string>
     <string name="settings_display_brightness">화면 밝기</string>
     <string name="settings_storage_info">저장소 정보</string>
@@ -314,11 +316,17 @@
     <string name="datetime_minute">분</string>
     <string name="update_current_version">현재 버전</string>
     <string name="update_latest_version">최신 버전</string>
+    <string name="update_latest_stable">최신 정식 버전</string>
+    <string name="update_latest_nightly">최신 야간 빌드</string>
     <string name="update_checking">확인 중…</string>
     <string name="update_download">다운로드 및 업데이트</string>
+    <string name="update_download_stable">정식 버전 다운로드</string>
+    <string name="update_download_nightly">야간 빌드 다운로드</string>
     <string name="update_up_to_date">이미 최신 버전입니다</string>
     <string name="update_url_missing">업데이트 URL이 없습니다.</string>
     <string name="update_download_title">업데이트 다운로드 중</string>
+    <string name="update_network_error">GitHub에 연결할 수 없습니다</string>
+    <string name="update_none_found">릴리스를 찾을 수 없습니다</string>
     <string name="soulseek_search_row">검색</string>
     <string name="soulseek_account_row">계정</string>
     <string name="soulseek_wifi_required">Reach에는 인터넷 연결이 필요합니다.</string>
@@ -467,6 +475,8 @@
     <string name="path_podcasts_saved_show">팟캐스트 › 저장됨 › %1$s</string>
     <string name="toast_added_to_queue">대기열에 추가됨</string>
     <string name="reach_loading_track">로드 중…</string>
+    <string name="reach_buffering_track">버퍼링 중…</string>
+    <string name="reach_buffering_pct">버퍼링 · %1$d%%</string>
     <string name="podcasts_no_results">팟캐스트를 찾을 수 없습니다.</string>
     <string name="podcasts_filtered_unavailable">%1$d개 팟캐스트가 숨겨졌습니다 — 이 기기에서 피드 또는 오디오에 연결할 수 없습니다.</string>
     <string name="podcasts_episodes_filtered">%1$d개 에피소드가 숨겨졌습니다 — 이 기기에서 오디오에 연결할 수 없습니다.</string>

@@ -14,12 +14,17 @@ done
   exit 1
 }
 if $SYSTEM; then
+  TLS_STAGING="$(mktemp -d)"
+  trap 'rm -rf "$TLS_STAGING"' EXIT
+  chmod +x "$ROOT/scripts/stage-y1-system-prep.sh" "$ROOT/scripts/push-y1-system-prep.sh"
+  "$ROOT/scripts/stage-y1-system-prep.sh" "$TLS_STAGING" "$APK" "$ROOT"
   adb root
   adb remount
   adb push "$APK" /system/app/com.solar.launcher.apk
   adb shell chmod 644 /system/app/com.solar.launcher.apk
+  "$ROOT/scripts/push-y1-system-prep.sh" "$TLS_STAGING"
   adb reboot
-  echo "Pushed to /system/app/com.solar.launcher.apk — rebooting"
+  echo "Pushed Solar APK + Conscrypt + modern CA roots + boot init — rebooting"
 else
   if adb shell pm path com.solar.launcher 2>/dev/null | tr -d '\r' | grep -q '/system/'; then
     echo "ERROR: Solar runs from /system/app — adb install does not update it." >&2

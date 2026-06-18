@@ -71,6 +71,20 @@ public class OpenRssClient {
         if (q.isEmpty()) q = "podcast";
         if (limit < 1) limit = 10;
         if (limit > 50) limit = 50;
+        java.util.Set<String> seen = new java.util.HashSet<String>();
+        List<Podcast> out = new ArrayList<Podcast>();
+        mergePodcasts(out, seen, searchItunes(q, country, genreId, limit));
+        if (out.size() < limit) {
+            try {
+                mergePodcasts(out, seen,
+                        PodcastIndexClient.searchByTerm(q, limit - out.size()));
+            } catch (Exception ignored) {}
+        }
+        return out;
+    }
+
+    private static List<Podcast> searchItunes(String q, String country, Integer genreId, int limit)
+            throws Exception {
         String url = buildSearchUrl(q, country, genreId, limit);
         byte[] raw = httpGet(url, "application/json");
         JSONObject root = new JSONObject(new String(raw, "UTF-8"));
@@ -88,6 +102,26 @@ public class OpenRssClient {
             out.add(new Podcast(title, publisher, feed, art));
         }
         return out;
+    }
+
+    /** Dedupe by normalized feed URL; iTunes results stay first. */
+    static void mergePodcasts(List<Podcast> out, java.util.Set<String> seen, List<Podcast> add) {
+        if (out == null || seen == null || add == null) return;
+        for (Podcast p : add) {
+            if (p == null || p.feedUrl == null || p.feedUrl.trim().isEmpty()) continue;
+            String key = normalizeFeedUrl(p.feedUrl);
+            if (seen.contains(key)) continue;
+            seen.add(key);
+            out.add(p);
+        }
+    }
+
+    static String normalizeFeedUrl(String url) {
+        if (url == null) return "";
+        String u = url.trim().toLowerCase(Locale.US);
+        if (u.startsWith("https://")) u = "http://" + u.substring(8);
+        while (u.endsWith("/")) u = u.substring(0, u.length() - 1);
+        return u;
     }
 
     /** ponytail: package-visible for unit tests — iTunes Search URL shape */
@@ -251,19 +285,34 @@ public class OpenRssClient {
     }
 
     public static List<Episode> fetchEpisodes(String sourceFeedUrl, int limit) throws Exception {
-        Exception direct = null;
-        try {
-            return parseEpisodes(httpGet(sourceFeedUrl, "application/rss+xml,application/xml,text/xml,*/*"), limit);
-        } catch (Exception e) {
-            direct = e;
+        if (sourceFeedUrl == null || sourceFeedUrl.trim().isEmpty()) {
+            throw new IllegalArgumentException("feedUrl");
         }
-        String proxy = "https://openrss.org/feed?url=" + URLEncoder.encode(sourceFeedUrl, "UTF-8");
+        Exception last = null;
+        String accept = "application/rss+xml,application/xml,text/xml,*/*";
+        for (String feedUrl : PodcastLibrary.httpsThenHttpVariants(sourceFeedUrl.trim())) {
+            try {
+                return parseEpisodes(httpGetSingle(feedUrl, accept), limit);
+            } catch (Exception e) {
+                last = e;
+            }
+        }
+        for (String feedUrl : PodcastLibrary.httpsThenHttpVariants(sourceFeedUrl.trim())) {
+            try {
+                return parseEpisodes(fetchFeedViaOpenRss(feedUrl), limit);
+            } catch (Exception e) {
+                last = e;
+            }
+        }
+        throw last != null ? last : new Exception("Feed unavailable");
+    }
+
+    static byte[] fetchFeedViaOpenRss(String feedUrl) throws Exception {
+        String proxy = "https://openrss.org/feed?url=" + URLEncoder.encode(feedUrl, "UTF-8");
         try {
-            return parseEpisodes(
-                    httpGet(proxy, "application/rss+xml,application/xml,text/xml,*/*"), limit);
-        } catch (Exception proxyErr) {
-            if (direct != null) throw direct;
-            throw proxyErr;
+            return SolarHttp.getBytes(proxy, "application/rss+xml,application/xml,text/xml,*/*", UA);
+        } catch (java.io.IOException e) {
+            throw new Exception(e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName(), e);
         }
     }
 
@@ -484,10 +533,14 @@ public class OpenRssClient {
 
     private static byte[] httpGet(String urlStr, String accept) throws Exception {
         try {
-            if (urlStr != null && urlStr.startsWith("https://")) {
-                String http = "http://" + urlStr.substring(8);
-                return SolarHttp.getBytesFirstOk(new String[] {urlStr, http}, accept, UA);
-            }
+            return SolarHttp.getBytesFirstOk(PodcastLibrary.httpsThenHttpVariants(urlStr), accept, UA);
+        } catch (java.io.IOException e) {
+            throw new Exception(e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName(), e);
+        }
+    }
+
+    private static byte[] httpGetSingle(String urlStr, String accept) throws Exception {
+        try {
             return SolarHttp.getBytes(urlStr, accept, UA);
         } catch (java.io.IOException e) {
             throw new Exception(e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName(), e);

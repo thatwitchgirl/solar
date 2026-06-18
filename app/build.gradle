@@ -12,9 +12,14 @@ android {
         targetSdk 35
         versionCode 2
         versionName "0.2"
-        buildConfigField "boolean", "FEATURE_OTA_UPDATE", "false"
-        buildConfigField "String", "OTA_METADATA_URL", "\"\""
-        buildConfigField "String", "OTA_BASE_URL", "\"\""
+        buildConfigField "boolean", "FEATURE_OTA_UPDATE", "true"
+        buildConfigField "String", "OTA_GITHUB_REPO", "\"thatwitchgirl/solar\""
+        def otaPat = System.getenv("SOLAR_UPDATES_PAT") ?: project.findProperty("SOLAR_UPDATES_PAT") ?: ""
+        buildConfigField "String", "OTA_GITHUB_TOKEN", "\"${otaPat}\""
+        def podcastIndexKey = project.findProperty("PODCAST_INDEX_API_KEY") ?: ""
+        def podcastIndexSecret = project.findProperty("PODCAST_INDEX_API_SECRET") ?: ""
+        buildConfigField "String", "PODCAST_INDEX_API_KEY", "\"${podcastIndexKey}\""
+        buildConfigField "String", "PODCAST_INDEX_API_SECRET", "\"${podcastIndexSecret}\""
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }

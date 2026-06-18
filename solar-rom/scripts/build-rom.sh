@@ -102,6 +102,7 @@ require_cmd curl
 require_cmd unzip
 require_cmd zip
 require_cmd cmp
+require_cmd openssl
 require_cmd sudo
 
 resolve_latest_solar_tag() {
@@ -170,6 +171,21 @@ audit_rom_contents() {
 
     if [ ! -f "$sys_mount/app/$SYSTEM_APK_NAME" ]; then
         echo "audit fail: $SYSTEM_APK_NAME missing from /system/app" >&2
+        errors=$((errors + 1))
+    fi
+
+    if [ ! -f "$sys_mount/lib/libconscrypt_jni.so" ]; then
+        echo "audit fail: libconscrypt_jni.so missing from /system/lib (OkHttp/Reach TLS)" >&2
+        errors=$((errors + 1))
+    fi
+
+    if [ ! -f "$sys_mount/etc/security/cacerts/6187b673.0" ]; then
+        echo "audit fail: ISRG Root X1 cacert missing (MediaPlayer/podcast HTTPS)" >&2
+        errors=$((errors + 1))
+    fi
+
+    if [ ! -f "$sys_mount/etc/init.d/99SolarInit.sh" ]; then
+        echo "audit fail: 99SolarInit.sh missing (SD Music/Podcasts/Themes + TLS sanity)" >&2
         errors=$((errors + 1))
     fi
 
@@ -270,6 +286,21 @@ sudo mkdir -p "$MOUNT_SYS/app" "$MOUNT_SYS/usr/keylayout"
 sudo cp "$STAGING_APK" "$MOUNT_SYS/app/$SYSTEM_APK_NAME"
 sudo chmod 644 "$MOUNT_SYS/app/$SYSTEM_APK_NAME"
 sudo chown root:root "$MOUNT_SYS/app/$SYSTEM_APK_NAME"
+
+echo "==> Install TLS prep (Conscrypt JNI + modern CA roots)"
+TLS_STAGE="$WORK_DIR/system-tls"
+chmod +x "$REPO_ROOT/scripts/stage-y1-system-prep.sh" "$REPO_ROOT/scripts/apply-y1-system-prep.sh"
+"$REPO_ROOT/scripts/stage-y1-system-prep.sh" "$TLS_STAGE" "$STAGING_APK" "$REPO_ROOT"
+sudo "$REPO_ROOT/scripts/apply-y1-system-prep.sh" "$TLS_STAGE" "$MOUNT_SYS"
+sudo chown root:root "$MOUNT_SYS/lib/libconscrypt_jni.so"
+sudo chown root:root "$MOUNT_SYS/etc/security/cacerts"/*.0 2>/dev/null || true
+
+echo "==> Install Solar boot init (SD library folders + TLS sanity)"
+sudo mkdir -p "$MOUNT_SYS/etc/init.d"
+sudo cp "$REPO_ROOT/solar-rom/system/99SolarInit.sh" "$MOUNT_SYS/etc/init.d/99SolarInit.sh"
+sudo chmod 755 "$MOUNT_SYS/etc/init.d/99SolarInit.sh"
+sudo chown root:root "$MOUNT_SYS/etc/init.d/99SolarInit.sh"
+
 sudo cp "$SCRIPT_DIR/Stock.kl" "$MOUNT_SYS/usr/keylayout/Stock.kl"
 sudo cp "$SCRIPT_DIR/Stock.kl" "$MOUNT_SYS/usr/keylayout/Generic.kl"
 sudo chmod 644 "$MOUNT_SYS/usr/keylayout/Stock.kl" "$MOUNT_SYS/usr/keylayout/Generic.kl"

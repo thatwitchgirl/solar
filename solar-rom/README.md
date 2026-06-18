@@ -21,7 +21,28 @@ Day-to-day development targets **`nightly`**. Merge to **`main`** when cutting a
 ./solar-rom/scripts/build-rom.sh b --apk app/build/outputs/apk/release/app-release.apk rom_type_b.zip
 ```
 
-Requires `curl`, `unzip`, `zip`, `sudo`, and loop-mount support for ext4 (`e2fsprogs`).
+Requires `curl`, `unzip`, `zip`, `openssl`, `sudo`, and loop-mount support for ext4 (`e2fsprogs`).
+
+Each ROM includes, on the **system** partition:
+
+| Path | Purpose |
+|------|---------|
+| `/system/app/com.solar.launcher.apk` | Solar launcher (platform-signed) |
+| `/system/lib/libconscrypt_jni.so` | Conscrypt JNI for TLS 1.2+ (Reach, podcasts, themes via OkHttp) |
+| `/system/etc/security/cacerts/*.0` | Modern CA roots (Let's Encrypt, etc.) for **MediaPlayer** HTTPS and all apps |
+| `/system/etc/init.d/99SolarInit.sh` | Boot: create `Music` / `Podcasts` / `Themes` on SD; log if TLS prep missing |
+
+These match what `./scripts/clean_install_system.sh` applies on a rooted device. Shared staging: `scripts/stage-y1-system-prep.sh` → `apply-y1-system-prep.sh` (ROM) or `push-y1-system-prep.sh` (adb). `SolarApplication` loads Conscrypt at boot; system cacerts are still required for stock HTTPS stacks (podcast streaming via MediaPlayer).
+
+## Device install (rooted, without full ROM flash)
+
+```bash
+./scripts/build.sh
+./scripts/clean_install_system.sh    # full: remove old launchers + APK + TLS prep
+# or quick update:
+./scripts/install.sh --system
+./scripts/install_modern_cacerts.sh  # cacerts only
+```
 
 Override release repo for ROM downloads: `SOLAR_GITHUB_REPO=thatwitchgirl/solar` (default).
 

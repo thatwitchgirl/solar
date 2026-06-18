@@ -81,8 +81,8 @@ import android.renderscript.RenderScript;
 import android.renderscript.ScriptIntrinsicBlur;
 
 public class MainActivity extends Activity {
-    private static final String OTA_METADATA_URL = BuildConfig.OTA_METADATA_URL;
-    private static final String OTA_BASE_URL = BuildConfig.OTA_BASE_URL;
+    private static final String OTA_GITHUB_REPO = BuildConfig.OTA_GITHUB_REPO;
+    private static final String OTA_GITHUB_TOKEN = BuildConfig.OTA_GITHUB_TOKEN;
     // 💡 [추가] 퀵 스크롤 (알파벳 인덱스) 관련 변수들
     private TextView tvFastScrollLetter;
     private Handler fastScrollHandler = new Handler();
@@ -368,6 +368,7 @@ public class MainActivity extends Activity {
     private boolean soulseekReSearchRowsShown = false;
     private File reachGrowingCacheFile = null;
     private long reachGrowingPreparedBytes = 0;
+    private long reachGrowingTotalBytes = 0;
     private volatile boolean reachPartialPlaybackStarted = false;
     private volatile boolean reachGrowingReprepareInFlight = false;
     private int reachGrowingSeekMs = 0;
@@ -655,9 +656,31 @@ public class MainActivity extends Activity {
                             }
                         }
                     }
+                    if (reachPartialPlaybackStarted && reachGrowingCacheFile != null) {
+                        int displayDur = reachGrowingDisplayDurationMs();
+                        if (displayDur > 0) {
+                            int progress = Math.min(100, current * 100 / displayDur);
+                            playerProgress.setProgress(progress);
+                            tvPlayerTimeCurrent.setText(formatTime(current));
+                            tvPlayerTimeTotal.setText(formatTime(displayDur));
+                        }
+                        int mpDur = mediaPlayer.getDuration();
+                        if (mpDur > 0 && current >= mpDur - REACH_GROWING_EXTEND_MS) {
+                            maybeExtendReachGrowingPlayback(false);
+                        }
+                        if (reachDownloadInProgress() && currentScreenState == STATE_PLAYER) {
+                            updateReachPlayerBufferUi(
+                                    reachGrowingTotalBytes > 0
+                                            ? (int) (reachGrowingCacheFile.length() * 100 / reachGrowingTotalBytes)
+                                            : 0,
+                                    reachGrowingCacheFile.length(), reachGrowingTotalBytes);
+                        }
+                    }
                 } else if (mediaPlayer != null && podcastGrowingCacheFile != null
                         && (podcastDownloadInProgress || podcastPartialPlaybackStarted)) {
                     updatePodcastGrowingTimeUi();
+                } else if (mediaPlayer != null && reachPartialPlaybackStarted && reachGrowingCacheFile != null) {
+                    updateReachGrowingTimeUi();
                 }
             } catch (Exception e) {
             }
@@ -4276,7 +4299,7 @@ public class MainActivity extends Activity {
 
     private void changeScreen(int state) {
         dismissThemedContextMenu();
-        if (currentScreenState == STATE_SOULSEEK && state != STATE_SOULSEEK && hasActiveReachDownload()) {
+        if (currentScreenState == STATE_SOULSEEK && state != STATE_SOULSEEK && shouldConfirmReachDownloadLeave(state)) {
             if (soulseekBailWithoutConfirm()) {
                 cancelSoulseekDownloadSilent();
                 soulseekDownloadStalled = false;
@@ -7343,7 +7366,7 @@ public class MainActivity extends Activity {
                     cancelSoulseekDownloadSilent();
                     soulseekDownloadStalled = false;
                     buildSoulseekResultsUI();
-                } else if (hasActiveReachDownload()) {
+                } else if (hasActiveReachDownload() && !reachPartialPlaybackStarted) {
                     confirmStopReachDownload(new Runnable() {
                         @Override
                         public void run() {
@@ -7770,15 +7793,15 @@ public class MainActivity extends Activity {
         containerSettingsItems.addView(btnAutoFetch);
 
         if (BuildConfig.FEATURE_OTA_UPDATE) {
-            LinearLayout btnSystemUpdate = createSettingsRow(RowKeys.SYSTEM_UPDATE, R.string.settings_system_update, true);
-            btnSystemUpdate.setOnClickListener(new View.OnClickListener() {
+            LinearLayout btnAppVersion = createSettingsRow(RowKeys.SYSTEM_UPDATE, R.string.settings_app_version, true);
+            btnAppVersion.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View v) {
                     clickFeedback();
                     buildUpdateSettingsUI();
                 }
             });
-            containerSettingsItems.addView(btnSystemUpdate);
+            containerSettingsItems.addView(btnAppVersion);
         }
 
 
@@ -8249,26 +8272,105 @@ public class MainActivity extends Activity {
         });
         containerSettingsItems.addView(btnBack);
 
-        String myVersionName = "1.0";
-        int myVersionCode = 1;
+        String myVersionName = BuildConfig.VERSION_NAME;
+        int myVersionCode = BuildConfig.VERSION_CODE;
         try {
             android.content.pm.PackageInfo pInfo = getPackageManager().getPackageInfo(getPackageName(), 0);
             myVersionName = pInfo.versionName;
             myVersionCode = pInfo.versionCode;
         } catch (Exception ignored) {}
 
-        final LinearLayout rowCurrent = createSettingRow(RowKeys.UPDATE_CURRENT, R.string.update_current_version, "v" + myVersionName);
-        final LinearLayout rowServer = createSettingRow(RowKeys.UPDATE_LATEST, R.string.update_latest_version, "Checking...");
+        final int localCode = myVersionCode;
+        final String localName = myVersionName;
+        final LinearLayout rowCurrent = createSettingRow(RowKeys.UPDATE_CURRENT, R.string.update_current_version,
+                "v" + localName);
+        final LinearLayout rowStable = createSettingRow(RowKeys.UPDATE_STABLE, R.string.update_latest_stable,
+                getString(R.string.update_checking));
+        final LinearLayout rowNightly = createSettingRow(RowKeys.UPDATE_NIGHTLY, R.string.update_latest_nightly,
+                getString(R.string.update_checking));
         containerSettingsItems.addView(rowCurrent);
-        containerSettingsItems.addView(rowServer);
+        containerSettingsItems.addView(rowStable);
+        containerSettingsItems.addView(rowNightly);
 
-        final Button btnExecuteUpdate = createListButton(getString(R.string.update_download));
-        btnExecuteUpdate.setVisibility(View.GONE);
-        containerSettingsItems.addView(btnExecuteUpdate);
+        final Button btnStable = createListButton(getString(R.string.update_download_stable));
+        btnStable.setVisibility(View.GONE);
+        containerSettingsItems.addView(btnStable);
+        final Button btnNightly = createListButton(getString(R.string.update_download_nightly));
+        btnNightly.setVisibility(View.GONE);
+        containerSettingsItems.addView(btnNightly);
 
-        checkForUpdate(myVersionCode, rowServer, btnExecuteUpdate);
+        checkGitHubUpdates(localCode, localName, rowStable, rowNightly, btnStable, btnNightly);
         if (containerSettingsItems.getChildCount() > 1) {
             containerSettingsItems.getChildAt(1).requestFocus();
+        }
+    }
+
+    private void checkGitHubUpdates(final int localCode, final String localName,
+            final LinearLayout rowStable, final LinearLayout rowNightly,
+            final Button btnStable, final Button btnNightly) {
+        final String repo = OTA_GITHUB_REPO != null && !OTA_GITHUB_REPO.trim().isEmpty()
+                ? OTA_GITHUB_REPO.trim() : SolarUpdateClient.DEFAULT_REPO;
+        final String token = OTA_GITHUB_TOKEN;
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    final List<SolarUpdateClient.ReleaseInfo> releases =
+                            SolarUpdateClient.fetchReleases(repo, token);
+                    final SolarUpdateClient.ReleaseInfo stable =
+                            SolarUpdateClient.latestStable(releases);
+                    final SolarUpdateClient.ReleaseInfo nightly =
+                            SolarUpdateClient.latestNightly(releases);
+                    runOnUiThread(new Runnable() {
+                        @Override
+                        public void run() {
+                            bindUpdateOffer(rowStable, btnStable, stable, localCode, localName, false);
+                            bindUpdateOffer(rowNightly, btnNightly, nightly, localCode, localName, true);
+                        }
+                    });
+                } catch (Exception e) {
+                    runOnUiThread(new Runnable() {
+                        @Override
+                        public void run() {
+                            setSettingRowValue(rowStable, getString(R.string.update_network_error),
+                                    ThemeManager.getDimmedTextColor(0x88));
+                            setSettingRowValue(rowNightly, getString(R.string.update_network_error),
+                                    ThemeManager.getDimmedTextColor(0x88));
+                        }
+                    });
+                }
+            }
+        }, "SolarUpdateCheck").start();
+    }
+
+    private void bindUpdateOffer(final LinearLayout row, final Button btn,
+            final SolarUpdateClient.ReleaseInfo offer, final int localCode, final String localName,
+            final boolean nightlyChannel) {
+        if (offer == null || offer.apkUrl.isEmpty()) {
+            setSettingRowValue(row, getString(R.string.update_none_found), ThemeManager.getDimmedTextColor(0x88));
+            btn.setVisibility(View.GONE);
+            return;
+        }
+        String label = nightlyChannel ? offer.tag : ("v" + offer.versionName);
+        setSettingRowValue(row, label, ThemeManager.getTextColorPrimary());
+        if (offer.isNewerThan(localCode, localName)) {
+            btn.setVisibility(View.VISIBLE);
+            btn.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    clickFeedback();
+                    downloadAndInstallApk(offer.apkUrl);
+                }
+            });
+        } else {
+            btn.setVisibility(View.VISIBLE);
+            btn.setText(getString(R.string.update_up_to_date));
+            btn.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    clickFeedback();
+                }
+            });
         }
     }
 
@@ -8288,69 +8390,6 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void checkForUpdate(final int myVersionCode, final LinearLayout rowServer, final Button btnExecuteUpdate) {
-        if (!BuildConfig.FEATURE_OTA_UPDATE) return;
-        if (OTA_METADATA_URL == null || OTA_METADATA_URL.trim().isEmpty()) {
-            setSettingRowValue(rowServer, "Disabled", ThemeManager.getDimmedTextColor(0x88));
-            return;
-        }
-        new Thread(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    final String json = com.solar.launcher.net.SolarHttp.getText(OTA_METADATA_URL);
-                    org.json.JSONObject root = new org.json.JSONObject(json);
-                    org.json.JSONObject element;
-                    if (root.has("elements")) {
-                        element = root.getJSONArray("elements").getJSONObject(0);
-                    } else {
-                        element = root;
-                    }
-                    final int serverVersionCode = element.optInt("versionCode", myVersionCode);
-                    final String serverVersionName = element.optString("versionName", String.valueOf(serverVersionCode));
-                    final String apkFileName = element.optString("outputFile", "");
-                    runOnUiThread(new Runnable() {
-                        @Override
-                        public void run() {
-                            setSettingRowValue(rowServer, "v" + serverVersionName, ThemeManager.getTextColorPrimary());
-                            if (serverVersionCode > myVersionCode && !apkFileName.trim().isEmpty()) {
-                                btnExecuteUpdate.setVisibility(View.VISIBLE);
-                                btnExecuteUpdate.setOnClickListener(new View.OnClickListener() {
-                                    @Override
-                                    public void onClick(View v) {
-                                        clickFeedback();
-                                        String directUrl = apkFileName;
-                                        if (!directUrl.startsWith("http://") && !directUrl.startsWith("https://")
-                                                && OTA_BASE_URL != null && !OTA_BASE_URL.trim().isEmpty()) {
-                                            directUrl = OTA_BASE_URL + directUrl;
-                                        }
-                                        downloadAndInstallApk(directUrl);
-                                    }
-                                });
-                            } else {
-                                btnExecuteUpdate.setVisibility(View.VISIBLE);
-                                btnExecuteUpdate.setText("ALREADY UP TO DATE");
-                                btnExecuteUpdate.setOnClickListener(new View.OnClickListener() {
-                                    @Override
-                                    public void onClick(View v) {
-                                        clickFeedback();
-                                    }
-                                });
-                            }
-                        }
-                    });
-                } catch (Exception e) {
-                    runOnUiThread(new Runnable() {
-                        @Override
-                        public void run() {
-                            setSettingRowValue(rowServer, "Network Error", 0xFFFF4444);
-                        }
-                    });
-                }
-            }
-        }).start();
-    }
-
     private void downloadAndInstallApk(final String apkUrl) {
         if (!BuildConfig.FEATURE_OTA_UPDATE) return;
         if (apkUrl == null || apkUrl.trim().isEmpty()) {
@@ -8362,7 +8401,7 @@ public class MainActivity extends Activity {
         final TextView tvProgress = new TextView(this);
         tvProgress.setGravity(android.view.Gravity.CENTER);
         tvProgress.setPadding(0, 30, 0, 0);
-        tvProgress.setText("Connecting...");
+        tvProgress.setText(getString(R.string.update_checking));
         LinearLayout layout = new LinearLayout(this);
         layout.setOrientation(LinearLayout.VERTICAL);
         layout.setPadding(50, 50, 50, 50);
@@ -8381,11 +8420,15 @@ public class MainActivity extends Activity {
                 try {
                     com.solar.launcher.net.TlsHelper.ensureSecurityProvider();
                     okhttp3.OkHttpClient client = com.solar.launcher.net.SolarHttp.longReadClient();
-                    okhttp3.Response resp = client.newCall(new okhttp3.Request.Builder()
+                    okhttp3.Request.Builder rb = new okhttp3.Request.Builder()
                             .url(apkUrl)
                             .header("User-Agent", "SolarLauncher/1.0")
-                            .header("Accept-Encoding", "identity")
-                            .build()).execute();
+                            .header("Accept", "application/octet-stream")
+                            .header("Accept-Encoding", "identity");
+                    if (OTA_GITHUB_TOKEN != null && !OTA_GITHUB_TOKEN.trim().isEmpty()) {
+                        rb.header("Authorization", "Bearer " + OTA_GITHUB_TOKEN.trim());
+                    }
+                    okhttp3.Response resp = client.newCall(rb.build()).execute();
                     if (!resp.isSuccessful() || resp.body() == null) {
                         int code = resp.code();
                         resp.close();
@@ -11032,7 +11075,11 @@ public class MainActivity extends Activity {
                         showSoulseekTryAnotherRow(false);
                     }
                     int pct = total > 0 ? (int) (done * 100 / total) : 0;
+                    if (total > 0) reachGrowingTotalBytes = total;
                     updateSoulseekDownloadProgress(pct, done, total);
+                    if (reachPartialPlaybackStarted && currentScreenState == STATE_PLAYER) {
+                        updateReachPlayerBufferUi(pct, done, total);
+                    }
                 }
             });
         }
@@ -11045,6 +11092,7 @@ public class MainActivity extends Activity {
                     if (soulseekActiveDownload == null || partialFile == null) return;
                     final int action = soulseekPendingAction;
                     int pct = total > 0 ? (int) (done * 100 / total) : 0;
+                    if (total > 0) reachGrowingTotalBytes = total;
                     updateSoulseekDownloadProgress(pct, done, total);
                     if (action == SOULSEEK_ACTION_PLAY && !reachPartialPlaybackStarted) {
                         reachPartialPlaybackStarted = true;
@@ -11052,6 +11100,10 @@ public class MainActivity extends Activity {
                         reachGrowingPreparedBytes = partialFile.length();
                         stopSoulseekDownloadUiRunnables();
                         startReachPlayFromPartial(partialFile);
+                    } else if (action == SOULSEEK_ACTION_PLAY && reachPartialPlaybackStarted) {
+                        reachGrowingCacheFile = partialFile;
+                        reachGrowingPreparedBytes = partialFile.length();
+                        updateReachGrowingDurationUi();
                     } else if (action == SOULSEEK_ACTION_QUEUE && reachQueuePartialFile == null) {
                         reachQueuePartialFile = partialFile;
                         appendTrackToMusicQueue(partialFile);
@@ -11069,8 +11121,9 @@ public class MainActivity extends Activity {
                 public void run() {
                     final int action = soulseekPendingAction;
                     final File queuePartial = reachQueuePartialFile;
+                    final boolean reachStream = reachPartialPlaybackStarted;
                     stopSoulseekDownloadUiRunnables();
-                    progressHandler.removeCallbacks(reachGrowingEdgePoll);
+                    if (!reachStream) progressHandler.removeCallbacks(reachGrowingEdgePoll);
                     soulseekActiveDownload = null;
                     soulseekDownloadProgressBar = null;
                     soulseekDownloadPercentText = null;
@@ -11079,11 +11132,15 @@ public class MainActivity extends Activity {
                     soulseekPendingAction = 0;
                     reachQueuePartialFile = null;
                     if (action == SOULSEEK_ACTION_PLAY) {
-                        soulseekUiMode = SOULSEEK_UI_SEARCH;
                         if (reachPartialPlaybackStarted) {
                             reachGrowingCacheFile = file;
-                            maybeExtendReachGrowingPlayback(true);
+                            reachGrowingTotalBytes = file.length();
+                            clearReachLoadingArtistLabel();
+                            updateReachGrowingDurationUi();
+                            maybeExtendReachGrowingPlayback(false);
                         } else {
+                            progressHandler.removeCallbacks(reachGrowingEdgePoll);
+                            soulseekUiMode = SOULSEEK_UI_SEARCH;
                             List<File> one = new ArrayList<File>();
                             one.add(file);
                             playTrackList(one, 0);
@@ -11101,7 +11158,9 @@ public class MainActivity extends Activity {
                         if (currentScreenState == STATE_SOULSEEK) buildSoulseekResultsUI();
                         scanMediaLibraryAsync();
                     }
-                    if (!isSoulseekUiActive()) soulseekOffScreenCleanup();
+                    if (!isSoulseekUiActive() && !shouldDeferSoulseekOffScreenCleanup()) {
+                        soulseekOffScreenCleanup();
+                    }
                 }
             });
         }
@@ -11112,7 +11171,9 @@ public class MainActivity extends Activity {
                 @Override
                 public void run() {
                     if ("Download cancelled".equals(message)) {
-                        if (!isSoulseekUiActive()) soulseekOffScreenCleanup();
+                        if (!isSoulseekUiActive() && !shouldDeferSoulseekOffScreenCleanup()) {
+                            soulseekOffScreenCleanup();
+                        }
                         return;
                     }
                     String msg = humanizeSoulseekError(message);
@@ -11142,7 +11203,9 @@ public class MainActivity extends Activity {
                     } else {
                         Toast.makeText(MainActivity.this, msg, Toast.LENGTH_LONG).show();
                     }
-                    if (!isSoulseekUiActive()) soulseekOffScreenCleanup();
+                    if (!isSoulseekUiActive() && !shouldDeferSoulseekOffScreenCleanup()) {
+                        soulseekOffScreenCleanup();
+                    }
                 }
             });
         }
@@ -11647,6 +11710,7 @@ public class MainActivity extends Activity {
         reachGrowingCacheFile = null;
         reachQueuePartialFile = null;
         reachGrowingPreparedBytes = 0;
+        reachGrowingTotalBytes = 0;
         reachGrowingSeekMs = 0;
         progressHandler.removeCallbacks(reachGrowingEdgePoll);
         soulseekDownloadUiFailed = false;
@@ -12001,7 +12065,7 @@ public class MainActivity extends Activity {
             if (currentScreenState == STATE_SOULSEEK) buildSoulseekResultsUI();
             return;
         }
-        if (hasActiveReachDownload()) {
+        if (hasActiveReachDownload() && !reachPartialPlaybackStarted) {
             confirmStopReachDownload(new Runnable() {
                 @Override
                 public void run() {
@@ -12029,6 +12093,7 @@ public class MainActivity extends Activity {
         reachGrowingCacheFile = null;
         reachQueuePartialFile = null;
         reachGrowingPreparedBytes = 0;
+        reachGrowingTotalBytes = 0;
         progressHandler.removeCallbacks(reachGrowingEdgePoll);
         purgeUnreferencedReachCache();
         updateSoulseekSharePolicy();
@@ -12049,13 +12114,14 @@ public class MainActivity extends Activity {
         purgeUnreferencedReachCache();
         if (!playback.musicPlaylist().isEmpty()) {
             tvPlayerTitle.setText(partial.getName());
-            tvPlayerArtist.setText(getString(R.string.reach_loading_track));
+            tvPlayerArtist.setText(getString(R.string.reach_buffering_track));
             playerProgress.setProgress(0);
             tvPlayerTimeCurrent.setText("00:00");
             tvPlayerTimeTotal.setText("00:00");
         }
         isPausedByHand = false;
-        changeScreen(STATE_PLAYER);
+        playerReturnScreen = STATE_SOULSEEK;
+        applyScreenChange(STATE_PLAYER);
         startReachFromGrowingFile(partial, 0);
     }
 
@@ -12103,17 +12169,14 @@ public class MainActivity extends Activity {
             reachGrowingReprepareInFlight = true;
             reachGrowingSeekMs = seekMs;
             reachGrowingPreparedBytes = growingFile.length();
-            if (mediaPlayer != null) {
-                try {
-                    mediaPlayer.stop();
-                    mediaPlayer.release();
-                } catch (Exception ignored) {}
-                mediaPlayer = null;
+            int previousSessionId = mediaPlayer != null ? mediaPlayer.getAudioSessionId() : 0;
+            if (mediaPlayer == null) mediaPlayer = new MediaPlayer();
+            else mediaPlayer.reset();
+            if (previousSessionId != 0) {
+                try { mediaPlayer.setAudioSessionId(previousSessionId); } catch (Exception ignored) {}
             }
-            mediaPlayer = new MediaPlayer();
-            mediaPlayer.setDataSource(growingFile.getAbsolutePath());
-            mediaPlayer.prepare();
-            reachGrowingReprepareInFlight = false;
+            mediaPlayer.setWakeMode(getApplicationContext(), PowerManager.PARTIAL_WAKE_LOCK);
+            mediaPlayer.setAudioStreamType(AudioManager.STREAM_MUSIC);
             mediaPlayer.setOnCompletionListener(new MediaPlayer.OnCompletionListener() {
                 @Override
                 public void onCompletion(MediaPlayer mp) {
@@ -12127,8 +12190,14 @@ public class MainActivity extends Activity {
             mediaPlayer.setOnPreparedListener(new MediaPlayer.OnPreparedListener() {
                 @Override
                 public void onPrepared(MediaPlayer mp) {
+                    reachGrowingReprepareInFlight = false;
                     int dur = mp.getDuration();
+                    if (reachPartialPlaybackStarted) {
+                        int est = reachGrowingDisplayDurationMs();
+                        if (est > dur) dur = est;
+                    }
                     if (dur > 0) tvPlayerTimeTotal.setText(formatTime(dur));
+                    updateReachGrowingDurationUi();
                     int growingSeek = reachGrowingSeekMs;
                     reachGrowingSeekMs = 0;
                     if (growingSeek > 0) {
@@ -12137,11 +12206,25 @@ public class MainActivity extends Activity {
                     }
                     if (!isPausedByHand) mp.start();
                     updatePlayerStatusIndicators();
+                    clearReachLoadingArtistLabel();
                     if (reachDownloadInProgress()) {
                         progressHandler.postDelayed(reachGrowingEdgePoll, 300);
                     }
                 }
             });
+            mediaPlayer.setOnErrorListener(new MediaPlayer.OnErrorListener() {
+                @Override
+                public boolean onError(MediaPlayer mp, int what, int extra) {
+                    reachGrowingReprepareInFlight = false;
+                    if (reachPartialPlaybackStarted && reachDownloadInProgress()) {
+                        progressHandler.postDelayed(reachGrowingEdgePoll, 400);
+                        return true;
+                    }
+                    return false;
+                }
+            });
+            mediaPlayer.setDataSource(growingFile.getAbsolutePath());
+            mediaPlayer.prepareAsync();
         } catch (Exception e) {
             reachGrowingReprepareInFlight = false;
             if (!reachPartialPlaybackStarted) {
@@ -12181,6 +12264,34 @@ public class MainActivity extends Activity {
             containerBrowserItems.addView(b);
             shown++;
         }
+    }
+
+    /** Keep Reach download + client alive while streaming on Now Playing (like podcast handoff). */
+    boolean keepReachStreamHandoffForScreen(int targetState) {
+        return targetState == STATE_PLAYER && reachPartialPlaybackStarted && hasActiveReachDownload();
+    }
+
+    void pauseSoulseekUiOnly() {
+        soulseekUiHandler.removeCallbacks(soulseekUiFlushRunnable);
+        stopSoulseekDownloadUiRunnables();
+        soulseekUiFlushScheduled = false;
+        if (soulseekClient != null) soulseekClient.cancelSearch();
+    }
+
+    boolean shouldDeferSoulseekOffScreenCleanup() {
+        return reachPartialPlaybackStarted
+                && (reachDownloadInProgress() || currentScreenState == STATE_PLAYER);
+    }
+
+    void finalizeReachStreamHandoff() {
+        if (!reachPartialPlaybackStarted) return;
+        reachPartialPlaybackStarted = false;
+        reachGrowingCacheFile = null;
+        reachGrowingPreparedBytes = 0;
+        reachGrowingTotalBytes = 0;
+        reachGrowingSeekMs = 0;
+        progressHandler.removeCallbacks(reachGrowingEdgePoll);
+        if (!isSoulseekUiActive()) soulseekOffScreenCleanup();
     }
 
     void teardownSoulseekSession() {
@@ -12250,7 +12361,9 @@ public class MainActivity extends Activity {
 
     void sessionSweepHandlers(int from, int to) {
         progressHandler.removeCallbacks(podcastGrowingEdgePoll);
-        progressHandler.removeCallbacks(reachGrowingEdgePoll);
+        if (!keepReachStreamHandoffForScreen(to)) {
+            progressHandler.removeCallbacks(reachGrowingEdgePoll);
+        }
         fastScrollHandler.removeCallbacks(hideFastScrollTask);
         if (to == STATE_BROWSER) {
             cancelReachDownloadIfAny(false);
@@ -12261,6 +12374,74 @@ public class MainActivity extends Activity {
         if (soulseekDownloadUiFailed) return false;
         if (soulseekActiveDownload != null) return true;
         return soulseekClient != null && soulseekClient.isTransferActive();
+    }
+
+    /** Block leaving Reach while downloading — except hand-off to Now Playing during stream. */
+    private boolean shouldConfirmReachDownloadLeave(int targetState) {
+        if (!hasActiveReachDownload()) return false;
+        if (targetState == STATE_PLAYER && reachPartialPlaybackStarted) return false;
+        if (currentScreenState == STATE_PLAYER && reachPartialPlaybackStarted
+                && targetState == STATE_SOULSEEK) {
+            return false;
+        }
+        return true;
+    }
+
+    private void updateReachGrowingDurationUi() {
+        updateReachGrowingTimeUi();
+    }
+
+    private int reachGrowingDisplayDurationMs() {
+        try {
+            if (mediaPlayer == null) return 0;
+            int mpDur = mediaPlayer.getDuration();
+            if (mpDur <= 0 || reachGrowingCacheFile == null) return mpDur;
+            long fileLen = reachGrowingCacheFile.length();
+            if (reachGrowingTotalBytes > fileLen && fileLen > 0) {
+                return (int) Math.min(Integer.MAX_VALUE, (long) mpDur * reachGrowingTotalBytes / fileLen);
+            }
+            return mpDur;
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
+    private void updateReachGrowingTimeUi() {
+        if (tvPlayerTimeTotal == null) return;
+        int dur = reachGrowingDisplayDurationMs();
+        if (dur <= 0) return;
+        tvPlayerTimeTotal.setText(formatTime(dur));
+        if (mediaPlayer != null) {
+            try {
+                int current = mediaPlayer.getCurrentPosition();
+                if (playerProgress != null && dur > 0) {
+                    playerProgress.setProgress(Math.min(100, current * 100 / dur));
+                }
+                if (tvPlayerTimeCurrent != null) tvPlayerTimeCurrent.setText(formatTime(current));
+            } catch (Exception ignored) {}
+        }
+    }
+
+    private void updateReachPlayerBufferUi(int pct, long done, long total) {
+        if (tvPlayerArtist == null) return;
+        if (pct >= 95 || !reachDownloadInProgress()) {
+            clearReachLoadingArtistLabel();
+        } else {
+            tvPlayerArtist.setText(getString(R.string.reach_buffering_track));
+        }
+        updateReachGrowingDurationUi();
+    }
+
+    private void clearReachLoadingArtistLabel() {
+        if (tvPlayerArtist == null) return;
+        CharSequence t = tvPlayerArtist.getText();
+        if (t == null || t.length() == 0) return;
+        String s = t.toString();
+        if (s.equals(getString(R.string.reach_loading_track))
+                || s.equals(getString(R.string.reach_buffering_track))
+                || s.startsWith("Buffering")) {
+            tvPlayerArtist.setText("");
+        }
     }
 
     private void confirmStopReachDownload(final Runnable onConfirmed) {
@@ -13283,11 +13464,69 @@ public class MainActivity extends Activity {
         }).start();
     }
 
+    private static final String SYSTEM_APK_PATH = "/system/app/com.solar.launcher.apk";
+
+    private boolean isInstalledAsSystemApp() {
+        try {
+            String src = getPackageManager().getApplicationInfo(getPackageName(), 0).sourceDir;
+            return src != null && src.startsWith("/system/");
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private boolean installSystemApk(File apkFile) {
+        if (installSystemApkViaBundledScript(apkFile)) return true;
+        String cmd = "mount -o remount,rw /system && cp "
+                + shQuote(apkFile.getAbsolutePath()) + " " + shQuote(SYSTEM_APK_PATH)
+                + " && chmod 644 " + shQuote(SYSTEM_APK_PATH) + " && sync";
+        return runSuCommandSilently(cmd);
+    }
+
+    private boolean installSystemApkViaBundledScript(File apkFile) {
+        java.io.InputStream in = null;
+        java.io.FileOutputStream out = null;
+        try {
+            in = getAssets().open("scripts/update-system-apk.sh");
+            File script = new File(getCacheDir(), "update-system-apk.sh");
+            out = new java.io.FileOutputStream(script);
+            byte[] buf = new byte[4096];
+            int n;
+            while ((n = in.read(buf)) != -1) out.write(buf, 0, n);
+            out.close();
+            out = null;
+            in.close();
+            in = null;
+            script.setExecutable(true, false);
+            return runSuCommandSilently("sh " + shQuote(script.getAbsolutePath()) + " "
+                    + shQuote(apkFile.getAbsolutePath()));
+        } catch (Exception ignored) {
+            return false;
+        } finally {
+            if (in != null) try { in.close(); } catch (Exception ignored) {}
+            if (out != null) try { out.close(); } catch (Exception ignored) {}
+        }
+    }
+
+    private void rebootDeviceSilently() {
+        new Handler().postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                runSuCommandSilently("reboot");
+            }
+        }, 1500);
+    }
+
     private void installApk(File apkFile) {
         try {
             if (apkFile != null && apkFile.isFile()) {
-                // ponytail: rooted path first; fallback to intent install for non-root.
-                if (runSuCommandSilently("pm install -r " + shQuote(apkFile.getAbsolutePath()))) {
+                if (isInstalledAsSystemApp()) {
+                    if (installSystemApk(apkFile)) {
+                        Toast.makeText(this, getString(R.string.toast_install_reboot), Toast.LENGTH_LONG).show();
+                        rebootDeviceSilently();
+                        return;
+                    }
+                } else if (runSuCommandSilently("pm install -r " + shQuote(apkFile.getAbsolutePath()))) {
                     Toast.makeText(this, getString(R.string.toast_install_ok), Toast.LENGTH_SHORT).show();
                     return;
                 }
@@ -13308,6 +13547,7 @@ public class MainActivity extends Activity {
     private void playTrackList(List<File> playlist, int startIndex, String activePlaylistName) {
         saveCurrentPodcastResume();
         stopPodcastDownloadFully();
+        finalizeReachStreamHandoff();
         playback.activateMusic(playlist, startIndex, isShuffleMode);
         playback.setMusicActivePlaylistName(activePlaylistName);
         purgeUnreferencedReachCache();
@@ -13777,6 +14017,7 @@ public class MainActivity extends Activity {
     }
     private void nextTrack() {
         lastTrackChangeTime = System.currentTimeMillis();
+        finalizeReachStreamHandoff();
         if (playback.isPodcastActive()) {
             if (playback.podcastQueue().isEmpty()) return;
             int next = (playback.podcastIndex() + 1) % playback.podcastQueue().size();
@@ -13791,6 +14032,7 @@ public class MainActivity extends Activity {
 
     private void prevTrack() {
         lastTrackChangeTime = System.currentTimeMillis();
+        finalizeReachStreamHandoff();
         if (playback.isPodcastActive()) {
             if (playback.podcastQueue().isEmpty()) return;
             int prev = (playback.podcastIndex() - 1 + playback.podcastQueue().size()) % playback.podcastQueue().size();

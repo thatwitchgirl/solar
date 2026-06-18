@@ -50,6 +50,8 @@ public final class RowKeys {
     public static final String BT_POWER = "bluetooth.power";
     public static final String WIFI_POWER = "wifi.power";
     public static final String UPDATE_CURRENT = "update.current";
+    public static final String UPDATE_STABLE = "update.stable";
+    public static final String UPDATE_NIGHTLY = "update.nightly";
     public static final String UPDATE_LATEST = "update.latest";
     public static final String DT_YEAR = "datetime.year";
     public static final String DT_MONTH = "datetime.month";
@@ -89,7 +91,7 @@ public final class RowKeys {
         if (WIFI_SETUP.equals(rowKey)) return R.string.settings_wifi_setup;
         if (SOULSEEK.equals(rowKey)) return R.string.settings_soulseek;
         if (AUTO_FETCH.equals(rowKey)) return R.string.settings_auto_fetch;
-        if (SYSTEM_UPDATE.equals(rowKey)) return R.string.settings_system_update;
+        if (SYSTEM_UPDATE.equals(rowKey)) return R.string.settings_app_version;
         if (BLUETOOTH_SETUP.equals(rowKey)) return R.string.settings_bluetooth_setup;
         if (BRIGHTNESS.equals(rowKey)) return R.string.settings_display_brightness;
         if (STORAGE.equals(rowKey)) return R.string.settings_storage_info;
@@ -118,6 +120,8 @@ public final class RowKeys {
         if (BT_POWER.equals(rowKey)) return R.string.bluetooth_power;
         if (WIFI_POWER.equals(rowKey)) return R.string.wifi_power;
         if (UPDATE_CURRENT.equals(rowKey)) return R.string.update_current_version;
+        if (UPDATE_STABLE.equals(rowKey)) return R.string.update_latest_stable;
+        if (UPDATE_NIGHTLY.equals(rowKey)) return R.string.update_latest_nightly;
         if (UPDATE_LATEST.equals(rowKey)) return R.string.update_latest_version;
         if (DT_YEAR.equals(rowKey)) return R.string.datetime_year;
         if (DT_MONTH.equals(rowKey)) return R.string.datetime_month;

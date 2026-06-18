@@ -9,7 +9,11 @@ public final class SessionLifecycle {
         if (from == to) return;
 
         if (from == MainActivity.STATE_SOULSEEK && to != MainActivity.STATE_SOULSEEK) {
-            activity.teardownSoulseekSession();
+            if (activity.keepReachStreamHandoffForScreen(to)) {
+                activity.pauseSoulseekUiOnly();
+            } else {
+                activity.teardownSoulseekSession();
+            }
         }
         if (from == MainActivity.STATE_BLUETOOTH && to != MainActivity.STATE_BLUETOOTH) {
             activity.teardownBluetoothSession();

@@ -2,7 +2,10 @@ package com.solar.launcher.podcast;
 
 import org.junit.Test;
 
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 public class OpenRssClientTest {
     @Test
@@ -77,5 +80,39 @@ public class OpenRssClientTest {
         String url = OpenRssClient.buildSearchUrl("", "US", null, 10);
         if (!url.contains("term=podcast")) throw new AssertionError("default term");
         if (!url.contains("country=US")) throw new AssertionError("country");
+    }
+
+    @Test
+    public void normalizeFeedUrl_treatsHttpAndHttpsSame() {
+        String a = OpenRssClient.normalizeFeedUrl("https://feeds.example.com/podcast.xml/");
+        String b = OpenRssClient.normalizeFeedUrl("http://feeds.example.com/podcast.xml");
+        if (!a.equals(b)) throw new AssertionError("scheme + trailing slash");
+    }
+
+    @Test
+    public void mergePodcasts_dedupesByFeedUrl() {
+        List<OpenRssClient.Podcast> out = new ArrayList<OpenRssClient.Podcast>();
+        Set<String> seen = new HashSet<String>();
+        List<OpenRssClient.Podcast> first = new ArrayList<OpenRssClient.Podcast>();
+        first.add(new OpenRssClient.Podcast("A", "Pub", "https://x.test/feed.xml", null));
+        List<OpenRssClient.Podcast> second = new ArrayList<OpenRssClient.Podcast>();
+        second.add(new OpenRssClient.Podcast("B", "Pub", "http://x.test/feed.xml", null));
+        second.add(new OpenRssClient.Podcast("C", "Pub", "https://y.test/other.rss", null));
+        OpenRssClient.mergePodcasts(out, seen, first);
+        OpenRssClient.mergePodcasts(out, seen, second);
+        if (out.size() != 2) throw new AssertionError("deduped count");
+        if (!"A".equals(out.get(0).title)) throw new AssertionError("itunes order kept");
+    }
+
+    @Test
+    public void httpsThenHttpVariants_orderMatchesScheme() {
+        String[] httpsFirst = PodcastLibrary.httpsThenHttpVariants("https://host/ep.mp3");
+        if (httpsFirst.length != 2 || !httpsFirst[0].startsWith("https://")) {
+            throw new AssertionError("https first");
+        }
+        String[] httpFirst = PodcastLibrary.httpsThenHttpVariants("http://host/ep.mp3");
+        if (httpFirst.length != 2 || !httpFirst[0].startsWith("https://")) {
+            throw new AssertionError("upgrade http to https first");
+        }
     }
 }

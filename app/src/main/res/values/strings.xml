@@ -150,6 +150,7 @@
     <string name="toast_time_applied">Time applied successfully!</string>
     <string name="toast_time_failed">Failed: Root access required.</string>
     <string name="toast_install_ok">Installed update.</string>
+    <string name="toast_install_reboot">Update installed. Rebooting…</string>
     <string name="toast_install_failed">Install Failed.</string>
     <string name="toast_corrupted_file">Corrupted file detected. Skipping…</string>
     <string name="toast_audio_permission">Please grant Audio Permission first!</string>
@@ -181,6 +182,7 @@
     <string name="settings_soulseek">Reach</string>
     <string name="settings_auto_fetch">Auto Fetch Album Art</string>
     <string name="settings_system_update">System Update</string>
+    <string name="settings_app_version">App Version</string>
     <string name="settings_bluetooth_setup">Bluetooth Setup</string>
     <string name="settings_display_brightness">Display Brightness</string>
     <string name="settings_storage_info">Storage Info</string>
@@ -359,11 +361,17 @@
     <!-- System update -->
     <string name="update_current_version">Current Version</string>
     <string name="update_latest_version">Latest Version</string>
+    <string name="update_latest_stable">Latest Stable</string>
+    <string name="update_latest_nightly">Latest Nightly</string>
     <string name="update_checking">Checking…</string>
     <string name="update_download">DOWNLOAD &amp; UPDATE</string>
+    <string name="update_download_stable">DOWNLOAD STABLE</string>
+    <string name="update_download_nightly">DOWNLOAD NIGHTLY</string>
     <string name="update_up_to_date">ALREADY UP TO DATE</string>
     <string name="update_url_missing">Update URL missing.</string>
     <string name="update_download_title">Downloading Update</string>
+    <string name="update_network_error">Could not reach GitHub</string>
+    <string name="update_none_found">No release found</string>
 
     <!-- Soulseek rows -->
     <string name="soulseek_search_row">Search</string>
@@ -524,6 +532,8 @@
     <string name="path_podcasts_saved_show">Podcasts › Saved › %1$s</string>
     <string name="toast_added_to_queue">Added to queue</string>
     <string name="reach_loading_track">Loading…</string>
+    <string name="reach_buffering_track">Buffering…</string>
+    <string name="reach_buffering_pct">Buffering · %1$d%%</string>
     <string name="podcasts_no_results">No podcasts found.</string>
     <string name="podcasts_filtered_unavailable">%1$d podcast(s) hidden — feed or audio not reachable on this device.</string>
     <string name="podcasts_episodes_filtered">%1$d episode(s) hidden — audio not reachable on this device.</string>
