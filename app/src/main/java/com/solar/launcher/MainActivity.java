@@ -463,11 +463,15 @@ public class MainActivity extends Activity {
     private FrameLayout settingsMenuHost;
     private View settingsPreviewPane;
     private boolean centerLongPressHandled = false;
-    private boolean centerPrepareSleep = false;
     private long centerKeyDownTime = 0;
-    private static final long CENTER_SLEEP_HOLD_MS = 1500;
-    private final Runnable centerSleepPrepareRunnable = new Runnable() {
-        @Override public void run() { centerPrepareSleep = true; }
+    private static final long CENTER_SLEEP_HOLD_MS = 300;
+    private final Runnable centerSleepRunnable = new Runnable() {
+        @Override
+        public void run() {
+            if (centerLongPressHandled || centerKeyDownTime == 0) return;
+            centerLongPressHandled = true;
+            performScreenSleep(false);
+        }
     };
     private long backKeyDownTime = 0;
     private boolean backLongPressHandled = false;
@@ -6569,40 +6573,30 @@ public class MainActivity extends Activity {
         } catch (Exception e) {}
     }
 
-    private void handleCenterLongPress() {
-        lockScreen();
-    }
-
-    /** Center/OK hold ~1.5s then release to sleep (stock Y1 pattern, shorter threshold). */
+    /** Center/OK hold ~0.3s — sleep while pressed or on release after threshold. */
     private boolean trackCenterKeyDown(KeyEvent event, boolean fromContextMenu) {
         if (fromContextMenu) {
             suppressListClickUntil = System.currentTimeMillis() + CONTEXT_MENU_CLICK_SUPPRESS_MS;
         }
         if (event.getRepeatCount() == 0) {
             centerLongPressHandled = false;
-            centerPrepareSleep = false;
             centerKeyDownTime = System.currentTimeMillis();
-            clockHandler.removeCallbacks(centerSleepPrepareRunnable);
-            clockHandler.postDelayed(centerSleepPrepareRunnable, CENTER_SLEEP_HOLD_MS);
-        } else if (System.currentTimeMillis() - centerKeyDownTime >= CENTER_SLEEP_HOLD_MS) {
-            centerPrepareSleep = true;
+            clockHandler.removeCallbacks(centerSleepRunnable);
+            clockHandler.postDelayed(centerSleepRunnable, CENTER_SLEEP_HOLD_MS);
         }
         return true;
     }
 
     private boolean handleCenterKeyUp(KeyEvent event, boolean fromContextMenu) {
-        clockHandler.removeCallbacks(centerSleepPrepareRunnable);
-        boolean heldLongEnough = centerPrepareSleep
-                || (centerKeyDownTime > 0
-                && System.currentTimeMillis() - centerKeyDownTime >= CENTER_SLEEP_HOLD_MS);
-        if (heldLongEnough && !centerLongPressHandled) {
-            centerPrepareSleep = false;
-            handleCenterLongPress();
-            centerLongPressHandled = true;
+        long heldMs = centerKeyDownTime > 0 ? System.currentTimeMillis() - centerKeyDownTime : 0;
+        clockHandler.removeCallbacks(centerSleepRunnable);
+        centerKeyDownTime = 0;
+        if (centerLongPressHandled) {
+            centerLongPressHandled = false;
             return true;
         }
-        if (centerLongPressHandled) {
-            centerPrepareSleep = false;
+        if (heldMs >= CENTER_SLEEP_HOLD_MS) {
+            performScreenSleep(false);
             return true;
         }
         if (fromContextMenu) {
@@ -7151,33 +7145,46 @@ public class MainActivity extends Activity {
         addContextAction(getString(R.string.context_action_lock_screen), "keyLockOn", null, new Runnable() {
             @Override
             public void run() {
-                lockScreen();
+                performScreenSleep(true);
             }
         });
     }
 
-    private void lockScreen() {
-        clickFeedback();
+    /** Screen off — su power key first (Y1), then goToSleep; shared by hold-center and context menu. */
+    private void performScreenSleep(boolean feedback) {
+        if (feedback) clickFeedback();
+        if (trySuScreenOff()) return;
         try {
             PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
             java.lang.reflect.Method goToSleep = PowerManager.class.getMethod(
                     "goToSleep", long.class);
             goToSleep.invoke(pm, android.os.SystemClock.uptimeMillis());
-            boolean on = true;
-            try {
-                if (android.os.Build.VERSION.SDK_INT >= 20) on = pm.isInteractive();
-                else on = pm.isScreenOn();
-            } catch (Exception ignored) {}
-            if (!on) return;
+            if (!isScreenInteractive()) return;
         } catch (Exception ignored) {}
-        // ponytail: /system/app APK is not android.uid.system on Y1 — root power key works
+        if (trySuScreenOff()) return;
+        Toast.makeText(this, getString(R.string.context_action_lock_failed), Toast.LENGTH_SHORT).show();
+    }
+
+    private boolean isScreenInteractive() {
+        try {
+            PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+            if (android.os.Build.VERSION.SDK_INT >= 20) return pm.isInteractive();
+            return pm.isScreenOn();
+        } catch (Exception e) {
+            return true;
+        }
+    }
+
+    /** ponytail: Y1 system APK is not android.uid.system — root power key is the fast path */
+    private boolean trySuScreenOff() {
         for (String su : new String[] {"/system/xbin/su", "su"}) {
             try {
                 Process p = Runtime.getRuntime().exec(new String[] {su, "-c", "input keyevent 26"});
-                if (p.waitFor() == 0) return;
+                if (p.waitFor() != 0) continue;
+                if (!isScreenInteractive()) return true;
             } catch (Exception ignored) {}
         }
-        Toast.makeText(this, getString(R.string.context_action_lock_failed), Toast.LENGTH_SHORT).show();
+        return false;
     }
 
     private void restartCurrentPodcast() {
