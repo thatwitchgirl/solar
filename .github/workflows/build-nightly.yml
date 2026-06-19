@@ -5,6 +5,9 @@ on:
     branches: [nightly]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 concurrency:
   group: solar-release-nightly
   cancel-in-progress: true
