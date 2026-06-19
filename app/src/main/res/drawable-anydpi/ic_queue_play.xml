@@ -1,0 +1,16 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="#FFFFFF"
+    android:alpha="0.8">
+  <!-- Queue list (hamburger) -->
+  <path
+      android:fillColor="@android:color/white"
+      android:pathData="M3,6h9v2H3zM3,11h9v2H3zM3,16h9v2H3z"/>
+  <!-- Play -->
+  <path
+      android:fillColor="@android:color/white"
+      android:pathData="M14,8.5l7,3.5 -7,3.5z"/>
+</vector>

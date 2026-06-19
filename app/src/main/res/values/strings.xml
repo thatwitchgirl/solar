@@ -532,6 +532,7 @@
     <string name="context_quick_volume">Volume</string>
     <string name="context_quick_power">Power</string>
     <string name="context_quick_queue">Queue</string>
+    <string name="context_turn_on">Turn on</string>
     <string name="context_shutdown_title">Shut down?</string>
     <string name="context_shutdown_message">The device will power off.</string>
     <string name="context_shutdown_confirm">Shut down</string>
