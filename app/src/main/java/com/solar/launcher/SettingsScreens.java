@@ -23,6 +23,7 @@ public final class SettingsScreens {
     public static final String EQ = "settings.eq";
     /** Music playback queue editor (reorder / remove). */
     public static final String MUSIC_QUEUE = "settings.music_queue";
+    public static final String DEBUG = "settings.debug";
 
     public static int titleResId(String key) {
         if (key == null) return 0;
@@ -44,6 +45,7 @@ public final class SettingsScreens {
         if (EQ.equals(key)) return R.string.settings_sub_eq;
         if (THEME_VARIANT.equals(key)) return R.string.settings_sub_theme_variant;
         if (MUSIC_QUEUE.equals(key)) return R.string.settings_sub_music_queue;
+        if (DEBUG.equals(key)) return R.string.settings_sub_debug;
         return 0;
     }
 

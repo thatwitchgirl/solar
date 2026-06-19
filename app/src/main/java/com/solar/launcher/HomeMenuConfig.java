@@ -44,6 +44,7 @@ public final class HomeMenuConfig {
         List<Entry> out = new ArrayList<Entry>();
         for (String id : ids) {
             if (ID_MORE.equals(id)) continue;
+            if (!DebugPrefs.shouldShowShortcut(prefs, id)) continue;
             Entry e = find(id);
             if (e != null) out.add(e);
         }
@@ -54,8 +55,18 @@ public final class HomeMenuConfig {
         List<String> ids = loadMoreOrderIds(prefs);
         List<Entry> out = new ArrayList<Entry>();
         for (String id : ids) {
+            if (!DebugPrefs.shouldShowShortcut(prefs, id)) continue;
             Entry e = find(id);
             if (e != null) out.add(e);
+        }
+        return out;
+    }
+
+    /** Editor shortcut list — respects Show unimplemented. */
+    public static List<Entry> catalogForEditor(SharedPreferences prefs) {
+        List<Entry> out = new ArrayList<Entry>();
+        for (Entry e : CATALOG) {
+            if (DebugPrefs.shouldShowShortcut(prefs, e.id)) out.add(e);
         }
         return out;
     }
@@ -137,6 +148,7 @@ public final class HomeMenuConfig {
         List<Entry> out = new ArrayList<Entry>();
         for (String id : ids) {
             if (ID_MORE.equals(id)) continue;
+            if (!DebugPrefs.shouldShowShortcut(prefs, id)) continue;
             if (!ConnectivityHelper.shouldShowHomeShortcut(id, internetAvailable,
                     localNetworkAvailable, podcastsSaved)) continue;
             Entry e = find(id);
@@ -166,6 +178,7 @@ public final class HomeMenuConfig {
         List<String> ids = loadMoreOrderIds(prefs);
         List<Entry> out = new ArrayList<Entry>();
         for (String id : ids) {
+            if (!DebugPrefs.shouldShowShortcut(prefs, id)) continue;
             if (!ConnectivityHelper.shouldShowHomeShortcut(id, internetAvailable,
                     localNetworkAvailable, podcastsSaved)) continue;
             Entry e = find(id);

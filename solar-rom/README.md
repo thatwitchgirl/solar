@@ -35,8 +35,8 @@ Each ROM includes, on the **system** partition:
 | `/system/etc/init.d/99SolarInit.sh` | Boot: create `Music` / `Podcasts` / `Themes` on SD; AVRCP track-info dir; log if TLS prep missing |
 | `/system/app/Y1Bridge.apk` | AVRCP Binder host (when Koensayr patches applied) |
 | Patched `mtkbt`, `libextavrcp*.so`, `AVRCP.kl` | Full AVRCP 1.3 metadata + car-stereo transport (Koensayr) |
-| `boot.img`, `logo.bin` (ROM zip) | Stock Innioasis early boot splash (replaces Rockbox) |
-| `/system/media/bootanimation.zip`, `/system/bin/bootanimation` | Stock Innioasis Android boot animation (replaces Rockbox) |
+| `logo.bin`, `boot.img` (rom.zip root) | LOGO + BOOTIMG partitions — early splash + kernel ([details](assets/innioasis-boot/README.md)) |
+| `/system/media/bootanimation.zip`, `/system/bin/bootanimation` | Android boot animation inside `system.img` only |
 
 These match what `./scripts/clean_install_system.sh` applies on a rooted device. Shared staging: `scripts/stage-y1-system-prep.sh` → `apply-y1-system-prep.sh` (ROM) or `push-y1-system-prep.sh` (adb). `SolarApplication` loads Conscrypt at boot; system cacerts are still required for stock HTTPS stacks (podcast streaming via MediaPlayer).
 
@@ -54,9 +54,12 @@ git clone https://github.com/SeanathanVT/koensayr.git solar-rom/koensayr
 
 ### Boot splash (Innioasis stock)
 
-Rockbox base firmware ships Rockbox-branded `boot.img`, `logo.bin`, and `bootanimation.zip`. Solar ROM builds replace these with verified stock Innioasis 3.0.7 assets from [`solar-rom/assets/innioasis-boot/`](solar-rom/assets/innioasis-boot/) via `apply-innioasis-boot.sh`.
+Rockbox base firmware ships Rockbox-branded `logo.bin` (3 MiB LOGO partition fill), `boot.img`, and system `bootanimation.zip`. Solar ROM builds replace these with verified stock Innioasis 3.0.7 assets from [`solar-rom/assets/innioasis-boot/`](solar-rom/assets/innioasis-boot/) via `apply-innioasis-boot.sh` and [`mtk-y1-layout.sh`](solar-rom/scripts/mtk-y1-layout.sh).
 
-Future custom Solar boot media can drop into [`solar-rom/assets/solar-boot/`](solar-rom/assets/solar-boot/) (see README there).
+- **Partition images** (`logo.bin`, `boot.img`) are copied to the rom staging directory and packaged flat beside `MT6572_Android_scatter.txt`.
+- **Boot animation** (`bootanimation.zip` + `bootanimation` binary) is written into the mounted `system.img` only.
+
+Future custom Solar boot media: [`solar-rom/assets/solar-boot/`](solar-rom/assets/solar-boot/) + `SOLAR_BOOT_ASSETS`.
 
 
 ## Device install (rooted, without full ROM flash)

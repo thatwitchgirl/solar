@@ -599,6 +599,41 @@ public class MainActivity extends Activity {
     private TextView tvMenuPreviewTitle, tvMenuPreviewArtist;
     private SharedPreferences prefs;
     private static final String PREFS = "SOLAR_SETTINGS";
+
+    private void toast(int resId) {
+        UserToast.show(this, resId);
+    }
+
+    private void toast(int resId, int duration) {
+        UserToast.show(this, resId, duration);
+    }
+
+    private void toast(CharSequence msg, int duration) {
+        UserToast.show(this, msg, duration);
+    }
+
+    private void toastError(int resId) {
+        UserToast.showError(this, prefs, resId);
+    }
+
+    private void toastError(int resId, int duration) {
+        UserToast.showError(this, prefs, resId, duration);
+    }
+
+    private void toastError(CharSequence msg, int duration) {
+        UserToast.showError(this, prefs, msg, duration);
+    }
+
+    private void toast(int resId, int duration, Object... formatArgs) {
+        UserToast.show(this, getString(resId, formatArgs), duration);
+    }
+
+    private void toastError(int resId, int duration, Object... formatArgs) {
+        if (UserToast.shouldShowError(this, prefs, resId)) {
+            UserToast.show(this, getString(resId, formatArgs), duration);
+        }
+    }
+
     private static final String BG_MODE_ALBUM = "album_art_blur";
     private static final String BG_MODE_THEME = "theme_wallpaper";
     private static final String BG_MODE_CUSTOM = "custom";
@@ -865,8 +900,7 @@ public class MainActivity extends Activity {
                 }
                 if (currentScreenState == STATE_BLUETOOTH) {
                     if (bondState == BluetoothDevice.BOND_BONDED) {
-                        Toast.makeText(MainActivity.this, getString(R.string.toast_paired, device.getName()),
-                                Toast.LENGTH_SHORT).show();
+UserToast.show(MainActivity.this, getString(R.string.toast_paired, device.getName()), Toast.LENGTH_SHORT);
                         startBluetoothScan();
                     } else if (bondState == BluetoothDevice.BOND_NONE
                             && pairingDeviceAddress != null
@@ -874,8 +908,7 @@ public class MainActivity extends Activity {
                             && previousBond == BluetoothDevice.BOND_BONDING
                             && device.getBondState() != BluetoothDevice.BOND_BONDED
                             && !isBluetoothAudioConnected(device)) {
-                        Toast.makeText(MainActivity.this, getString(R.string.toast_pairing_failed),
-                                Toast.LENGTH_SHORT).show();
+MainActivity.this.toastError(R.string.toast_pairing_failed);
                         pairingDeviceAddress = null;
                         startBluetoothScan();
                     }
@@ -907,7 +940,7 @@ public class MainActivity extends Activity {
                             && pairingDeviceAddress.equals(device.getAddress())) {
                         pairingDeviceAddress = null;
                     }
-                    Toast.makeText(MainActivity.this, getString(R.string.toast_audio_connected, device.getName()), Toast.LENGTH_SHORT).show();
+UserToast.show(MainActivity.this, getString(R.string.toast_audio_connected, device.getName()), Toast.LENGTH_SHORT);
                 } else if (device != null && state == BluetoothProfile.STATE_DISCONNECTED
                         && device.getAddress().equals(connectedA2dpAddress)) {
                     connectedA2dpAddress = null;
@@ -2749,7 +2782,7 @@ public class MainActivity extends Activity {
 
     private void refreshThemeCatalogFromNetwork() {
         if (!ConnectivityHelper.isOnline(this)) {
-            Toast.makeText(this, getString(R.string.theme_gallery_wifi_required), Toast.LENGTH_SHORT).show();
+toastError(R.string.theme_gallery_wifi_required);
             return;
         }
         themeCatalogLoading = true;
@@ -2915,7 +2948,7 @@ public class MainActivity extends Activity {
         if (ThemeManager.isBuiltInDefault(theme)) return;
         if (!ThemeDownloader.deleteInstalledTheme(theme.folderName)) return;
         ThemeManager.loadAllThemes(this);
-        Toast.makeText(this, getString(R.string.theme_removed, theme.name), Toast.LENGTH_SHORT).show();
+UserToast.show(this, getString(R.string.theme_removed, theme.name), Toast.LENGTH_SHORT);
         rebuildThemeBrowserRows();
         refreshThemeBrowserList();
     }
@@ -3557,7 +3590,7 @@ public class MainActivity extends Activity {
                         public void run() {
                             if (isFinishing() || gen != themeDownloadGen) return;
                             if (layoutLoadingOverlay != null) layoutLoadingOverlay.setVisibility(View.GONE);
-                            Toast.makeText(MainActivity.this, getString(R.string.toast_download_failed), Toast.LENGTH_SHORT).show();
+MainActivity.this.toastError(R.string.toast_download_failed);
                         }
                     });
                 }
@@ -3620,7 +3653,7 @@ public class MainActivity extends Activity {
                         public void run() {
                             if (isFinishing() || gen != themeDownloadGen) return;
                             if (layoutLoadingOverlay != null) layoutLoadingOverlay.setVisibility(View.GONE);
-                            Toast.makeText(MainActivity.this, getString(R.string.toast_download_failed), Toast.LENGTH_SHORT).show();
+MainActivity.this.toastError(R.string.toast_download_failed);
                         }
                     });
                 }
@@ -3665,7 +3698,7 @@ public class MainActivity extends Activity {
                             ed.commit();
                         } catch (Exception ignored) {}
                         if (toastName != null) {
-                            Toast.makeText(MainActivity.this, getString(R.string.toast_theme_applied, toastName), Toast.LENGTH_SHORT).show();
+UserToast.show(MainActivity.this, getString(R.string.toast_theme_applied, toastName), Toast.LENGTH_SHORT);
                         }
                         recreate();
                     }
@@ -3691,7 +3724,7 @@ public class MainActivity extends Activity {
 
     private boolean requireInternet(int toastResId) {
         if (hasInternetConnection()) return true;
-        Toast.makeText(this, getString(toastResId), Toast.LENGTH_LONG).show();
+        UserToast.showError(this, prefs, toastResId, Toast.LENGTH_LONG);
         return false;
     }
 
@@ -3762,7 +3795,7 @@ public class MainActivity extends Activity {
         } else {
             WifiManager wm = (WifiManager) getApplicationContext().getSystemService(WIFI_SERVICE);
             if (wm == null || !ConnectivityHelper.hasLocalNetwork(this)) {
-                Toast.makeText(this, getString(R.string.toast_network_required), Toast.LENGTH_SHORT).show();
+toastError(R.string.toast_network_required);
                 return;
             }
             webServer = new SolarWebServer(getApplicationContext(), rootFolder);
@@ -4422,11 +4455,11 @@ public class MainActivity extends Activity {
                 fm.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                 startActivity(fm);
             } catch (Exception e) {
-                Toast.makeText(this, getString(R.string.toast_fm_unavailable), Toast.LENGTH_SHORT).show();
+toastError(R.string.toast_fm_unavailable);
             }
         } else if (HomeMenuConfig.ID_PC_UPLOAD.equals(id)) {
             if (!ConnectivityHelper.hasLocalNetwork(this)) {
-                Toast.makeText(this, getString(R.string.toast_requires_wifi), Toast.LENGTH_SHORT).show();
+toastError(R.string.toast_requires_wifi);
                 return;
             }
             changeScreen(STATE_WEBSERVER);
@@ -4437,7 +4470,7 @@ public class MainActivity extends Activity {
                 changeScreen(STATE_PODCASTS);
                 buildPodcastSavedShowsUI();
             } else {
-                Toast.makeText(this, getString(R.string.toast_internet_required), Toast.LENGTH_SHORT).show();
+toastError(R.string.toast_internet_required);
             }
         } else if (HomeMenuConfig.ID_SOULSEEK.equals(id)) {
             if (!requireInternet(R.string.toast_internet_required)) return;
@@ -4447,9 +4480,9 @@ public class MainActivity extends Activity {
         } else if (HomeMenuConfig.ID_MORE.equals(id)) {
             changeScreen(STATE_MORE);
         } else if (HomeMenuConfig.ID_VIDEOS.equals(id)) {
-            Toast.makeText(this, getString(R.string.home_videos_coming_soon), Toast.LENGTH_LONG).show();
+toast(R.string.home_videos_coming_soon, Toast.LENGTH_LONG);
         } else if (HomeMenuConfig.ID_PHOTOS.equals(id)) {
-            Toast.makeText(this, getString(R.string.home_photos_coming_soon), Toast.LENGTH_LONG).show();
+toast(R.string.home_photos_coming_soon, Toast.LENGTH_LONG);
         } else if (HomeMenuConfig.ID_APPS.equals(id)) {
             changeScreen(STATE_APPS);
         }
@@ -5174,7 +5207,7 @@ public class MainActivity extends Activity {
     }
 
     private void connectToWifi() {
-        Toast.makeText(this, getString(R.string.toast_wifi_connecting, targetWifiSsid), Toast.LENGTH_SHORT).show();
+UserToast.show(this, getString(R.string.toast_wifi_connecting, targetWifiSsid), Toast.LENGTH_SHORT);
         WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
         if (wm != null) {
             WifiConfiguration conf = new WifiConfiguration();
@@ -5220,10 +5253,10 @@ public class MainActivity extends Activity {
                     if (ba != null) {
                         boolean isCurrentlyOn = ba.isEnabled();
                         if (isCurrentlyOn) {
-                            Toast.makeText(MainActivity.this, getString(R.string.toast_bt_turning_off), Toast.LENGTH_SHORT).show();
+MainActivity.this.toast(R.string.toast_bt_turning_off);
                             ba.disable();
                         } else {
-                            Toast.makeText(MainActivity.this, getString(R.string.toast_bt_turning_on), Toast.LENGTH_SHORT).show();
+MainActivity.this.toast(R.string.toast_bt_turning_on);
                             ba.enable();
                         }
                         TextView tvRight = (TextView) btnToggle.getChildAt(1);
@@ -5311,7 +5344,7 @@ public class MainActivity extends Activity {
             rememberBluetoothAudioDevice(device);
             if (device.getBondState() == BluetoothDevice.BOND_BONDED) {
                 if (isBluetoothAudioConnected(device)) {
-                    Toast.makeText(this, getString(R.string.toast_already_connected, device.getName()), Toast.LENGTH_SHORT).show();
+UserToast.show(this, getString(R.string.toast_already_connected, device.getName()), Toast.LENGTH_SHORT);
                 } else {
                     connectBluetoothAudio(device);
                 }
@@ -5322,14 +5355,14 @@ public class MainActivity extends Activity {
                 adapter.cancelDiscovery();
             }
             pairingDeviceAddress = device.getAddress();
-            Toast.makeText(this, getString(R.string.toast_pairing, device.getName()), Toast.LENGTH_SHORT).show();
+UserToast.show(this, getString(R.string.toast_pairing, device.getName()), Toast.LENGTH_SHORT);
             if (!createBluetoothBond(device)) {
                 int bond = device.getBondState();
                 if (bond == BluetoothDevice.BOND_BONDED) {
                     connectBluetoothAudio(device);
                 } else if (bond != BluetoothDevice.BOND_BONDING) {
                     pairingDeviceAddress = null;
-                    Toast.makeText(this, getString(R.string.toast_pairing_failed), Toast.LENGTH_SHORT).show();
+toastError(R.string.toast_pairing_failed);
                 }
             }
         } catch (Exception e) {
@@ -5338,7 +5371,7 @@ public class MainActivity extends Activity {
                 connectBluetoothAudio(device);
             } else if (bond != BluetoothDevice.BOND_BONDING) {
                 pairingDeviceAddress = null;
-                Toast.makeText(this, getString(R.string.toast_pairing_failed), Toast.LENGTH_SHORT).show();
+toastError(R.string.toast_pairing_failed);
             }
         }
     }
@@ -5473,10 +5506,10 @@ public class MainActivity extends Activity {
             Method connect = bluetoothA2dp.getClass().getMethod("connect", BluetoothDevice.class);
             Object ok = connect.invoke(bluetoothA2dp, device);
             if (ok instanceof Boolean && !(Boolean) ok) {
-                Toast.makeText(this, getString(R.string.toast_audio_connect_failed), Toast.LENGTH_SHORT).show();
+toastError(R.string.toast_audio_connect_failed);
             }
         } catch (Exception e) {
-            Toast.makeText(this, getString(R.string.toast_audio_connect_failed), Toast.LENGTH_SHORT).show();
+toastError(R.string.toast_audio_connect_failed);
         }
     }
 
@@ -5588,10 +5621,10 @@ public class MainActivity extends Activity {
                     if (wm != null) {
                         boolean isCurrentlyOn = wm.isWifiEnabled();
                         if (isCurrentlyOn) {
-                            Toast.makeText(MainActivity.this, getString(R.string.toast_wifi_turning_off), Toast.LENGTH_SHORT).show();
+MainActivity.this.toast(R.string.toast_wifi_turning_off);
                             wm.setWifiEnabled(false);
                         } else {
-                            Toast.makeText(MainActivity.this, getString(R.string.toast_wifi_turning_on), Toast.LENGTH_SHORT).show();
+MainActivity.this.toast(R.string.toast_wifi_turning_on);
                             wm.setWifiEnabled(true);
                         }
                         TextView tvRight = (TextView) btnToggle.getChildAt(1);
@@ -5678,7 +5711,7 @@ public class MainActivity extends Activity {
             public void onClick(View v) {
                 clickFeedback();
                 if (isConnected) {
-                    Toast.makeText(MainActivity.this, getString(R.string.toast_wifi_already_connected), Toast.LENGTH_SHORT).show();
+MainActivity.this.toast(R.string.toast_wifi_already_connected);
                     return;
                 }
 
@@ -5700,7 +5733,7 @@ public class MainActivity extends Activity {
                 }
 
                 if (isSaved && savedNetId != -1) {
-                    Toast.makeText(MainActivity.this, getString(R.string.toast_wifi_saved_connecting), Toast.LENGTH_SHORT).show();
+MainActivity.this.toast(R.string.toast_wifi_saved_connecting);
                     manager.disconnect();
                     manager.enableNetwork(savedNetId, true);
                     manager.reconnect();
@@ -6036,8 +6069,7 @@ public class MainActivity extends Activity {
             public void onClick(View v) {
                 clickFeedback();
                 if (!AppLauncher.launch(MainActivity.this, app.packageName)) {
-                    Toast.makeText(MainActivity.this, getString(R.string.apps_launch_failed),
-                            Toast.LENGTH_SHORT).show();
+MainActivity.this.toastError(R.string.apps_launch_failed);
                 }
             }
         };
@@ -6583,6 +6615,14 @@ public class MainActivity extends Activity {
             if (RowKeys.SOULSEEK_REGENERATE.equals(rowKey)) return getString(R.string.soulseek_preview_regenerate);
             if (RowKeys.SOULSEEK_HIDE_FLAC.equals(rowKey)) return stateOnOff(soulseekHideFlac);
         }
+        if (SettingsScreens.DEBUG.equals(settingsSubScreenKey)) {
+            if (RowKeys.DEBUG_SHOW_ERRORS.equals(rowKey)) {
+                return stateOnOff(DebugPrefs.showErrors(prefs));
+            }
+            if (RowKeys.DEBUG_SHOW_UNIMPLEMENTED.equals(rowKey)) {
+                return stateOnOff(DebugPrefs.showUnimplemented(prefs));
+            }
+        }
         if (RowKeys.SOULSEEK_ACCOUNT.equals(rowKey) && SettingsScreens.isSoulseek(settingsSubScreenKey)) {
             return SoulseekAccount.displayLabel(SoulseekAccount.load(prefs));
         }
@@ -6922,7 +6962,7 @@ public class MainActivity extends Activity {
     }
 
     private ThemedContextMenu.QuickItem[] buildContextQuickBar() {
-        boolean hasQueue = playback.hasAnyQueue() && shouldShowQueueInPlayerContext();
+        boolean hasQueue = playback.hasAnyQueue() && showContextQueueChip();
         return new ThemedContextMenu.QuickItem[] {
             new ThemedContextMenu.QuickItem(null, R.drawable.ic_lock,
                     getString(R.string.context_action_lock_screen), true),
@@ -7056,10 +7096,10 @@ public class MainActivity extends Activity {
         if (ba == null) return;
         dismissThemedContextMenu();
         if (ba.isEnabled()) {
-            Toast.makeText(this, getString(R.string.toast_bt_turning_off), Toast.LENGTH_SHORT).show();
+toast(R.string.toast_bt_turning_off);
             ba.disable();
         } else {
-            Toast.makeText(this, getString(R.string.toast_bt_turning_on), Toast.LENGTH_SHORT).show();
+toast(R.string.toast_bt_turning_on);
             ba.enable();
         }
     }
@@ -7360,8 +7400,7 @@ public class MainActivity extends Activity {
                         playback.removeMusicTrackAt(idx);
                         purgeStreamTempFiles();
                         updateMusicTrackCountUi();
-                        Toast.makeText(MainActivity.this, getString(R.string.library_queue_removed),
-                                Toast.LENGTH_SHORT).show();
+MainActivity.this.toast(R.string.library_queue_removed);
                         if (playback.musicPlaylist().isEmpty()) {
                             setMusicQueueListVisible(false);
                             changeScreen(musicQueueReturnScreen);
@@ -7514,8 +7553,7 @@ public class MainActivity extends Activity {
                         @Override
                         public void run() {
                             PodcastResumeStore.clear(getApplicationContext(), rk);
-                            Toast.makeText(MainActivity.this, getString(R.string.context_action_mark_played),
-                                    Toast.LENGTH_SHORT).show();
+MainActivity.this.toast(R.string.context_action_mark_played);
                         }
                     });
                 }
@@ -7679,9 +7717,7 @@ public class MainActivity extends Activity {
                                 runOnUiThread(new Runnable() {
                                     @Override
                                     public void run() {
-                                        Toast.makeText(MainActivity.this,
-                                                getString(R.string.context_action_lock_failed),
-                                                Toast.LENGTH_SHORT).show();
+MainActivity.this.toastError(R.string.context_action_lock_failed);
                                     }
                                 });
                             }
@@ -7730,7 +7766,7 @@ public class MainActivity extends Activity {
     private void markCurrentPodcastPlayed() {
         PodcastResumeStore.clear(getApplicationContext(), podcastResumeKey);
         podcastPendingResumeMs = 0;
-        Toast.makeText(this, getString(R.string.context_action_mark_played), Toast.LENGTH_SHORT).show();
+toast(R.string.context_action_mark_played);
     }
 
     private void playCurrentFolderAll() {
@@ -7750,7 +7786,7 @@ public class MainActivity extends Activity {
         one.add(track);
         playback.appendToMusicQueue(one);
         suppressListClickUntil = System.currentTimeMillis() + 400;
-        Toast.makeText(this, getString(R.string.toast_added_to_queue), Toast.LENGTH_SHORT).show();
+toast(R.string.toast_added_to_queue);
     }
 
     private int virtualListFocusPosition() {
@@ -7783,14 +7819,14 @@ public class MainActivity extends Activity {
         if (file == null) return;
         PodcastResumeStore.clear(getApplicationContext(), PodcastResumeStore.keyForFile(file));
         if (file.delete()) {
-            Toast.makeText(this, getString(R.string.podcasts_deleted_saved), Toast.LENGTH_SHORT).show();
+toast(R.string.podcasts_deleted_saved);
             if (podcastSavedShowFolder != null && !podcastSavedShowFolder.isEmpty()) {
                 buildPodcastSavedEpisodesUI(podcastSavedShowFolder);
             } else {
                 buildPodcastSavedShowsUI();
             }
         } else {
-            Toast.makeText(this, getString(R.string.podcasts_delete_failed), Toast.LENGTH_SHORT).show();
+toastError(R.string.podcasts_delete_failed);
         }
     }
 
@@ -7845,10 +7881,10 @@ public class MainActivity extends Activity {
         if (wm == null) return;
         dismissThemedContextMenu();
         if (enable) {
-            Toast.makeText(this, getString(R.string.toast_wifi_turning_on), Toast.LENGTH_SHORT).show();
+toast(R.string.toast_wifi_turning_on);
             wm.setWifiEnabled(true);
         } else {
-            Toast.makeText(this, getString(R.string.toast_wifi_turning_off), Toast.LENGTH_SHORT).show();
+toast(R.string.toast_wifi_turning_off);
             wm.setWifiEnabled(false);
             refreshSoulseekUiAfterConnectivityChange();
         }
@@ -8151,6 +8187,7 @@ public class MainActivity extends Activity {
             if (handleHomeScreenEditorBack()) return;
             if (handleMusicQueueEditorBack()) return;
             if (handleLanguageSettingsBack()) return;
+            if (handleDebugSettingsBack()) return;
             if (handleSoulseekSettingsBack()) return;
             if (handleThemeGalleryBack()) return;
             if (handleSystemUpdateBack()) return;
@@ -8325,8 +8362,7 @@ public class MainActivity extends Activity {
                     }
                     refreshSettingsPreview(RowKeys.EQ);
                 } else {
-                    Toast.makeText(MainActivity.this, getString(R.string.toast_eq_unsupported), Toast.LENGTH_SHORT)
-                            .show();
+MainActivity.this.toastError(R.string.toast_eq_unsupported);
                 }
             }
         });
@@ -8456,8 +8492,7 @@ public class MainActivity extends Activity {
                                         intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                                         startActivity(intent);
                                     } catch (Exception ex) {
-                                        Toast.makeText(MainActivity.this, getString(R.string.dialog_power_off_blocked),
-                                                Toast.LENGTH_LONG).show();
+MainActivity.this.toastError(R.string.dialog_power_off_blocked, Toast.LENGTH_LONG);
                                     }
                                 }
                             }
@@ -8479,8 +8514,7 @@ public class MainActivity extends Activity {
                         .setPositiveButton("Reboot", new DialogInterface.OnClickListener() {
                             public void onClick(DialogInterface dialog, int which) {
                                 try {
-                                    Toast.makeText(MainActivity.this, getString(R.string.dialog_rockbox_rebooting), Toast.LENGTH_SHORT)
-                                            .show();
+MainActivity.this.toast(R.string.dialog_rockbox_rebooting);
 
                                     // 💡 락박스 진입 명령어 실행 (기기 파티션 구조에 따라 다를 수 있습니다)
                                     // 기본적으로 대부분의 듀얼 부팅 기기는 아래 명령어 중 하나를 사용합니다.
@@ -8490,8 +8524,7 @@ public class MainActivity extends Activity {
                                     // Runtime.getRuntime().exec(new String[]{"su", "-c", "reboot recovery"});
 
                                 } catch (Exception e) {
-                                    Toast.makeText(MainActivity.this, getString(R.string.dialog_rockbox_failed),
-                                            Toast.LENGTH_SHORT).show();
+MainActivity.this.toastError(R.string.dialog_rockbox_failed);
                                 }
                             }
                         })
@@ -8619,7 +8652,7 @@ public class MainActivity extends Activity {
                                             }
                                         }
                                     }
-                                    Toast.makeText(MainActivity.this, getString(R.string.dialog_clear_cache_ok, count), Toast.LENGTH_SHORT).show();
+UserToast.show(MainActivity.this, getString(R.string.dialog_clear_cache_ok, count), Toast.LENGTH_SHORT);
 
                                     // 메인 화면에 남아있는 이미지를 기본 아이콘으로 초기화합니다.
                                     ivAlbumArt.setImageResource(R.drawable.default_album);
@@ -8628,7 +8661,7 @@ public class MainActivity extends Activity {
                                     updateMainMenuBackground();
                                     refreshNowPlayingPreview();
                                 } catch (Exception e) {
-                                    Toast.makeText(MainActivity.this, getString(R.string.dialog_clear_cache_failed), Toast.LENGTH_SHORT).show();
+MainActivity.this.toastError(R.string.dialog_clear_cache_failed);
                                 }
                             }
                         })
@@ -8656,6 +8689,16 @@ public class MainActivity extends Activity {
             }
         });
         containerSettingsItems.addView(btnTime);
+
+        LinearLayout btnDebug = createSettingsRow(RowKeys.DEBUG, R.string.settings_debug, true);
+        btnDebug.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                clickFeedback();
+                buildDebugSettingsUI();
+            }
+        });
+        containerSettingsItems.addView(btnDebug);
 
         // 🚀 [수정] 오염되지 않은 안전한 백업 인덱스(targetFocusIndex)를 사용하여 정확한 위치로 강제 이동!
         containerSettingsItems.postDelayed(new Runnable() {
@@ -8873,6 +8916,63 @@ public class MainActivity extends Activity {
         return false;
     }
 
+    private boolean handleDebugSettingsBack() {
+        if (SettingsScreens.DEBUG.equals(settingsSubScreenKey)) {
+            buildSettingsUI();
+            return true;
+        }
+        return false;
+    }
+
+    private void buildDebugSettingsUI() {
+        setSettingsSubScreen(SettingsScreens.DEBUG);
+        updateStatusBarTitle();
+        containerSettingsItems.removeAllViews();
+
+        Button btnBack = createListButton(getString(R.string.common_cancel_back));
+        styleSecondaryLabel(btnBack);
+        btnBack.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                clickFeedback();
+                buildSettingsUI();
+            }
+        });
+        containerSettingsItems.addView(btnBack);
+
+        LinearLayout btnShowErrors = createSettingsRow(RowKeys.DEBUG_SHOW_ERRORS,
+                R.string.settings_debug_show_errors, false);
+        btnShowErrors.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                clickFeedback();
+                boolean next = !DebugPrefs.showErrors(prefs);
+                prefs.edit().putBoolean(DebugPrefs.PREF_SHOW_ERRORS, next).commit();
+                refreshSettingsPreview(RowKeys.DEBUG_SHOW_ERRORS);
+            }
+        });
+        containerSettingsItems.addView(btnShowErrors);
+
+        LinearLayout btnShowUnimplemented = createSettingsRow(RowKeys.DEBUG_SHOW_UNIMPLEMENTED,
+                R.string.settings_debug_show_unimplemented, false);
+        btnShowUnimplemented.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                clickFeedback();
+                boolean next = !DebugPrefs.showUnimplemented(prefs);
+                prefs.edit().putBoolean(DebugPrefs.PREF_SHOW_UNIMPLEMENTED, next).commit();
+                buildHomeMenu();
+                refreshSettingsPreview(RowKeys.DEBUG_SHOW_UNIMPLEMENTED);
+                buildDebugSettingsUI();
+            }
+        });
+        containerSettingsItems.addView(btnShowUnimplemented);
+
+        if (containerSettingsItems.getChildCount() > 1) {
+            containerSettingsItems.getChildAt(1).requestFocus();
+        }
+    }
+
     private void buildSoulseekSettingsUI() {
         setSettingsSubScreen(SettingsScreens.SOULSEEK);
         updateStatusBarTitle();
@@ -8954,7 +9054,7 @@ public class MainActivity extends Activity {
                     soulseekClient.shutdown();
                     soulseekClient = null;
                 }
-                Toast.makeText(MainActivity.this, getString(R.string.soulseek_auto_account), Toast.LENGTH_LONG).show();
+MainActivity.this.toast(R.string.soulseek_auto_account, Toast.LENGTH_LONG);
                 buildSoulseekSettingsUI();
             }
         });
@@ -9120,7 +9220,7 @@ public class MainActivity extends Activity {
     private void downloadAndInstallApk(final SolarUpdateClient.ReleaseInfo release) {
         if (!BuildConfig.FEATURE_OTA_UPDATE || release == null) return;
         if (release.apkUrl == null || release.apkUrl.trim().isEmpty()) {
-            Toast.makeText(this, getString(R.string.update_url_missing), Toast.LENGTH_SHORT).show();
+toastError(R.string.update_url_missing);
             return;
         }
         int localCode = BuildConfig.VERSION_CODE;
@@ -9131,7 +9231,7 @@ public class MainActivity extends Activity {
             localName = pInfo.versionName;
         } catch (Exception ignored) {}
         if (release.matchesInstalled(localCode, localName)) {
-            Toast.makeText(this, getString(R.string.update_already_installed), Toast.LENGTH_SHORT).show();
+toast(R.string.update_already_installed);
             return;
         }
         if (currentScreenState != STATE_SETTINGS) {
@@ -9478,8 +9578,7 @@ public class MainActivity extends Activity {
                     @Override
                     public void run() {
                         finishOtaDownloadSession();
-                        Toast.makeText(MainActivity.this,
-                                getString(R.string.update_already_installed), Toast.LENGTH_SHORT).show();
+MainActivity.this.toast(R.string.update_already_installed);
                         buildUpdateSettingsUI();
                     }
                 });
@@ -9525,13 +9624,11 @@ public class MainActivity extends Activity {
                     }
                     finishOtaDownloadSession();
                     if (ok) {
-                        Toast.makeText(MainActivity.this,
-                                getString(R.string.toast_install_ok), Toast.LENGTH_SHORT).show();
+MainActivity.this.toast(R.string.toast_install_ok);
                         buildUpdateSettingsUI();
                         return;
                     }
-                    Toast.makeText(MainActivity.this,
-                            getString(R.string.update_install_failed), Toast.LENGTH_LONG).show();
+MainActivity.this.toastError(R.string.update_install_failed, Toast.LENGTH_LONG);
                     buildUpdateSettingsUI();
                 }
             });
@@ -9541,8 +9638,7 @@ public class MainActivity extends Activity {
                 @Override
                 public void run() {
                     finishOtaDownloadSession();
-                    Toast.makeText(MainActivity.this,
-                            getString(R.string.update_install_failed), Toast.LENGTH_LONG).show();
+MainActivity.this.toastError(R.string.update_install_failed, Toast.LENGTH_LONG);
                     buildUpdateSettingsUI();
                 }
             });
@@ -9639,8 +9735,7 @@ public class MainActivity extends Activity {
                                 buildUpdateSettingsUI();
                                 return;
                             }
-                            Toast.makeText(MainActivity.this,
-                                    getString(R.string.update_download_failed), Toast.LENGTH_LONG).show();
+MainActivity.this.toastError(R.string.update_download_failed, Toast.LENGTH_LONG);
                             buildUpdateSettingsUI();
                         }
                     });
@@ -9682,7 +9777,7 @@ public class MainActivity extends Activity {
         int idx = ids.indexOf(id);
         homeScreenMoveModeId = id;
         homeScreenOrderFocusIndex = idx >= 0 ? idx + 1 : 1;
-        Toast.makeText(this, getString(R.string.home_screen_settings_move_only), Toast.LENGTH_SHORT).show();
+toast(R.string.home_screen_settings_move_only);
         buildHomeScreenArrangeUI();
     }
 
@@ -9706,7 +9801,7 @@ public class MainActivity extends Activity {
 
         createCategoryHeader(getString(R.string.home_screen_shortcuts));
 
-        for (final HomeMenuConfig.Entry entry : HomeMenuConfig.catalog()) {
+        for (final HomeMenuConfig.Entry entry : HomeMenuConfig.catalogForEditor(prefs)) {
             String state = entry.required ? getString(R.string.home_screen_move)
                     : stateOnOff(HomeMenuConfig.isShortcutEnabled(prefs, entry.id));
             final LinearLayout row = createSettingRow(RowKeys.homeShortcut(entry.id), entry.labelResId, state);
@@ -9838,6 +9933,7 @@ public class MainActivity extends Activity {
         final List<String> orderIds = HomeMenuConfig.loadHomeOrderIds(prefs);
         for (int i = 0; i < orderIds.size(); i++) {
             String id = orderIds.get(i);
+            if (!DebugPrefs.shouldShowShortcut(prefs, id)) continue;
             HomeMenuConfig.Entry entry = HomeMenuConfig.find(id);
             if (entry == null) continue;
             boolean moving = id.equals(homeScreenMoveModeId);
@@ -9891,6 +9987,7 @@ public class MainActivity extends Activity {
         final List<String> orderIds = HomeMenuConfig.loadMoreOrderIds(prefs);
         for (int i = 0; i < orderIds.size(); i++) {
             String id = orderIds.get(i);
+            if (!DebugPrefs.shouldShowShortcut(prefs, id)) continue;
             HomeMenuConfig.Entry entry = HomeMenuConfig.find(id);
             if (entry == null) continue;
             boolean moving = id.equals(homeMoreMoveModeId);
@@ -9983,8 +10080,7 @@ public class MainActivity extends Activity {
                 currentFolder = getStorageRoot();
                 currentBrowserMode = BROWSER_FOLDER;
                 changeScreen(STATE_BROWSER);
-                Toast.makeText(MainActivity.this, getString(R.string.toast_bg_wallpaper_size_hint),
-                        Toast.LENGTH_SHORT).show();
+MainActivity.this.toast(R.string.toast_bg_wallpaper_size_hint);
             }
         });
         containerSettingsItems.addView(btnSelectBg);
@@ -10001,11 +10097,11 @@ public class MainActivity extends Activity {
                             .remove(PREF_BG_THEME_WALLPAPER)
                             .putString("background_mode", BG_MODE_THEME)
                             .commit();
-                    Toast.makeText(MainActivity.this, getString(R.string.toast_bg_cleared), Toast.LENGTH_SHORT).show();
+MainActivity.this.toast(R.string.toast_bg_cleared);
                     updateMainMenuBackground();
                     buildBackgroundSettingsUI();
                 } else {
-                    Toast.makeText(MainActivity.this, getString(R.string.toast_bg_none), Toast.LENGTH_SHORT).show();
+MainActivity.this.toast(R.string.toast_bg_none);
                 }
             }
         });
@@ -10169,7 +10265,7 @@ public class MainActivity extends Activity {
 
     private void cycleLibrarySort() {
         librarySortMode = (librarySortMode + 1) % 4;
-        Toast.makeText(this, getString(R.string.library_sort_now, librarySortLabel()), Toast.LENGTH_SHORT).show();
+UserToast.show(this, getString(R.string.library_sort_now, librarySortLabel()), Toast.LENGTH_SHORT);
         if (currentBrowserMode == BROWSER_VIRTUAL_SONGS) buildVirtualSongs();
     }
 
@@ -10408,9 +10504,7 @@ public class MainActivity extends Activity {
                             @Override
                             public void run() {
                                 isCustomScanning = false;
-                                Toast.makeText(MainActivity.this,
-                                                "Scan Complete! " + customLibrary.size() + " songs found.", Toast.LENGTH_SHORT)
-                                        .show();
+UserToast.showError(MainActivity.this, prefs, "Scan Complete! " + customLibrary.size() + " songs found.", Toast.LENGTH_SHORT);
                                 if (currentScreenState == STATE_BROWSER) {
                                     if (currentBrowserMode == BROWSER_ROOT) {
                                         buildFileBrowserUI();
@@ -10862,7 +10956,7 @@ public class MainActivity extends Activity {
             List<String> findLike = SoulseekSearchSuggestions.suggestionsFromId3(
                     si.title, si.artist, si.album, si.genre);
             if (!findLike.isEmpty()) {
-                addContextSectionHeader(getString(R.string.context_find_like_this));
+                addContextSectionHeader(getString(R.string.context_search_online_for));
                 int shown = 0;
                 for (final String q : findLike) {
                     if (shown >= 8) break;
@@ -10874,8 +10968,7 @@ public class MainActivity extends Activity {
                                         HomeMenuConfig.ID_SOULSEEK)) {
                                     openSoulseekSearchKeyboard(q);
                                 } else {
-                                    Toast.makeText(MainActivity.this,
-                                            getString(R.string.soulseek_wifi_required), Toast.LENGTH_SHORT).show();
+MainActivity.this.toastError(R.string.soulseek_wifi_required);
                                 }
                             }
                         }
@@ -10888,7 +10981,7 @@ public class MainActivity extends Activity {
 
     private void saveMusicQueueAsM3u() {
         if (playback.musicPlaylist().isEmpty()) {
-            Toast.makeText(this, getString(R.string.library_queue_empty), Toast.LENGTH_SHORT).show();
+toast(R.string.library_queue_empty);
             return;
         }
         try {
@@ -10897,10 +10990,10 @@ public class MainActivity extends Activity {
             String name = "Queue " + System.currentTimeMillis();
             File dest = new File(dir, name.replace(' ', '_') + ".m3u");
             PlaylistManager.saveM3u(PlaylistManager.fromTracks(name, playback.musicPlaylist()), dest);
-            Toast.makeText(this, getString(R.string.library_playlist_saved, dest.getName()), Toast.LENGTH_SHORT).show();
+UserToast.show(this, getString(R.string.library_playlist_saved, dest.getName()), Toast.LENGTH_SHORT);
             if (currentBrowserMode == BROWSER_PLAYLISTS) buildPlaylistsUI();
         } catch (Exception e) {
-            Toast.makeText(this, getString(R.string.library_playlist_save_failed), Toast.LENGTH_SHORT).show();
+toastError(R.string.library_playlist_save_failed);
         }
     }
 
@@ -10910,7 +11003,7 @@ public class MainActivity extends Activity {
 
     private void openMusicQueueEditor() {
         if (!playback.isMusicActive() || playback.musicPlaylist().isEmpty()) {
-            Toast.makeText(this, getString(R.string.library_queue_empty), Toast.LENGTH_SHORT).show();
+toast(R.string.library_queue_empty);
             return;
         }
         playback.clampMusicIndex();
@@ -10929,7 +11022,7 @@ public class MainActivity extends Activity {
             return;
         }
         if (!playback.isMusicActive() || playback.musicPlaylist().isEmpty()) {
-            Toast.makeText(this, getString(R.string.library_queue_empty), Toast.LENGTH_SHORT).show();
+toast(R.string.library_queue_empty);
             return;
         }
         if (playback.musicPlaylist().size() <= 1) {
@@ -11311,13 +11404,13 @@ public class MainActivity extends Activity {
                 if (conf.SSID != null && conf.SSID.equals("\"" + ssid + "\"")) {
                     wm.removeNetwork(conf.networkId);
                     wm.saveConfiguration();
-                    Toast.makeText(this, getString(R.string.toast_wifi_forgotten, ssid), Toast.LENGTH_SHORT).show();
+UserToast.show(this, getString(R.string.toast_wifi_forgotten, ssid), Toast.LENGTH_SHORT);
                     if (currentScreenState == STATE_WIFI) startWifiScan();
                     return;
                 }
             }
         } catch (Exception e) {
-            Toast.makeText(this, getString(R.string.toast_wifi_forget_failed), Toast.LENGTH_SHORT).show();
+toastError(R.string.toast_wifi_forget_failed);
         }
     }
 
@@ -11327,12 +11420,10 @@ public class MainActivity extends Activity {
             if (device.getBondState() != BluetoothDevice.BOND_BONDED) return;
             Method removeBond = device.getClass().getMethod("removeBond");
             removeBond.invoke(device);
-            Toast.makeText(this, getString(R.string.toast_bt_forgotten,
-                    device.getName() != null ? device.getName() : device.getAddress()),
-                    Toast.LENGTH_SHORT).show();
+UserToast.show(this, getString(R.string.toast_bt_forgotten, device.getName()), Toast.LENGTH_SHORT);
             if (currentScreenState == STATE_BLUETOOTH) startBluetoothScan();
         } catch (Exception e) {
-            Toast.makeText(this, getString(R.string.toast_bt_forget_failed), Toast.LENGTH_SHORT).show();
+toastError(R.string.toast_bt_forget_failed);
         }
     }
 
@@ -11911,8 +12002,7 @@ public class MainActivity extends Activity {
                             public void run() {
                                 if (gen != podcastUiGen || !isPodcastUiActive()) return;
                                 removePodcastProbeStatusRow();
-                                Toast.makeText(MainActivity.this, getString(R.string.podcasts_no_results),
-                                        Toast.LENGTH_SHORT).show();
+MainActivity.this.toast(R.string.podcasts_no_results);
                                 buildPodcastSearchUI();
                             }
                         });
@@ -11941,13 +12031,10 @@ public class MainActivity extends Activity {
                                     removePodcastProbeStatusRow();
                                     int hidden = totalCount - playableCount;
                                     if (hidden > 0) {
-                                        Toast.makeText(MainActivity.this,
-                                                getString(R.string.podcasts_filtered_unavailable, hidden),
-                                                Toast.LENGTH_SHORT).show();
+UserToast.show(MainActivity.this, getString(R.string.podcasts_filtered_unavailable, hidden), Toast.LENGTH_SHORT);
                                     }
                                     if (playableCount == 0) {
-                                        Toast.makeText(MainActivity.this, getString(R.string.podcasts_no_results),
-                                                Toast.LENGTH_SHORT).show();
+MainActivity.this.toast(R.string.podcasts_no_results);
                                         buildPodcastSearchUI();
                                     }
                                 }
@@ -11960,8 +12047,7 @@ public class MainActivity extends Activity {
                         public void run() {
                             if (gen != podcastUiGen || !isPodcastUiActive()) return;
                             removePodcastProbeStatusRow();
-                            Toast.makeText(MainActivity.this, getString(R.string.podcasts_search_failed),
-                                    Toast.LENGTH_LONG).show();
+MainActivity.this.toastError(R.string.podcasts_search_failed, Toast.LENGTH_LONG);
                             buildPodcastSearchUI();
                         }
                     });
@@ -12077,8 +12163,7 @@ public class MainActivity extends Activity {
                             public void run() {
                                 if (gen != podcastUiGen || !isPodcastUiActive()) return;
                                 removePodcastProbeStatusRow();
-                                Toast.makeText(MainActivity.this, getString(R.string.podcasts_empty_episodes),
-                                        Toast.LENGTH_LONG).show();
+MainActivity.this.toast(R.string.podcasts_empty_episodes, Toast.LENGTH_LONG);
                                 if (podcastShows.isEmpty()) buildPodcastSearchUI();
                                 else buildPodcastShowsUI();
                             }
@@ -12111,14 +12196,10 @@ public class MainActivity extends Activity {
                                             removePodcastProbeStatusRow();
                                             int hidden = totalCount - playableCount;
                                             if (hidden > 0) {
-                                                Toast.makeText(MainActivity.this,
-                                                        getString(R.string.podcasts_episodes_filtered, hidden),
-                                                        Toast.LENGTH_SHORT).show();
+MainActivity.this.toast(R.string.podcasts_episodes_filtered, Toast.LENGTH_SHORT, hidden);
                                             }
                                             if (playableCount == 0) {
-                                                Toast.makeText(MainActivity.this,
-                                                        getString(R.string.podcasts_empty_episodes),
-                                                        Toast.LENGTH_LONG).show();
+MainActivity.this.toast(R.string.podcasts_empty_episodes, Toast.LENGTH_LONG);
                                                 if (podcastShows.isEmpty()) buildPodcastSearchUI();
                                                 else buildPodcastShowsUI();
                                             }
@@ -12132,8 +12213,7 @@ public class MainActivity extends Activity {
                         public void run() {
                             if (gen != podcastUiGen || !isPodcastUiActive()) return;
                             removePodcastProbeStatusRow();
-                            Toast.makeText(MainActivity.this, getString(R.string.podcasts_episode_failed),
-                                    Toast.LENGTH_LONG).show();
+MainActivity.this.toastError(R.string.podcasts_episode_failed, Toast.LENGTH_LONG);
                             buildPodcastShowsUI();
                         }
                     });
@@ -12495,8 +12575,7 @@ public class MainActivity extends Activity {
                     }
                     if (!prefs.getBoolean("soulseek_port_warn_shown", false)) {
                         prefs.edit().putBoolean("soulseek_port_warn_shown", true).commit();
-                        Toast.makeText(MainActivity.this, getString(R.string.soulseek_port_warning, listenPort),
-                                Toast.LENGTH_LONG).show();
+MainActivity.this.toastError(R.string.soulseek_port_warning, Toast.LENGTH_LONG, listenPort);
                     }
                 }
             });
@@ -12509,9 +12588,7 @@ public class MainActivity extends Activity {
                 public void run() {
                     ConnectivityHelper.setReachLoginOk(false);
                     buildHomeMenu();
-                    Toast.makeText(MainActivity.this,
-                            getString(R.string.soulseek_login_failed_check_account, reason),
-                            Toast.LENGTH_LONG).show();
+MainActivity.this.toastError(R.string.soulseek_login_failed_check_account, Toast.LENGTH_LONG, reason);
                 }
             });
         }
@@ -12563,9 +12640,7 @@ public class MainActivity extends Activity {
                                                     soulseekLastQuery, toSort.size()));
                                         }
                                         if (toSort.isEmpty()) {
-                                            Toast.makeText(MainActivity.this,
-                                                    getString(R.string.soulseek_no_results),
-                                                    Toast.LENGTH_SHORT).show();
+MainActivity.this.toast(R.string.soulseek_no_results);
                                         } else if (soulseekAutoDownloadPending && !soulseekDownloadUiFailed
                                                 && soulseekActiveDownload == null) {
                                             soulseekAutoDownloadPending = false;
@@ -12579,9 +12654,7 @@ public class MainActivity extends Activity {
                                     buildSoulseekResultsUI();
                                     finalizeSoulseekSearch(toSort.size());
                                     if (toSort.isEmpty()) {
-                                        Toast.makeText(MainActivity.this,
-                                                getString(R.string.soulseek_no_results),
-                                                Toast.LENGTH_SHORT).show();
+MainActivity.this.toast(R.string.soulseek_no_results);
                                     } else if (soulseekAutoDownloadPending) {
                                         soulseekAutoDownloadPending = false;
                                         startSoulseekTransfer(soulseekResults.get(0), SOULSEEK_ACTION_PLAY);
@@ -12689,8 +12762,7 @@ public class MainActivity extends Activity {
                         if (currentScreenState == STATE_SOULSEEK) buildSoulseekResultsUI();
                     } else {
                         soulseekUiMode = SOULSEEK_UI_SEARCH;
-                        Toast.makeText(MainActivity.this, getString(R.string.soulseek_download_saved, file.getName()),
-                                Toast.LENGTH_SHORT).show();
+UserToast.show(MainActivity.this, getString(R.string.soulseek_download_saved, file.getName()), Toast.LENGTH_SHORT);
                         if (currentScreenState == STATE_SOULSEEK) buildSoulseekResultsUI();
                         scanMediaLibraryAsync();
                     }
@@ -12733,13 +12805,13 @@ public class MainActivity extends Activity {
                     if (currentScreenState == STATE_SOULSEEK && failed != null) {
                         showSoulseekDownloadFailure(failed, msg);
                     } else if (currentScreenState == STATE_SOULSEEK) {
-                        Toast.makeText(MainActivity.this, msg, Toast.LENGTH_LONG).show();
+UserToast.showError(MainActivity.this, prefs, msg, Toast.LENGTH_LONG);
                         if (soulseekUiMode == SOULSEEK_UI_DOWNLOAD || soulseekDownloadUiFailed) {
                             soulseekDownloadUiFailed = false;
                             buildSoulseekResultsUI();
                         }
                     } else {
-                        Toast.makeText(MainActivity.this, msg, Toast.LENGTH_LONG).show();
+UserToast.showError(MainActivity.this, prefs, msg, Toast.LENGTH_LONG);
                     }
                     clearPendingReachLibrarySave(true);
                     if (!isSoulseekUiActive() && !shouldDeferSoulseekOffScreenCleanup()) {
@@ -13254,7 +13326,7 @@ public class MainActivity extends Activity {
         if (isReachFileStillDownloading(src)) {
             pendingReachLibrarySave = src;
             pendingReachLibrarySaveRefreshQueue = refreshQueue;
-            Toast.makeText(this, getString(R.string.soulseek_save_pending), Toast.LENGTH_SHORT).show();
+toast(R.string.soulseek_save_pending);
             return;
         }
         saveReachTrackToLibraryNow(src, refreshQueue);
@@ -13291,7 +13363,7 @@ public class MainActivity extends Activity {
         pendingReachLibrarySave = null;
         pendingReachLibrarySaveRefreshQueue = false;
         if (cancelled) {
-            Toast.makeText(this, getString(R.string.soulseek_save_pending_cancelled), Toast.LENGTH_SHORT).show();
+toast(R.string.soulseek_save_pending_cancelled);
         }
     }
 
@@ -13310,7 +13382,7 @@ public class MainActivity extends Activity {
                 out.close();
                 src.delete();
             } catch (Exception e) {
-                Toast.makeText(this, getString(R.string.soulseek_save_failed), Toast.LENGTH_SHORT).show();
+toastError(R.string.soulseek_save_failed);
                 return;
             }
         }
@@ -13318,7 +13390,7 @@ public class MainActivity extends Activity {
         purgeUnreferencedReachCache();
         scanMediaLibraryAsync();
         if (refreshQueue) refreshMusicQueueList();
-        Toast.makeText(this, getString(R.string.soulseek_saved_to_library), Toast.LENGTH_SHORT).show();
+toast(R.string.soulseek_saved_to_library);
     }
 
     private void startSoulseekTransfer(final SoulseekClient.Result r, final int action) {
@@ -13899,46 +13971,45 @@ public class MainActivity extends Activity {
     }
 
     private void startReachPlayFromPartial(File partial) {
+        String meta = soulseekActiveDownload != null ? soulseekActiveDownload.title() : partial.getName();
+        beginReachPlayback(partial, meta);
+    }
+
+    /** Reach Play: insert after current track when a music queue exists, else single-item queue. */
+    private void beginReachPlayback(File file, String reachMeta) {
         saveCurrentPodcastResume();
         stopPodcastDownloadFully();
         clearReachStreamAlbumArt();
         reachPartialPlaybackStarted = true;
-        reachGrowingCacheFile = partial;
-        reachGrowingPreparedBytes = partial.length();
-        String meta = soulseekActiveDownload != null ? soulseekActiveDownload.title() : partial.getName();
+        reachGrowingCacheFile = file;
+        reachGrowingPreparedBytes = file.length();
 
         if (hasExistingMusicQueueForReachInsert()) {
             try {
                 if (mediaPlayer != null) mediaPlayer.reset();
             } catch (Exception ignored) {}
-            int playIndex = playback.insertReachStreamAfterCurrent(partial, meta);
+            int playIndex = playback.insertReachStreamAfterCurrent(file, reachMeta);
+            playback.setMusicIndex(playIndex);
             playback.setMusicActivePlaylistName(null);
             purgeUnreferencedReachCache();
             persistPlaybackQueue();
-            if (!playback.musicPlaylist().isEmpty()) {
-                tvPlayerTitle.setText(partial.getName());
-                tvPlayerArtist.setText(getString(R.string.reach_buffering_track));
-                playerProgress.setProgress(0);
-                tvPlayerTimeCurrent.setText("00:00");
-                tvPlayerTimeTotal.setText("00:00");
-                updateMusicTrackCountUi();
-            }
-            isPausedByHand = false;
             if (currentScreenState != STATE_PLAYER) {
                 playerReturnScreen = currentScreenState;
                 applyScreenChange(STATE_PLAYER);
             }
-            startReachFromGrowingFile(partial, 0);
-            return;
+        } else {
+            List<File> one = new ArrayList<File>();
+            one.add(file);
+            playback.activateMusic(one, 0, isShuffleMode);
+            playback.setMusicActivePlaylistName(null);
+            purgeUnreferencedReachCache();
+            persistPlaybackQueue();
+            playerReturnScreen = STATE_SOULSEEK;
+            applyScreenChange(STATE_PLAYER);
         }
 
-        List<File> one = new ArrayList<File>();
-        one.add(partial);
-        playback.activateMusic(one, 0, isShuffleMode);
-        playback.setMusicActivePlaylistName(null);
-        purgeUnreferencedReachCache();
         if (!playback.musicPlaylist().isEmpty()) {
-            tvPlayerTitle.setText(partial.getName());
+            tvPlayerTitle.setText(file.getName());
             tvPlayerArtist.setText(getString(R.string.reach_buffering_track));
             playerProgress.setProgress(0);
             tvPlayerTimeCurrent.setText("00:00");
@@ -13946,9 +14017,7 @@ public class MainActivity extends Activity {
             updateMusicTrackCountUi();
         }
         isPausedByHand = false;
-        playerReturnScreen = STATE_SOULSEEK;
-        applyScreenChange(STATE_PLAYER);
-        startReachFromGrowingFile(partial, 0);
+        startReachFromGrowingFile(file, 0);
     }
 
     private boolean hasExistingMusicQueueForReachInsert() {
@@ -13956,7 +14025,7 @@ public class MainActivity extends Activity {
                 && !playback.musicPlaylist().isEmpty();
     }
 
-    private boolean shouldShowQueueInPlayerContext() {
+    private boolean showContextQueueChip() {
         if (currentScreenState != STATE_PLAYER) return true;
         if (playback.isPodcastActive()) {
             return playback.podcastQueue().size() > 1;
@@ -14075,7 +14144,7 @@ public class MainActivity extends Activity {
         } catch (Exception e) {
             reachGrowingReprepareInFlight = false;
             if (!reachPartialPlaybackStarted) {
-                Toast.makeText(this, getString(R.string.toast_corrupted_file), Toast.LENGTH_SHORT).show();
+toastError(R.string.toast_corrupted_file);
             }
         }
     }
@@ -14577,12 +14646,12 @@ public class MainActivity extends Activity {
                 soulseekClient.shutdown();
                 soulseekClient = null;
             }
-            Toast.makeText(this, getString(R.string.soulseek_auto_account), Toast.LENGTH_LONG).show();
+toast(R.string.soulseek_auto_account, Toast.LENGTH_LONG);
             restoreSettingsAfterSoulseekAccount();
             return;
         }
         if (!SoulseekAccount.isValidUsername(pendingSoulseekUser)) {
-            Toast.makeText(this, getString(R.string.soulseek_invalid_username), Toast.LENGTH_LONG).show();
+toastError(R.string.soulseek_invalid_username, Toast.LENGTH_LONG);
             return;
         }
         keyboardPurpose = KEYBOARD_SOULSEEK_PASS;
@@ -14596,16 +14665,16 @@ public class MainActivity extends Activity {
             return;
         }
         if (typedPassword.isEmpty()) {
-            Toast.makeText(this, getString(R.string.soulseek_password_required), Toast.LENGTH_SHORT).show();
+toastError(R.string.soulseek_password_required);
             return;
         }
         if (!SoulseekAccount.isValidUsername(pendingSoulseekUser)) {
-            Toast.makeText(this, getString(R.string.soulseek_invalid_username), Toast.LENGTH_LONG).show();
+toastError(R.string.soulseek_invalid_username, Toast.LENGTH_LONG);
             return;
         }
         final String user = pendingSoulseekUser;
         final String pass = typedPassword;
-        Toast.makeText(this, getString(R.string.soulseek_testing_login), Toast.LENGTH_SHORT).show();
+toast(R.string.soulseek_testing_login);
         new Thread(new Runnable() {
             @Override
             public void run() {
@@ -14614,8 +14683,7 @@ public class MainActivity extends Activity {
                     @Override
                     public void run() {
                         if (err != null) {
-                            Toast.makeText(MainActivity.this, getString(R.string.soulseek_login_failed, err),
-                                    Toast.LENGTH_LONG).show();
+MainActivity.this.toastError(R.string.soulseek_login_failed, Toast.LENGTH_LONG, err);
                             return;
                         }
                         SoulseekAccount.saveCustom(prefs, user, pass);
@@ -14623,8 +14691,7 @@ public class MainActivity extends Activity {
                             soulseekClient.shutdown();
                             soulseekClient = null;
                         }
-                        Toast.makeText(MainActivity.this, getString(R.string.soulseek_account_saved),
-                                Toast.LENGTH_SHORT).show();
+MainActivity.this.toast(R.string.soulseek_account_saved);
                         restoreSettingsAfterSoulseekAccount();
                     }
                 });
@@ -14784,7 +14851,7 @@ public class MainActivity extends Activity {
         }
         if (playback.podcastFromSavedLibrary()) {
             podcastEpisodeLoading = false;
-            Toast.makeText(this, getString(R.string.podcasts_stream_failed), Toast.LENGTH_LONG).show();
+toastError(R.string.podcasts_stream_failed, Toast.LENGTH_LONG);
             return;
         }
         File cacheDir = new File(getCacheDir(), "podcast");
@@ -14941,7 +15008,7 @@ public class MainActivity extends Activity {
         if (podcastDownloadPaused) return;
         if (podcastDownloadRetryCount >= PODCAST_DOWNLOAD_MAX_RETRIES) {
             if (podcastPartialPlaybackStarted) {
-                Toast.makeText(this, getString(R.string.podcasts_stream_error), Toast.LENGTH_LONG).show();
+toastError(R.string.podcasts_stream_error, Toast.LENGTH_LONG);
             }
             return;
         }
@@ -15083,8 +15150,7 @@ public class MainActivity extends Activity {
                                 recoverPodcastStream(index, gen);
                             } else {
                                 podcastEpisodeLoading = false;
-                                Toast.makeText(MainActivity.this, getString(R.string.podcasts_stream_failed),
-                                        Toast.LENGTH_LONG).show();
+MainActivity.this.toastError(R.string.podcasts_stream_failed, Toast.LENGTH_LONG);
                             }
                         }
                     });
@@ -15189,7 +15255,7 @@ public class MainActivity extends Activity {
             } else {
                 podcastPartialPlaybackStarted = false;
                 podcastEpisodeLoading = false;
-                Toast.makeText(this, getString(R.string.podcasts_stream_failed), Toast.LENGTH_LONG).show();
+toastError(R.string.podcasts_stream_failed, Toast.LENGTH_LONG);
             }
         }
     }
@@ -15292,8 +15358,7 @@ public class MainActivity extends Activity {
                     recoverPodcastStream(index, gen);
                 } else {
                     podcastEpisodeLoading = false;
-                    Toast.makeText(MainActivity.this, getString(R.string.podcasts_stream_error),
-                            Toast.LENGTH_SHORT).show();
+MainActivity.this.toastError(R.string.podcasts_stream_error);
                 }
                 return true;
             }
@@ -15317,7 +15382,7 @@ public class MainActivity extends Activity {
             mediaPlayer.prepareAsync();
         } catch (Exception e) {
             podcastEpisodeLoading = false;
-            Toast.makeText(this, getString(R.string.podcasts_stream_failed), Toast.LENGTH_LONG).show();
+toastError(R.string.podcasts_stream_failed, Toast.LENGTH_LONG);
         }
     }
 
@@ -15326,7 +15391,7 @@ public class MainActivity extends Activity {
         if (!requireInternet(R.string.podcasts_wifi_required_stream)) return;
         final File dest = PodcastLibrary.destFile(podcastSelected.title, ep.title, ep.audioUrl);
         if (dest.isFile() && dest.length() > 0) {
-            Toast.makeText(this, getString(R.string.podcasts_already_saved), Toast.LENGTH_SHORT).show();
+toast(R.string.podcasts_already_saved);
             return;
         }
         setBlockingLoading(true);
@@ -15356,8 +15421,7 @@ public class MainActivity extends Activity {
                         @Override
                         public void run() {
                             setBlockingLoading(false);
-                            Toast.makeText(MainActivity.this, getString(R.string.podcasts_saved_to_library),
-                                    Toast.LENGTH_LONG).show();
+MainActivity.this.toast(R.string.podcasts_saved_to_library, Toast.LENGTH_LONG);
                             buildPodcastEpisodesUI();
                         }
                     });
@@ -15366,8 +15430,7 @@ public class MainActivity extends Activity {
                         @Override
                         public void run() {
                             setBlockingLoading(false);
-                            Toast.makeText(MainActivity.this, getString(R.string.podcasts_save_failed),
-                                    Toast.LENGTH_LONG).show();
+MainActivity.this.toastError(R.string.podcasts_save_failed, Toast.LENGTH_LONG);
                         }
                     });
                 }
@@ -15467,7 +15530,7 @@ public class MainActivity extends Activity {
         rebootDeviceSilently();
         ViewGroup root = (ViewGroup) findViewById(android.R.id.content);
         if (root == null) {
-            Toast.makeText(this, getString(R.string.update_install_reboot), Toast.LENGTH_LONG).show();
+toast(R.string.update_install_reboot, Toast.LENGTH_LONG);
             return;
         }
         String[] labels = new String[] {
@@ -15486,9 +15549,7 @@ public class MainActivity extends Activity {
                             rebootDeviceSilently();
                         } else {
                             finishOtaDownloadSession();
-                            Toast.makeText(MainActivity.this,
-                                    getString(R.string.update_download_status_reboot_pending),
-                                    Toast.LENGTH_LONG).show();
+MainActivity.this.toast(R.string.update_download_status_reboot_pending, Toast.LENGTH_LONG);
                         }
                     }
                 }, y1RowHeightPx, screenWidthPx - 20, false, true);
@@ -15552,8 +15613,7 @@ public class MainActivity extends Activity {
                     Process p = Runtime.getRuntime().exec(new String[] { "su", "-c", "sync; reboot" });
                     if (p.waitFor() == 0) return;
                 } catch (Exception ignored) {}
-                Toast.makeText(MainActivity.this, getString(R.string.update_reboot_failed),
-                        Toast.LENGTH_LONG).show();
+MainActivity.this.toastError(R.string.update_reboot_failed, Toast.LENGTH_LONG);
             }
         }, 1500);
     }
@@ -15573,7 +15633,7 @@ public class MainActivity extends Activity {
     private void installApk(File apkFile, SolarUpdateClient.ReleaseInfo release) {
         try {
             if (apkFile == null || !apkFile.isFile()) {
-                Toast.makeText(this, getString(R.string.toast_install_failed), Toast.LENGTH_SHORT).show();
+toastError(R.string.toast_install_failed);
                 return;
             }
             int localCode = BuildConfig.VERSION_CODE;
@@ -15588,7 +15648,7 @@ public class MainActivity extends Activity {
                     : SolarUpdateClient.InstallRelation.UPGRADE;
 
             if (release != null && relation == SolarUpdateClient.InstallRelation.SAME) {
-                Toast.makeText(this, getString(R.string.update_already_installed), Toast.LENGTH_SHORT).show();
+toast(R.string.update_already_installed);
                 return;
             }
 
@@ -15598,7 +15658,7 @@ public class MainActivity extends Activity {
                     || relation == SolarUpdateClient.InstallRelation.SIDEGRADE;
 
             if (tryPmFirst && installViaPackageManager(apkFile, allowDowngrade)) {
-                Toast.makeText(this, getString(R.string.toast_install_ok), Toast.LENGTH_SHORT).show();
+toast(R.string.toast_install_ok);
                 return;
             }
 
@@ -15609,13 +15669,13 @@ public class MainActivity extends Activity {
                     markOtaRebootPending(expectedCode);
                     showOtaRebootModal();
                 } else {
-                    Toast.makeText(this, getString(R.string.update_install_failed), Toast.LENGTH_LONG).show();
+toastError(R.string.update_install_failed, Toast.LENGTH_LONG);
                 }
                 return;
             }
 
             if (!systemApp && installViaPackageManager(apkFile, true)) {
-                Toast.makeText(this, getString(R.string.toast_install_ok), Toast.LENGTH_SHORT).show();
+toast(R.string.toast_install_ok);
                 return;
             }
 
@@ -15624,7 +15684,7 @@ public class MainActivity extends Activity {
             intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             startActivity(intent);
         } catch (Exception e) {
-            Toast.makeText(this, getString(R.string.toast_install_failed), Toast.LENGTH_SHORT).show();
+toastError(R.string.toast_install_failed);
         }
     }
 
@@ -15688,7 +15748,7 @@ public class MainActivity extends Activity {
             ivAlbumArt.setImageResource(R.drawable.default_album);
 
             // 시스템이 뻗기 전에 경고창을 띄우고 1.5초 뒤에 다음 곡으로 자동으로 부드럽게 넘겨버립니다!
-            Toast.makeText(this, getString(R.string.toast_corrupted_file), Toast.LENGTH_SHORT).show();
+toastError(R.string.toast_corrupted_file);
             new Handler().postDelayed(new Runnable() {
                 @Override
                 public void run() {
@@ -15938,7 +15998,7 @@ public class MainActivity extends Activity {
         if (android.os.Build.VERSION.SDK_INT >= 23) {
             if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
                 requestPermissions(new String[]{android.Manifest.permission.RECORD_AUDIO}, 101);
-                Toast.makeText(this, getString(R.string.toast_audio_permission), Toast.LENGTH_SHORT).show();
+toastError(R.string.toast_audio_permission);
                 return;
             }
         }
@@ -17194,7 +17254,7 @@ public class MainActivity extends Activity {
                 .putString("background_mode", BG_MODE_THEME)
                 .commit();
         updateMainMenuBackground();
-        Toast.makeText(this, getString(R.string.toast_bg_applied), Toast.LENGTH_SHORT).show();
+toast(R.string.toast_bg_applied);
     }
 
     private boolean isWallpaperPickActive(ThemeManager.WallpaperPick pick) {
@@ -17363,9 +17423,9 @@ public class MainActivity extends Activity {
                     // 시스템 전역에 시간이 변경되었음을 강제로 방송하여 메인 페이지 시계와 시스템 앱들을 동기화시킵니다.
                     sendBroadcast(new Intent(Intent.ACTION_TIME_CHANGED));
 
-                    Toast.makeText(MainActivity.this, getString(R.string.toast_time_applied), Toast.LENGTH_SHORT).show();
+MainActivity.this.toast(R.string.toast_time_applied);
                 } catch (Exception e) {
-                    Toast.makeText(MainActivity.this, getString(R.string.toast_time_failed), Toast.LENGTH_SHORT).show();
+MainActivity.this.toastError(R.string.toast_time_failed);
                 }
 
                 // 🚀 [포커스 버그 해결 1] 오염된 인덱스를 'Date & Time Settings' 메뉴 위치(14번째 항목)로 강제 정화
@@ -17611,8 +17671,7 @@ public class MainActivity extends Activity {
             runOnUiThread(new Runnable() {
                 @Override
                 public void run() {
-                    Toast.makeText(MainActivity.this, getString(R.string.toast_album_art_searching, cleanQuery),
-                            Toast.LENGTH_SHORT).show();
+UserToast.showError(MainActivity.this, prefs, getString(R.string.toast_album_art_searching, cleanQuery), Toast.LENGTH_SHORT);
                 }
             });
         }
@@ -17676,8 +17735,7 @@ public class MainActivity extends Activity {
                             public void run() {
                                 if (reachEpoch >= 0 && reachEpoch != reachMetadataEpoch) return;
                                 if (!silent) {
-                                    Toast.makeText(MainActivity.this, getString(R.string.toast_album_art_updated),
-                                            Toast.LENGTH_SHORT).show();
+MainActivity.this.toast(R.string.toast_album_art_updated);
                                 }
                                 if (isReachFileNowPlaying(track)) {
                                     tvPlayerTitle.setText(finalTitle);
@@ -17701,8 +17759,7 @@ public class MainActivity extends Activity {
                         runOnUiThread(new Runnable() {
                             @Override
                             public void run() {
-                                Toast.makeText(MainActivity.this, getString(R.string.toast_album_art_none),
-                                        Toast.LENGTH_SHORT).show();
+MainActivity.this.toastError(R.string.toast_album_art_none);
                             }
                         });
                     }
@@ -17720,8 +17777,7 @@ public class MainActivity extends Activity {
                         runOnUiThread(new Runnable() {
                             @Override
                             public void run() {
-                                Toast.makeText(MainActivity.this, getString(R.string.toast_connection_error),
-                                        Toast.LENGTH_LONG).show();
+MainActivity.this.toastError(R.string.toast_connection_error, Toast.LENGTH_LONG);
                             }
                         });
                     }
@@ -18107,8 +18163,7 @@ public class MainActivity extends Activity {
                                     .commit();
                         } catch (Exception ignored) {}
                         updateMainMenuBackground();
-                        Toast.makeText(MainActivity.this, getString(R.string.toast_bg_applied),
-                                Toast.LENGTH_SHORT).show();
+MainActivity.this.toast(R.string.toast_bg_applied);
                         isPickingBackground = false;
                         changeScreen(STATE_MENU);
                     }

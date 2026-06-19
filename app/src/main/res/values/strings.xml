@@ -539,6 +539,11 @@
     <string name="context_shutdown_message">The device will power off.</string>
     <string name="context_shutdown_confirm">Shut down</string>
     <string name="context_find_like_this">Find like this</string>
+    <string name="context_search_online_for">Search online for:</string>
+    <string name="settings_debug">Debug</string>
+    <string name="settings_sub_debug">Settings: Debug</string>
+    <string name="settings_debug_show_errors">Show Errors</string>
+    <string name="settings_debug_show_unimplemented">Show unimplemented</string>
     <string name="update_installing_title">Installing update</string>
     <string name="update_install_reboot">Installing update… device will reboot.</string>
     <string name="update_available_title">Update available</string>

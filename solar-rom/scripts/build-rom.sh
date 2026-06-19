@@ -17,6 +17,8 @@ SYSTEM_APK_NAME="com.solar.launcher.apk"
 
 # shellcheck source=/dev/null
 source "$SCRIPT_DIR/solar-repo.sh"
+# shellcheck source=/dev/null
+source "$SCRIPT_DIR/mtk-y1-layout.sh"
 
 usage() {
     cat >&2 <<EOF
@@ -182,9 +184,9 @@ audit_rom_contents() {
 
     echo "==> Auditing ROM contents"
 
-    for required in boot.img lk.bin logo.bin recovery.img system.img userdata.img MT6572_Android_scatter.txt; do
+    for required in "${MTK_Y1_ROM_IMAGE_FILES[@]}"; do
         if [ ! -f "$base_dir/$required" ]; then
-            echo "audit fail: missing $required in ROM archive" >&2
+            echo "audit fail: missing $required in ROM staging (required beside $MTK_Y1_SCATTER)" >&2
             errors=$((errors + 1))
         fi
     done
@@ -240,22 +242,46 @@ audit_rom_contents() {
     if [ ! -f "$base_dir/boot.img" ]; then
         echo "audit fail: boot.img missing" >&2
         errors=$((errors + 1))
-    elif [ "$(md5sum "$base_dir/boot.img" | awk '{print $1}')" != "83b946d1799b4f0281ba8e808ed7911b" ]; then
-        echo "audit warn: boot.img is not stock Innioasis 3.0.7 (Rockbox or custom?)" >&2
+    else
+        local boot_size
+        boot_size="$(stat -c%s "$base_dir/boot.img")"
+        if [ "$boot_size" -gt "$MTK_Y1_BOOTIMG_MAX_BYTES" ]; then
+            echo "audit fail: boot.img ${boot_size} bytes exceeds BOOTIMG partition ($MTK_Y1_BOOTIMG_MAX_BYTES)" >&2
+            errors=$((errors + 1))
+        elif [ "$(md5sum "$base_dir/boot.img" | awk '{print $1}')" != "83b946d1799b4f0281ba8e808ed7911b" ]; then
+            echo "audit warn: boot.img is not stock Innioasis 3.0.7 kernel (Rockbox or custom?)" >&2
+        fi
     fi
 
     if [ ! -f "$base_dir/logo.bin" ]; then
         echo "audit fail: logo.bin missing" >&2
         errors=$((errors + 1))
-    elif [ "$(stat -c%s "$base_dir/logo.bin" 2>/dev/null || echo 0)" -gt 1048576 ]; then
-        echo "audit warn: logo.bin looks like Rockbox-sized splash — expected stock Innioasis" >&2
+    else
+        local logo_size
+        logo_size="$(stat -c%s "$base_dir/logo.bin")"
+        if [ "$logo_size" -gt "$MTK_Y1_LOGO_MAX_BYTES" ]; then
+            echo "audit fail: logo.bin ${logo_size} bytes exceeds LOGO partition ($MTK_Y1_LOGO_MAX_BYTES)" >&2
+            errors=$((errors + 1))
+        elif [ "$logo_size" -ge "$MTK_Y1_LOGO_MAX_BYTES" ]; then
+            echo "audit warn: logo.bin fills LOGO partition — likely Rockbox splash, expected stock Innioasis" >&2
+        fi
     fi
 
-    if [ ! -f "$sys_mount/media/bootanimation.zip" ]; then
-        echo "audit fail: /system/media/bootanimation.zip missing" >&2
-        errors=$((errors + 1))
-    elif [ "$(md5sum "$sys_mount/media/bootanimation.zip" | awk '{print $1}')" != "b65b1227350f4ded743a1fe61b0a4eb1" ]; then
+    for rel in "${MTK_Y1_SYSTEM_BOOT_PATHS[@]}"; do
+        if [ ! -f "$sys_mount/$rel" ]; then
+            echo "audit fail: /system/$rel missing (boot animation lives in system.img, not rom.zip root)" >&2
+            errors=$((errors + 1))
+        fi
+    done
+
+    if [ -f "$sys_mount/media/bootanimation.zip" ] \
+            && [ "$(md5sum "$sys_mount/media/bootanimation.zip" | awk '{print $1}')" != "b65b1227350f4ded743a1fe61b0a4eb1" ]; then
         echo "audit warn: bootanimation.zip is not stock Innioasis (Rockbox or custom?)" >&2
+    fi
+
+    if [ -f "$sys_mount/bin/bootanimation" ] \
+            && [ "$(md5sum "$sys_mount/bin/bootanimation" | awk '{print $1}')" != "5ef02d5f39955e22f231618d7557b148" ]; then
+        echo "audit warn: /system/bin/bootanimation is not stock Innioasis binary" >&2
     fi
 
     if [ ! -f "$sys_mount/usr/keylayout/Generic.kl" ] || [ ! -f "$sys_mount/usr/keylayout/Stock.kl" ]; then
@@ -286,6 +312,28 @@ audit_rom_contents() {
     fi
 
     echo "==> ROM audit passed"
+}
+
+package_rom_zip() {
+    local base_dir="$1"
+    local output="$2"
+    local missing=0
+
+    for f in "${MTK_Y1_ROM_IMAGE_FILES[@]}"; do
+        if [ ! -f "$base_dir/$f" ]; then
+            echo "error: missing $f (must sit beside $MTK_Y1_SCATTER for SP Flash / mtkclient)" >&2
+            missing=$((missing + 1))
+        fi
+    done
+    [ "$missing" -eq 0 ] || die "ROM package incomplete ($missing file(s) missing)"
+
+    mkdir -p "$(dirname "$output")"
+    rm -f "$output"
+    echo "==> Packaging $(basename "$output") (flat layout per $MTK_Y1_SCATTER)"
+    (
+        cd "$base_dir"
+        zip -j -q "$output" "${MTK_Y1_ROM_IMAGE_FILES[@]}"
+    )
 }
 
 WORK_DIR="$(mktemp -d)"
@@ -401,12 +449,6 @@ MOUNT_USER=""
 rm -f "$BASE_DIR/rom.zip"
 rm -rf "$MOUNT_SYS" "$MOUNT_USER"
 
-mkdir -p "$(dirname "$OUTPUT")"
-echo "==> Creating $OUTPUT"
-rm -f "$OUTPUT"
-(
-    cd "$BASE_DIR"
-    zip -j -q "$OUTPUT" ./*
-)
+package_rom_zip "$BASE_DIR" "$OUTPUT"
 
 echo "==> Built $OUTPUT ($(du -h "$OUTPUT" | awk '{print $1}'))"

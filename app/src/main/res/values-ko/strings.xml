@@ -175,6 +175,11 @@
     <string name="settings_clear_background">사용자 배경 지우기</string>
     <string name="settings_clear_cache">앨범 아트 캐시 지우기</string>
     <string name="settings_datetime">날짜 및 시간 설정</string>
+    <string name="settings_debug">디버그</string>
+    <string name="settings_sub_debug">설정: 디버그</string>
+    <string name="settings_debug_show_errors">오류 표시</string>
+    <string name="settings_debug_show_unimplemented">미구현 기능 표시</string>
+    <string name="context_search_online_for">온라인 검색:</string>
     <string name="settings_widgets_section">위젯</string>
     <string name="settings_theme_header">━ 앱 테마 선택 ━</string>
     <string name="settings_focus_theme">테마에 포커스</string>

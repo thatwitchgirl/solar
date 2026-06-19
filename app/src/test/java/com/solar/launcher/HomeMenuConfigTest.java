@@ -23,27 +23,28 @@ public class HomeMenuConfigTest {
     @Test
     public void defaultOrder_matchesY1StockLayout() {
         List<HomeMenuConfig.Entry> visible = HomeMenuConfig.loadVisible(prefs);
-        if (visible.size() != 10) throw new AssertionError("default size " + visible.size());
+        if (visible.size() != 7) throw new AssertionError("default size " + visible.size());
         if (!HomeMenuConfig.ID_NOW_PLAYING.equals(visible.get(0).id)) {
             throw new AssertionError("now playing position");
         }
         if (!HomeMenuConfig.ID_MUSIC.equals(visible.get(1).id)) {
             throw new AssertionError("music position");
         }
-        if (!HomeMenuConfig.ID_VIDEOS.equals(visible.get(2).id)) {
-            throw new AssertionError("videos position");
-        }
-        if (!HomeMenuConfig.ID_PHOTOS.equals(visible.get(3).id)) {
-            throw new AssertionError("photos position");
-        }
-        if (!HomeMenuConfig.ID_FM.equals(visible.get(4).id)) {
-            throw new AssertionError("fm position");
-        }
-        if (!HomeMenuConfig.ID_BLUETOOTH.equals(visible.get(5).id)) {
+        if (!HomeMenuConfig.ID_BLUETOOTH.equals(visible.get(2).id)) {
             throw new AssertionError("bluetooth position");
         }
-        if (!HomeMenuConfig.ID_SETTINGS.equals(visible.get(6).id)) {
+        if (!HomeMenuConfig.ID_SETTINGS.equals(visible.get(3).id)) {
             throw new AssertionError("settings position");
+        }
+    }
+
+    @Test
+    public void showUnimplementedRestoresRoadmapShortcuts() {
+        prefs.edit().putBoolean(DebugPrefs.PREF_SHOW_UNIMPLEMENTED, true).commit();
+        List<HomeMenuConfig.Entry> visible = HomeMenuConfig.loadVisible(prefs);
+        if (visible.size() != 10) throw new AssertionError("unimplemented on size " + visible.size());
+        if (!HomeMenuConfig.ID_VIDEOS.equals(visible.get(2).id)) {
+            throw new AssertionError("videos position");
         }
     }
 
@@ -209,6 +210,7 @@ public class HomeMenuConfigTest {
 
     @Test
     public void editorHomeEntries_ignoresConnectivity() {
+        prefs.edit().putBoolean(DebugPrefs.PREF_SHOW_UNIMPLEMENTED, true).commit();
         HomeMenuConfig.hideFromHome(prefs, HomeMenuConfig.ID_FM);
         List<HomeMenuConfig.Entry> editor = HomeMenuConfig.loadEditorHomeEntries(prefs);
         List<HomeMenuConfig.Entry> offlineLive = HomeMenuConfig.loadVisibleForDisplay(prefs, false, false);

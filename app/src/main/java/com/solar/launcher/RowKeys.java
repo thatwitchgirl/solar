@@ -61,6 +61,9 @@ public final class RowKeys {
     public static final String LANG_SYSTEM = "language.system";
     public static final String LANG_EN = "language.en";
     public static final String LANG_KO = "language.ko";
+    public static final String DEBUG = "settings.debug";
+    public static final String DEBUG_SHOW_ERRORS = "settings.debug.show_errors";
+    public static final String DEBUG_SHOW_UNIMPLEMENTED = "settings.debug.show_unimplemented";
 
     public static String homeShortcut(String id) {
         return "home.shortcut." + id;
@@ -131,6 +134,9 @@ public final class RowKeys {
         if (LANG_SYSTEM.equals(rowKey)) return R.string.language_system;
         if (LANG_EN.equals(rowKey)) return R.string.language_english;
         if (LANG_KO.equals(rowKey)) return R.string.language_korean;
+        if (DEBUG.equals(rowKey)) return R.string.settings_debug;
+        if (DEBUG_SHOW_ERRORS.equals(rowKey)) return R.string.settings_debug_show_errors;
+        if (DEBUG_SHOW_UNIMPLEMENTED.equals(rowKey)) return R.string.settings_debug_show_unimplemented;
         return 0;
     }
 

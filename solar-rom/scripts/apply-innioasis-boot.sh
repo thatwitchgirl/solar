@@ -1,42 +1,72 @@
 #!/usr/bin/env bash
-# Replace Rockbox boot splash with stock Innioasis boot.img, logo.bin, and system bootanimation.
-# Usage: apply-innioasis-boot.sh <rom_base_dir> <mounted_system>
+# Apply boot splash assets for Innioasis Y1 (MT6572).
 #
-# rom_base_dir: directory containing boot.img, logo.bin, ... (from extracted rom.zip)
-# mounted_system: loop-mounted system.img mount point
+# Partition images (logo.bin, boot.img) → rom staging dir beside MT6572_Android_scatter.txt
+#   LOGO partition    = logo.bin   (first static splash, before Android)
+#   BOOTIMG partition = boot.img   (Linux kernel — not bootanimation)
+#
+# Android boot animation → inside system.img only:
+#   /system/media/bootanimation.zip
+#   /system/bin/bootanimation
+#
+# Usage: apply-innioasis-boot.sh <rom_staging_dir> <mounted_system>
 set -euo pipefail
 
-BASE_DIR="${1:-}"
+ROM_DIR="${1:-}"
 MOUNT_SYS="${2:-}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=/dev/null
+source "$SCRIPT_DIR/mtk-y1-layout.sh"
 ASSETS_DIR="${SOLAR_BOOT_ASSETS:-$SCRIPT_DIR/../assets/innioasis-boot}"
 
 die() { echo "error: $*" >&2; exit 1; }
 
-[ -n "$BASE_DIR" ] && [ -d "$BASE_DIR" ] || die "usage: $0 <rom_base_dir> <mounted_system>"
-[ -n "$MOUNT_SYS" ] && [ -d "$MOUNT_SYS" ] || die "usage: $0 <rom_base_dir> <mounted_system>"
+[ -n "$ROM_DIR" ] && [ -d "$ROM_DIR" ] || die "usage: $0 <rom_staging_dir> <mounted_system>"
+[ -n "$MOUNT_SYS" ] && [ -d "$MOUNT_SYS" ] || die "usage: $0 <rom_staging_dir> <mounted_system>"
 [ -d "$ASSETS_DIR" ] || die "boot assets missing: $ASSETS_DIR"
+[ -f "$ROM_DIR/$MTK_Y1_SCATTER" ] || die "scatter missing in $ROM_DIR — unzip base rom.zip first"
 
-for f in boot.img bootanimation bootanimation.zip logo.bin; do
-    [ -f "$ASSETS_DIR/$f" ] || die "missing $ASSETS_DIR/$f"
+for f in "${MTK_Y1_BOOT_ASSET_FILES[@]}"; do
+    [ -f "$ASSETS_DIR/$f" ] || die "missing asset $ASSETS_DIR/$f"
 done
 
-echo "==> Innioasis boot assets (from $ASSETS_DIR)"
+echo "==> Boot assets from $ASSETS_DIR"
 
-echo "  boot.img → $BASE_DIR/boot.img"
-cp "$ASSETS_DIR/boot.img" "$BASE_DIR/boot.img"
+# --- eMMC partition images (rom.zip root; flashed via scatter / mtkclient) ---
+for part in "${MTK_Y1_BOOT_PARTITION_ASSETS[@]}"; do
+    src="$ASSETS_DIR/$part"
+    dest="$ROM_DIR/$part"
+    case "$part" in
+        logo.bin)
+            mtk_y1_check_partition_image_size "$src" "$MTK_Y1_LOGO_MAX_BYTES" "LOGO" \
+                || die "logo.bin too large for LOGO partition"
+            echo "  LOGO partition  ← $part ($(stat -c%s "$src") bytes)"
+            ;;
+        boot.img)
+            mtk_y1_check_partition_image_size "$src" "$MTK_Y1_BOOTIMG_MAX_BYTES" "BOOTIMG" \
+                || die "boot.img too large for BOOTIMG partition"
+            echo "  BOOTIMG (kernel) ← $part ($(stat -c%s "$src") bytes)"
+            ;;
+    esac
+    cp "$src" "$dest"
+done
 
-echo "  logo.bin → $BASE_DIR/logo.bin"
-cp "$ASSETS_DIR/logo.bin" "$BASE_DIR/logo.bin"
+# --- Android bootanimation (system.img contents only) ---
+install_system_file() {
+    local rel="$1"
+    local src="$2"
+    local dest="$MOUNT_SYS/$rel"
+    sudo mkdir -p "$(dirname "$dest")"
+    sudo cp "$src" "$dest"
+    case "$rel" in
+        bin/*) sudo chmod 755 "$dest" ;;
+        *)     sudo chmod 644 "$dest" ;;
+    esac
+    sudo chown root:root "$dest"
+    echo "  /system/$rel"
+}
 
-echo "  /system/media/bootanimation.zip"
-sudo cp "$ASSETS_DIR/bootanimation.zip" "$MOUNT_SYS/media/bootanimation.zip"
-sudo chmod 644 "$MOUNT_SYS/media/bootanimation.zip"
-sudo chown root:root "$MOUNT_SYS/media/bootanimation.zip"
+install_system_file "media/bootanimation.zip" "$ASSETS_DIR/bootanimation.zip"
+install_system_file "bin/bootanimation" "$ASSETS_DIR/bootanimation"
 
-echo "  /system/bin/bootanimation"
-sudo cp "$ASSETS_DIR/bootanimation" "$MOUNT_SYS/bin/bootanimation"
-sudo chmod 755 "$MOUNT_SYS/bin/bootanimation"
-sudo chown root:root "$MOUNT_SYS/bin/bootanimation"
-
-echo "==> Innioasis boot assets applied"
+echo "==> Boot assets applied (partition images in $ROM_DIR; animation in system.img)"

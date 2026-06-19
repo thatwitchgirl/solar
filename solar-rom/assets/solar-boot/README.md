@@ -1,12 +1,20 @@
-# Future Solar boot animation
+# Solar-branded boot assets (placeholder)
 
-Drop custom assets here when ready to replace the stock Innioasis boot splash:
+Drop custom files here when ready. Same layout as `../innioasis-boot/`:
 
 | File | Destination |
 |------|-------------|
-| `boot.img` | ROM archive `boot.img` (kernel ramdisk) |
-| `logo.bin` | ROM archive `logo.bin` (MTK early splash) |
-| `bootanimation.zip` | `/system/media/bootanimation.zip` |
-| `bootanimation` | `/system/bin/bootanimation` |
+| `logo.bin` | LOGO partition — `rom.zip` root (early static splash) |
+| `boot.img` | BOOTIMG partition — `rom.zip` root (Linux kernel, **not** animation) |
+| `bootanimation.zip` | `/system/media/bootanimation.zip` inside `system.img` |
+| `bootanimation` | `/system/bin/bootanimation` inside `system.img` |
 
-Until then, `../innioasis-boot/` supplies stock Innioasis 3.0.7 boot media via `apply-innioasis-boot.sh`.
+Build with:
+
+```bash
+SOLAR_BOOT_ASSETS=solar-rom/assets/solar-boot ./solar-rom/scripts/build-rom.sh a --apk ...
+```
+
+Until then, `../innioasis-boot/` supplies stock Innioasis 3.0.7 boot media.
+
+See `../innioasis-boot/README.md` and `../../scripts/mtk-y1-layout.sh` for MTK flash layout.
