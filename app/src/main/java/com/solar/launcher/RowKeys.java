@@ -4,6 +4,7 @@ package com.solar.launcher;
 public final class RowKeys {
     public static final String SHUFFLE = "settings.shuffle";
     public static final String REPEAT = "settings.repeat";
+    public static final String LIBRARY_PRIMARY_ARTISTS = "settings.library_primary_artists";
     public static final String EQ = "settings.eq";
     public static final String BUTTON_SOUND = "settings.button_sound";
     public static final String BUTTON_VIBRATE = "settings.button_vibrate";
@@ -78,6 +79,7 @@ public final class RowKeys {
         }
         if (SHUFFLE.equals(rowKey)) return R.string.settings_shuffle_mode;
         if (REPEAT.equals(rowKey)) return R.string.settings_repeat_mode;
+        if (LIBRARY_PRIMARY_ARTISTS.equals(rowKey)) return R.string.settings_library_primary_artists;
         if (EQ.equals(rowKey)) return R.string.settings_equalizer;
         if (BUTTON_SOUND.equals(rowKey)) return R.string.settings_button_sound;
         if (BUTTON_VIBRATE.equals(rowKey)) return R.string.settings_button_vibrate;

@@ -130,4 +130,23 @@ public final class PlaylistManager {
   public static Entry fromTracks(String name, List<File> tracks) {
     return new Entry(name, null, new ArrayList<File>(tracks));
   }
+
+  /** Append unique tracks to an on-disk M3U (dedupes by absolute path). */
+  public static void appendTracks(File m3u, File musicRoot, List<File> tracks) throws Exception {
+    if (m3u == null || !m3u.isFile()) throw new IllegalArgumentException("m3u");
+    Entry existing = parse(m3u, musicRoot);
+    java.util.LinkedHashSet<String> seen = new java.util.LinkedHashSet<String>();
+    List<File> merged = new ArrayList<File>();
+    for (File t : existing.tracks) {
+      if (t == null || !t.isFile()) continue;
+      if (seen.add(t.getAbsolutePath())) merged.add(t);
+    }
+    if (tracks != null) {
+      for (File t : tracks) {
+        if (t == null || !t.isFile()) continue;
+        if (seen.add(t.getAbsolutePath())) merged.add(t);
+      }
+    }
+    saveM3u(fromTracks(existing.name, merged), m3u);
+  }
 }

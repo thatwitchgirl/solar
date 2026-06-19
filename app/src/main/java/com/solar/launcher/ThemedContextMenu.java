@@ -221,16 +221,18 @@ public final class ThemedContextMenu {
         itemsScroll = new ScrollView(activity);
         itemsScroll.setFillViewport(false);
         itemsScroll.setVerticalScrollBarEnabled(false);
-        int maxListH = (int) (activity.getResources().getDisplayMetrics().heightPixels * 0.52f);
+        int maxListH = listMaxHeightPx();
         itemsHost = new LinearLayout(activity);
         itemsHost.setOrientation(LinearLayout.VERTICAL);
         if (labels.length > 0) {
             rebuildListRows(itemIconKeys, itemStateTexts);
-            itemsScroll.addView(itemsHost, new ScrollView.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-            panel.addView(itemsScroll, new LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT, maxListH));
         }
+        itemsScroll.addView(itemsHost, new ScrollView.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        LinearLayout.LayoutParams scrollLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, labels.length > 0 ? maxListH : 0);
+        itemsScroll.setVisibility(labels.length > 0 ? View.VISIBLE : View.GONE);
+        panel.addView(itemsScroll, scrollLp);
 
         sliderBar = new ProgressBar(activity, null, android.R.attr.progressBarStyleHorizontal);
         sliderBar.setMax(sliderMax);
@@ -283,15 +285,31 @@ public final class ThemedContextMenu {
         this.rowHeaders = itemHeaders;
         this.listener = listener;
         this.focusIndex = firstFocusableIndex(0);
-        this.focusZone = FocusZone.LIST;
+        this.focusZone = labels.length > 0 ? FocusZone.LIST : FocusZone.QUICK_BAR;
         if (panelTitleView != null && title != null && title.length() > 0) {
             panelTitleView.setText(title);
             panelTitleView.setSelected(true);
         }
         if (quickBarScroll != null) quickBarScroll.setAlpha(0.35f);
+        if (itemsScroll != null) {
+            int maxListH = listMaxHeightPx();
+            LinearLayout.LayoutParams scrollLp = (LinearLayout.LayoutParams) itemsScroll.getLayoutParams();
+            if (scrollLp == null) {
+                scrollLp = new LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT, labels.length > 0 ? maxListH : 0);
+            } else {
+                scrollLp.height = labels.length > 0 ? maxListH : 0;
+            }
+            itemsScroll.setLayoutParams(scrollLp);
+            itemsScroll.setVisibility(labels.length > 0 ? View.VISIBLE : View.GONE);
+        }
         rebuildListRows(itemIconKeys, itemStateTexts);
         refreshAll();
         scrollFocusIntoView();
+    }
+
+    private int listMaxHeightPx() {
+        return (int) (activity.getResources().getDisplayMetrics().heightPixels * 0.52f);
     }
 
     public void showSlider(String label, int max, int value) {

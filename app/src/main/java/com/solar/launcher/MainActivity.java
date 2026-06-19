@@ -176,17 +176,30 @@ public class MainActivity extends Activity {
         File file;
         String title;
         String artist;
+        String albumArtist;
         String album;
         String genre;
 
         public SongItem(File f, String t, String a, String al, String g) {
+            this(f, t, a, al, g, "");
+        }
+
+        public SongItem(File f, String t, String a, String al, String g, String albumArtist) {
             file = f;
             title = t;
             artist = a;
             album = al;
             genre = g != null && g.trim().length() > 0 ? g.trim() : "Unknown Genre";
+            this.albumArtist = albumArtist != null ? albumArtist.trim() : "";
+        }
+
+        LibraryArtistIndex.Track toIndexTrack() {
+            return new LibraryArtistIndex.Track(artist, albumArtist);
         }
     }
+    private final LibraryArtistIndex libraryArtistIndex = new LibraryArtistIndex();
+    private static final String PREF_LIBRARY_PRIMARY_ARTISTS_ONLY = "library_primary_artists_only";
+    private boolean libraryPrimaryArtistsOnly = false;
     // 💡 [초고속 엔진] 수천 곡을 버티기 위한 재활용 리스트뷰와 기존 스크롤뷰
     private android.widget.ListView listVirtualSongs;
     private android.widget.ListView listMusicQueue;
@@ -677,6 +690,8 @@ public class MainActivity extends Activity {
     private Random random = new Random();
 
     private List<String> foundBtDevices = new ArrayList<String>();
+    private final java.util.LinkedHashMap<String, BluetoothDevice> contextMenuBtDiscovered =
+            new java.util.LinkedHashMap<String, BluetoothDevice>();
     private List<String> foundWifiNetworks = new ArrayList<String>();
     private String pairingDeviceAddress;
     private BluetoothA2dp bluetoothA2dp;
@@ -871,6 +886,7 @@ public class MainActivity extends Activity {
                     if (networkInfo != null && networkInfo.isConnected()) {
                         if (currentScreenState == STATE_WIFI)
                             startWifiScan();
+                        if (isContextMenuWifiTier()) refreshContextWifiTier();
                     }
                     onWifiConnectivityChanged();
                 }
@@ -878,14 +894,19 @@ public class MainActivity extends Activity {
             } else if (ConnectivityManager.CONNECTIVITY_ACTION.equals(action)) {
                 onWifiConnectivityChanged();
             } else if (BluetoothDevice.ACTION_FOUND.equals(action)) {
-                if (currentScreenState != STATE_BLUETOOTH) return;
                 BluetoothDevice device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
+                if (device == null) return;
                 String deviceName = device.getName();
                 String deviceAddress = device.getAddress();
-                if (deviceName != null && !foundBtDevices.contains(deviceAddress)) {
-                    foundBtDevices.add(deviceAddress);
-                    // 💡 새로 발견된 낯선 기기는 isPaired = false 로 보냅니다.
-                    addBluetoothItemToUI(deviceName, device, false, false);
+                if (currentScreenState == STATE_BLUETOOTH) {
+                    if (deviceName != null && !foundBtDevices.contains(deviceAddress)) {
+                        foundBtDevices.add(deviceAddress);
+                        addBluetoothItemToUI(deviceName, device, false, false);
+                    }
+                }
+                if (isContextMenuBtTier() && deviceName != null && deviceAddress != null) {
+                    contextMenuBtDiscovered.put(deviceAddress, device);
+                    refreshContextBluetoothTier();
                 }
             } else if (BluetoothDevice.ACTION_BOND_STATE_CHANGED.equals(action)) {
                 BluetoothDevice device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
@@ -912,6 +933,8 @@ MainActivity.this.toastError(R.string.toast_pairing_failed);
                         pairingDeviceAddress = null;
                         startBluetoothScan();
                     }
+                } else if (isContextMenuBtTier()) {
+                    refreshContextBluetoothTier();
                 } else if (bondState == BluetoothDevice.BOND_BONDED) {
                     pairingDeviceAddress = null;
                 } else if (bondState == BluetoothDevice.BOND_NONE
@@ -949,12 +972,14 @@ UserToast.show(MainActivity.this, getString(R.string.toast_audio_connected, devi
             } else if (BluetoothAdapter.ACTION_DISCOVERY_FINISHED.equals(action)) {
                 btnScanBt.setText(getString(R.string.bluetooth_scan_complete));
                 updateStatusBarTitle();
+                if (isContextMenuBtTier()) refreshContextBluetoothTier();
             } else if (WifiManager.SCAN_RESULTS_AVAILABLE_ACTION.equals(action)) {
                 WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
                 if (wm != null) {
                     List<ScanResult> results = wm.getScanResults();
                     btnScanWifi.setText(getString(R.string.bluetooth_scan_complete));
                     updateWifiUI(results);
+                    if (isContextMenuWifiTier()) refreshContextWifiTier();
                 }
                 updateStatusBarTitle();
             }
@@ -1093,6 +1118,9 @@ UserToast.show(MainActivity.this, getString(R.string.toast_audio_connected, devi
 
         // 💡 2. 설정값들을 각각 독립적으로 불러오기 (어떤 상황에서도 절대 스킵되지 않습니다!)
         try { isShuffleMode = prefs.getBoolean("shuffle", false); } catch (Exception e) {}
+        try {
+            libraryPrimaryArtistsOnly = prefs.getBoolean(PREF_LIBRARY_PRIMARY_ARTISTS_ONLY, false);
+        } catch (Exception e) {}
 
         try {
             if (prefs.contains("repeat_mode")) {
@@ -1150,6 +1178,7 @@ UserToast.show(MainActivity.this, getString(R.string.toast_audio_connected, devi
                     libraryScanPaths.clear();
                     libraryScanMetaKeys.clear();
                     buildCustomLibrary(rootFolder);
+                    rebuildLibraryArtistIndex();
                     runOnUiThread(new Runnable() {
                         @Override
                         public void run() {
@@ -4909,10 +4938,12 @@ toast(R.string.home_photos_coming_soon, Toast.LENGTH_LONG);
         }
         if (isAvrcpMediaKey(event)) {
             if (event.getAction() == KeyEvent.ACTION_DOWN) {
-                if (event.getRepeatCount() > 0) return true;
-                return super.dispatchKeyEvent(event);
+                return onKeyDown(event.getKeyCode(), event);
             }
-            if (event.getAction() == KeyEvent.ACTION_UP) return true;
+            if (event.getAction() == KeyEvent.ACTION_UP) {
+                return onKeyUp(event.getKeyCode(), event);
+            }
+            return true;
         }
         return super.dispatchKeyEvent(event);
     }
@@ -5709,38 +5740,7 @@ MainActivity.this.toast(R.string.toast_wifi_turning_on);
         btnWifi.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                clickFeedback();
-                if (isConnected) {
-MainActivity.this.toast(R.string.toast_wifi_already_connected);
-                    return;
-                }
-
-                WifiManager manager = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
-                boolean isSaved = false;
-                int savedNetId = -1;
-                try {
-                    List<WifiConfiguration> configuredNetworks = manager.getConfiguredNetworks();
-                    if (configuredNetworks != null) {
-                        for (WifiConfiguration conf : configuredNetworks) {
-                            if (conf.SSID != null && conf.SSID.equals("\"" + ssid + "\"")) {
-                                isSaved = true;
-                                savedNetId = conf.networkId;
-                                break;
-                            }
-                        }
-                    }
-                } catch (Exception e) {
-                }
-
-                if (isSaved && savedNetId != -1) {
-MainActivity.this.toast(R.string.toast_wifi_saved_connecting);
-                    manager.disconnect();
-                    manager.enableNetwork(savedNetId, true);
-                    manager.reconnect();
-                } else {
-                    isTargetWifiOpen = isOpen;
-                    openWifiKeyboard(ssid);
-                }
+                connectToWifiNetwork(ssid, capabilities);
             }
         });
         containerWifiItems.addView(btnWifi);
@@ -6534,6 +6534,7 @@ MainActivity.this.toastError(R.string.apps_launch_failed);
     private String resolveSettingIconKey(String rowKey) {
         if (RowKeys.SHUFFLE.equals(rowKey)) return isShuffleMode ? "shuffleOn" : "shuffleOff";
         if (RowKeys.REPEAT.equals(rowKey)) return repeatIconKey();
+        if (RowKeys.LIBRARY_PRIMARY_ARTISTS.equals(rowKey)) return "shuffleOff";
         if (RowKeys.EQ.equals(rowKey)) return eqIconKey();
         if (RowKeys.BUTTON_SOUND.equals(rowKey)) return isSoundEffectEnabled ? "keyToneOn" : "keyToneOff";
         if (RowKeys.BUTTON_VIBRATE.equals(rowKey)) return isVibrationEnabled ? "keyVibrationOn" : "keyVibrationOff";
@@ -6549,6 +6550,7 @@ MainActivity.this.toastError(R.string.apps_launch_failed);
     private String resolveSettingStateText(String rowKey) {
         if (RowKeys.SHUFFLE.equals(rowKey)) return stateOnOff(isShuffleMode);
         if (RowKeys.REPEAT.equals(rowKey)) return getRepeatModeText(repeatMode);
+        if (RowKeys.LIBRARY_PRIMARY_ARTISTS.equals(rowKey)) return stateOnOff(libraryPrimaryArtistsOnly);
         if (RowKeys.EQ.equals(rowKey)) return eqPresetNames.get(currentEqPresetIndex);
         if (RowKeys.BUTTON_SOUND.equals(rowKey)) return stateOnOff(isSoundEffectEnabled);
         if (RowKeys.BUTTON_VIBRATE.equals(rowKey)) return stateOnOff(isVibrationEnabled);
@@ -6938,6 +6940,7 @@ MainActivity.this.toastError(R.string.apps_launch_failed);
     private void dismissThemedContextMenu() {
         contextMenuTierStack.clear();
         contextMenuInVolumeSlider = false;
+        contextMenuBtDiscovered.clear();
         suppressListClickUntil = 0;
         if (themedContextMenu != null) themedContextMenu.dismiss();
     }
@@ -6985,11 +6988,11 @@ MainActivity.this.toastError(R.string.apps_launch_failed);
                 performScreenSleep(true);
                 break;
             case 1:
-                if (isWifiPowerOn()) pushContextWifiTier();
+                if (isWifiPowerOn()) refreshContextWifiTier();
                 else toggleWifiFromContextMenu();
                 break;
             case 2:
-                pushContextBluetoothTier();
+                refreshContextBluetoothTier();
                 break;
             case 3:
                 showContextVolumeSlider();
@@ -7032,62 +7035,311 @@ MainActivity.this.toastError(R.string.apps_launch_failed);
         themedContextMenu.showSlider(getString(R.string.context_quick_volume), max, cur);
     }
 
-    private void pushContextWifiTier() {
-        contextMenuTierStack.push("wifi");
+    private boolean isContextMenuWifiTier() {
+        return themedContextMenu != null && themedContextMenu.isShowing()
+                && !contextMenuTierStack.isEmpty()
+                && "wifi".equals(contextMenuTierStack.peek());
+    }
+
+    private boolean isContextMenuBtTier() {
+        return themedContextMenu != null && themedContextMenu.isShowing()
+                && !contextMenuTierStack.isEmpty()
+                && "bt".equals(contextMenuTierStack.peek());
+    }
+
+    private void ensureContextWifiTierOnStack() {
+        if (contextMenuTierStack.isEmpty() || !"wifi".equals(contextMenuTierStack.peek())) {
+            contextMenuTierStack.push("wifi");
+        }
+    }
+
+    private void ensureContextBtTierOnStack() {
+        if (contextMenuTierStack.isEmpty() || !"bt".equals(contextMenuTierStack.peek())) {
+            contextMenuTierStack.push("bt");
+        }
+    }
+
+    @android.annotation.SuppressLint("MissingPermission")
+    private void refreshContextWifiTier() {
+        ensureContextWifiTierOnStack();
         java.util.ArrayList<String> labels = new java.util.ArrayList<String>();
         java.util.ArrayList<Runnable> actions = new java.util.ArrayList<Runnable>();
+        java.util.ArrayList<Boolean> headers = new java.util.ArrayList<Boolean>();
+
         labels.add(getString(R.string.wifi_off_confirm));
+        headers.add(false);
         actions.add(new Runnable() {
             @Override public void run() { toggleWifiFromContextMenu(); }
         });
         labels.add(getString(R.string.context_action_refresh_scan));
+        headers.add(false);
         actions.add(new Runnable() {
             @Override public void run() {
-                startWifiScan();
-                pushContextWifiTier();
+                WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+                if (wm != null && wm.isWifiEnabled()) wm.startScan();
+                refreshContextWifiTier();
             }
         });
-        final String ssid = wifiFocusedSsid();
-        if (ssid != null && isWifiNetworkSaved(ssid)) {
-            labels.add(getString(R.string.context_action_forget_wifi));
+
+        WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+        if (wm == null || !wm.isWifiEnabled()) {
+            labels.add(getString(R.string.wifi_off));
+            headers.add(false);
+            actions.add(null);
+            showContextMenuTier(getString(R.string.wifi_power), labels, actions, headers);
+            return;
+        }
+
+        List<ScanResult> results = wm.getScanResults();
+        final String connectedSsid = getConnectedWifiSsid();
+        java.util.LinkedHashSet<String> listed = new java.util.LinkedHashSet<String>();
+
+        if (connectedSsid != null) {
+            labels.add(getString(R.string.wifi_networks_header));
+            headers.add(true);
+            actions.add(null);
+            String caps = wifiCapabilitiesForSsid(results, connectedSsid);
+            labels.add(formatWifiContextLabel(connectedSsid, caps, true));
+            headers.add(false);
+            final String connectedRowSsid = connectedSsid;
+            final String connectedCaps = caps;
             actions.add(new Runnable() {
                 @Override public void run() {
-                    forgetWifiNetwork(ssid);
-                    pushContextWifiTier();
+                    connectToWifiNetwork(connectedRowSsid, connectedCaps);
                 }
             });
+            listed.add(connectedSsid);
+            if (isWifiNetworkSaved(connectedSsid)) {
+                labels.add(getString(R.string.context_action_forget_wifi));
+                headers.add(false);
+                final String forgetSsid = connectedSsid;
+                actions.add(new Runnable() {
+                    @Override public void run() {
+                        forgetWifiNetwork(forgetSsid);
+                        refreshContextWifiTier();
+                    }
+                });
+            }
         }
-        showContextMenuTier(getString(R.string.wifi_power), labels, actions);
+
+        if (results != null && !results.isEmpty()) {
+            boolean addedHeader = false;
+            for (ScanResult result : results) {
+                if (result.SSID == null || result.SSID.isEmpty()
+                        || WifiScanFilter.isHiddenSsid(result.SSID)
+                        || listed.contains(result.SSID)) {
+                    continue;
+                }
+                if (!addedHeader) {
+                    labels.add(getString(R.string.wifi_networks_header));
+                    headers.add(true);
+                    actions.add(null);
+                    addedHeader = true;
+                }
+                listed.add(result.SSID);
+                final String ssid = result.SSID;
+                final String caps = result.capabilities;
+                labels.add(formatWifiContextLabel(ssid, caps, false));
+                headers.add(false);
+                actions.add(new Runnable() {
+                    @Override public void run() { connectToWifiNetwork(ssid, caps); }
+                });
+            }
+        }
+
+        if (listed.isEmpty()) {
+            labels.add(getString(R.string.bluetooth_scanning));
+            headers.add(false);
+            actions.add(null);
+            wm.startScan();
+        }
+
+        showContextMenuTier(getString(R.string.wifi_power), labels, actions, headers);
     }
 
-    private void pushContextBluetoothTier() {
-        contextMenuTierStack.push("bt");
+    private String getConnectedWifiSsid() {
+        try {
+            WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+            WifiInfo info = wm != null ? wm.getConnectionInfo() : null;
+            if (info != null && info.getSSID() != null) {
+                String ssid = info.getSSID().replace("\"", "");
+                if (ssid.length() > 0 && !"<unknown ssid>".equalsIgnoreCase(ssid)) return ssid;
+            }
+        } catch (Exception ignored) {}
+        return null;
+    }
+
+    private static String wifiCapabilitiesForSsid(List<ScanResult> results, String ssid) {
+        if (results == null || ssid == null) return "";
+        for (ScanResult result : results) {
+            if (ssid.equals(result.SSID)) return result.capabilities;
+        }
+        return "";
+    }
+
+    private static String formatWifiContextLabel(String ssid, String capabilities, boolean connected) {
+        boolean isOpen = capabilities == null
+                || (!capabilities.contains("WPA") && !capabilities.contains("WEP"));
+        String lockIcon = isOpen ? "📶 " : "🔒 ";
+        String prefix = connected ? "✔ " : "";
+        return prefix + lockIcon + ssid;
+    }
+
+    private void connectToWifiNetwork(final String ssid, final String capabilities) {
+        if (ssid == null) return;
+        clickFeedback();
+        String connected = getConnectedWifiSsid();
+        if (ssid.equals(connected)) {
+toast(R.string.toast_wifi_already_connected);
+            return;
+        }
+        final boolean isOpen = capabilities == null
+                || (!capabilities.contains("WPA") && !capabilities.contains("WEP"));
+        WifiManager manager = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+        boolean isSaved = false;
+        int savedNetId = -1;
+        try {
+            List<WifiConfiguration> configuredNetworks = manager != null ? manager.getConfiguredNetworks() : null;
+            if (configuredNetworks != null) {
+                for (WifiConfiguration conf : configuredNetworks) {
+                    if (conf.SSID != null && conf.SSID.equals("\"" + ssid + "\"")) {
+                        isSaved = true;
+                        savedNetId = conf.networkId;
+                        break;
+                    }
+                }
+            }
+        } catch (Exception ignored) {}
+
+        if (isSaved && savedNetId != -1 && manager != null) {
+toast(R.string.toast_wifi_saved_connecting);
+            manager.disconnect();
+            manager.enableNetwork(savedNetId, true);
+            manager.reconnect();
+        } else {
+            isTargetWifiOpen = isOpen;
+            openWifiKeyboard(ssid);
+        }
+    }
+
+    @android.annotation.SuppressLint("MissingPermission")
+    private void refreshContextBluetoothTier() {
+        ensureContextBtTierOnStack();
         java.util.ArrayList<String> labels = new java.util.ArrayList<String>();
         java.util.ArrayList<Runnable> actions = new java.util.ArrayList<Runnable>();
+        java.util.ArrayList<Boolean> headers = new java.util.ArrayList<Boolean>();
+
         final BluetoothAdapter ba = BluetoothAdapter.getDefaultAdapter();
         final boolean btOn = ba != null && ba.isEnabled();
         labels.add(btOn ? getString(R.string.wifi_off_confirm) : getString(R.string.context_turn_on));
+        headers.add(false);
         actions.add(new Runnable() {
             @Override public void run() { toggleBluetoothFromContextMenu(); }
         });
         labels.add(getString(R.string.context_action_refresh_scan));
+        headers.add(false);
         actions.add(new Runnable() {
             @Override public void run() {
-                startBluetoothScan();
-                pushContextBluetoothTier();
+                contextMenuBtDiscovered.clear();
+                if (ba != null && ba.isEnabled()) {
+                    if (ba.isDiscovering()) ba.cancelDiscovery();
+                    ba.startDiscovery();
+                }
+                refreshContextBluetoothTier();
             }
         });
-        final BluetoothDevice bt = bluetoothFocusedDevice();
-        if (bt != null && bt.getBondState() == BluetoothDevice.BOND_BONDED) {
-            labels.add(getString(R.string.context_action_forget_bluetooth));
-            actions.add(new Runnable() {
-                @Override public void run() {
-                    forgetBluetoothDevice(bt);
-                    pushContextBluetoothTier();
-                }
-            });
+
+        if (ba == null || !btOn) {
+            labels.add(getString(R.string.bluetooth_off));
+            headers.add(false);
+            actions.add(null);
+            showContextMenuTier(getString(R.string.home_menu_bluetooth), labels, actions, headers);
+            return;
         }
-        showContextMenuTier(getString(R.string.home_menu_bluetooth), labels, actions);
+
+        java.util.LinkedHashSet<String> listed = new java.util.LinkedHashSet<String>();
+        try {
+            java.util.Set<BluetoothDevice> pairedDevices = ba.getBondedDevices();
+            if (pairedDevices != null && !pairedDevices.isEmpty()) {
+                labels.add(getString(R.string.bluetooth_scan_header));
+                headers.add(true);
+                actions.add(null);
+                for (BluetoothDevice device : pairedDevices) {
+                    if (device == null || device.getAddress() == null) continue;
+                    listed.add(device.getAddress());
+                    final BluetoothDevice bt = device;
+                    labels.add(formatBluetoothContextLabel(device, true,
+                            isBluetoothAudioConnected(device)));
+                    headers.add(false);
+                    actions.add(new Runnable() {
+                        @Override public void run() { pairBluetoothDevice(bt); }
+                    });
+                }
+            }
+        } catch (Exception ignored) {}
+
+        if (!contextMenuBtDiscovered.isEmpty()) {
+            labels.add(getString(R.string.bluetooth_scan_devices));
+            headers.add(true);
+            actions.add(null);
+            for (BluetoothDevice device : contextMenuBtDiscovered.values()) {
+                if (device == null || device.getAddress() == null
+                        || listed.contains(device.getAddress())) {
+                    continue;
+                }
+                listed.add(device.getAddress());
+                final BluetoothDevice bt = device;
+                labels.add(formatBluetoothContextLabel(device, false, false));
+                headers.add(false);
+                actions.add(new Runnable() {
+                    @Override public void run() { pairBluetoothDevice(bt); }
+                });
+            }
+        }
+
+        if (listed.isEmpty()) {
+            labels.add(getString(R.string.bluetooth_scanning));
+            headers.add(false);
+            actions.add(null);
+            if (!ba.isDiscovering()) ba.startDiscovery();
+        }
+
+        showContextMenuTier(getString(R.string.home_menu_bluetooth), labels, actions, headers);
+    }
+
+    private static String formatBluetoothContextLabel(BluetoothDevice device, boolean paired,
+            boolean connected) {
+        String name = device.getName();
+        if (name == null || name.length() == 0) name = "Unknown Device";
+        String prefix = connected ? "♪ " : (paired ? "✔ " : "🎧 ");
+        return prefix + name;
+    }
+
+    private void showContextMenuTier(String title, java.util.List<String> labels,
+            final java.util.List<Runnable> actions, java.util.List<Boolean> headerFlags) {
+        String[] arr = labels.toArray(new String[labels.size()]);
+        boolean[] headers = new boolean[arr.length];
+        for (int i = 0; i < headers.length; i++) {
+            headers[i] = headerFlags != null && i < headerFlags.size() && headerFlags.get(i);
+        }
+        themedContextMenu.replaceListContent(title, arr, null, null, headers,
+                new ThemedContextMenu.Listener() {
+                    @Override
+                    public void onSelected(int index) {
+                        suppressListClickUntil = System.currentTimeMillis() + CONTEXT_MENU_CLICK_SUPPRESS_MS;
+                        if (index < 0 || index >= actions.size()) return;
+                        if (headers != null && index < headers.length && headers[index]) return;
+                        final Runnable a = actions.get(index);
+                        if (a != null) a.run();
+                    }
+                });
+    }
+
+    private void showContextMenuTier(String title, java.util.List<String> labels,
+            final java.util.List<Runnable> actions) {
+        java.util.ArrayList<Boolean> headers = new java.util.ArrayList<Boolean>(labels.size());
+        for (int i = 0; i < labels.size(); i++) headers.add(false);
+        showContextMenuTier(title, labels, actions, headers);
     }
 
     @android.annotation.SuppressLint("MissingPermission")
@@ -7104,24 +7356,6 @@ toast(R.string.toast_bt_turning_on);
         }
     }
 
-    private void showContextMenuTier(String title, java.util.List<String> labels,
-            final java.util.List<Runnable> actions) {
-        String[] arr = labels.toArray(new String[labels.size()]);
-        boolean[] headers = new boolean[arr.length];
-        themedContextMenu.replaceListContent(title, arr, null, null, headers,
-                new ThemedContextMenu.Listener() {
-                    @Override
-                    public void onSelected(int index) {
-                        suppressListClickUntil = System.currentTimeMillis() + CONTEXT_MENU_CLICK_SUPPRESS_MS;
-                        if (index >= 0 && index < actions.size()) {
-                            final Runnable a = actions.get(index);
-                            dismissThemedContextMenu();
-                            if (a != null) a.run();
-                        }
-                    }
-                });
-    }
-
     private boolean popContextMenuTier() {
         if (contextMenuInVolumeSlider) {
             contextMenuInVolumeSlider = false;
@@ -7133,6 +7367,7 @@ toast(R.string.toast_bt_turning_on);
         }
         if (!contextMenuTierStack.isEmpty()) {
             contextMenuTierStack.clear();
+            contextMenuBtDiscovered.clear();
             showThemedContextMenu();
             return true;
         }
@@ -7412,6 +7647,7 @@ MainActivity.this.toast(R.string.library_queue_removed);
             }
         }
         if (currentScreenState == STATE_BROWSER && currentBrowserMode == BROWSER_PLAYLISTS) {
+            addMusicPlaylistBrowseContextActions();
             addContextAction(getString(R.string.library_save_queue_m3u), new Runnable() {
                 @Override
                 public void run() {
@@ -7489,20 +7725,12 @@ MainActivity.this.toast(R.string.library_queue_removed);
                     cycleLibrarySort();
                 }
             });
+            addMusicVirtualListingContextActions();
         }
         if (currentScreenState == STATE_BROWSER && (currentBrowserMode == BROWSER_ARTISTS
                 || currentBrowserMode == BROWSER_ALBUMS || currentBrowserMode == BROWSER_GENRES
                 || currentBrowserMode == BROWSER_ARTIST_ALBUMS)) {
-            addContextAction(getString(R.string.library_sort_label, librarySortLabel()), new Runnable() {
-                @Override
-                public void run() {
-                    cycleLibrarySort();
-                    if (currentBrowserMode == BROWSER_ARTIST_ALBUMS) buildArtistAlbums();
-                    else if (currentBrowserMode == BROWSER_ARTISTS) buildVirtualCategories("ARTIST");
-                    else if (currentBrowserMode == BROWSER_GENRES) buildVirtualCategories("GENRE");
-                    else buildVirtualCategories("ALBUM");
-                }
-            });
+            addMusicCategoryBrowseContextActions();
         }
         if (currentScreenState == STATE_PODCASTS && podcastUiMode == PODCAST_UI_SEARCH) {
             addContextAction(getString(R.string.context_action_open_saved), new Runnable() {
@@ -8341,6 +8569,28 @@ toast(R.string.toast_wifi_turning_off);
             }
         });
         containerSettingsItems.addView(btnRepeat);
+
+        final LinearLayout btnPrimaryArtists = createSettingsRow(RowKeys.LIBRARY_PRIMARY_ARTISTS,
+                R.string.settings_library_primary_artists, false);
+        btnPrimaryArtists.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                clickFeedback();
+                libraryPrimaryArtistsOnly = !libraryPrimaryArtistsOnly;
+                try {
+                    prefs.edit().putBoolean(PREF_LIBRARY_PRIMARY_ARTISTS_ONLY, libraryPrimaryArtistsOnly)
+                            .commit();
+                } catch (Exception ignored) {}
+                rebuildLibraryArtistIndex();
+                refreshSettingsPreview(RowKeys.LIBRARY_PRIMARY_ARTISTS);
+                if (currentScreenState == STATE_BROWSER) {
+                    if (currentBrowserMode == BROWSER_ARTISTS) buildVirtualCategories("ARTIST");
+                    else if (currentBrowserMode == BROWSER_ARTIST_ALBUMS) buildArtistAlbums();
+                    else if (currentBrowserMode == BROWSER_VIRTUAL_SONGS) buildVirtualSongs();
+                }
+            }
+        });
+        containerSettingsItems.addView(btnPrimaryArtists);
 
         final LinearLayout btnEq = createSettingsRow(RowKeys.EQ, R.string.settings_equalizer, false);
         btnEq.setOnClickListener(new View.OnClickListener() {
@@ -9522,21 +9772,16 @@ toast(R.string.update_already_installed);
             runAfterOtaUiPhase(new Runnable() {
                 @Override
                 public void run() {
-                    showOtaInstallPhase(R.string.update_download_status_launching_root);
+                    showOtaInstallPhase(getString(R.string.update_download_status_please_wait),
+                            getString(R.string.update_download_status_freeze_detail));
                     runAfterOtaUiPhase(new Runnable() {
                         @Override
                         public void run() {
-                            showOtaInstallPhase(R.string.update_download_status_system_install);
-                            runAfterOtaUiPhase(new Runnable() {
-                                @Override
-                                public void run() {
-                                    launchOtaInstallWorker(apkFile, release);
-                                }
-                            }, 500L);
+                            launchOtaInstallWorker(apkFile, release);
                         }
-                    }, 700L);
+                    }, 1200L);
                 }
-            }, 1400L);
+            }, 800L);
             return;
         }
         showOtaInstallPhase(R.string.update_download_status_installing);
@@ -9597,12 +9842,6 @@ MainActivity.this.toast(R.string.update_already_installed);
             if (!installed && systemApp) {
                 installed = installSystemApk(apkFile);
                 if (installed) {
-                    runOnUiThread(new Runnable() {
-                        @Override
-                        public void run() {
-                            showOtaInstallPhase(R.string.update_download_status_verifying_install);
-                        }
-                    });
                     installed = verifySystemApkSize(expectedSize);
                 }
             }
@@ -9618,7 +9857,8 @@ MainActivity.this.toast(R.string.update_already_installed);
                     if (ok && needsReboot) {
                         int expectedCode = release != null ? release.versionCode : 0;
                         markOtaRebootPending(expectedCode);
-                        showOtaInstallPhase(R.string.update_download_status_reboot_pending);
+                        showOtaInstallPhase(getString(R.string.update_download_status_please_wait),
+                                getString(R.string.update_download_status_freeze_detail));
                         showOtaRebootModal();
                         return;
                     }
@@ -10147,6 +10387,20 @@ MainActivity.this.toast(R.string.toast_bg_none);
         }
     }
 
+    private void rebuildLibraryArtistIndex() {
+        java.util.ArrayList<LibraryArtistIndex.Track> tracks =
+                new java.util.ArrayList<LibraryArtistIndex.Track>();
+        for (SongItem s : customLibrary) {
+            tracks.add(s.toIndexTrack());
+        }
+        libraryArtistIndex.rebuild(tracks, libraryPrimaryArtistsOnly);
+    }
+
+    private boolean songMatchesArtist(SongItem song, String artistDisplayName) {
+        return song != null && artistDisplayName != null
+                && libraryArtistIndex.trackMatchesArtist(song.toIndexTrack(), artistDisplayName);
+    }
+
     // 💡 1. 안드로이드 스캐너를 버리고, 앱이 직접 MP3 태그를 추출하여 분류하는 함수!
     // ponytail: dedupe by path; secondary by title+artist+duration hash — may collapse distinct files
     private final java.util.HashSet<String> libraryScanPaths = new java.util.HashSet<String>();
@@ -10170,6 +10424,7 @@ MainActivity.this.toast(R.string.toast_bg_none);
 
                         String title = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE);
                         String artist = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST);
+                        String albumArtist = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUMARTIST);
                         String album = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM);
                         String genre = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_GENRE);
                         String duration = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION);
@@ -10185,7 +10440,7 @@ MainActivity.this.toast(R.string.toast_bg_none);
                             continue;
                         }
 
-                        customLibrary.add(new SongItem(f, title, artist, album, genre));
+                        customLibrary.add(new SongItem(f, title, artist, album, genre, albumArtist));
 
                         fis.close();
                         mmr.release();
@@ -10499,6 +10754,7 @@ UserToast.show(this, getString(R.string.library_sort_now, librarySortLabel()), T
                     public void run() {
                         customLibrary.clear();
                         buildCustomLibrary(rootFolder);
+                        rebuildLibraryArtistIndex();
 
                         runOnUiThread(new Runnable() {
                             @Override
@@ -10563,6 +10819,22 @@ UserToast.showError(MainActivity.this, prefs, "Scan Complete! " + customLibrary.
         updateLibraryBreadcrumb();
 
         java.util.HashSet<String> uniqueCategories = new java.util.HashSet<>();
+        if ("ARTIST".equals(type)) {
+            List<String> categories = new ArrayList<>(libraryArtistIndex.allArtists());
+            currentScrollIndexList.clear();
+            currentScrollIndexList.addAll(categories);
+            CategoryListAdapter adapter = new CategoryListAdapter(categories, type);
+            listVirtualSongs.setAdapter(adapter);
+            listVirtualSongs.post(new Runnable() {
+                @Override
+                public void run() {
+                    if (listVirtualSongs.getChildCount() > 0) {
+                        listVirtualSongs.getChildAt(0).requestFocus();
+                    }
+                }
+            });
+            return;
+        }
         for (SongItem song : customLibrary) {
             String val;
             if ("ARTIST".equals(type)) val = song.artist;
@@ -10688,7 +10960,7 @@ UserToast.showError(MainActivity.this, prefs, "Scan Complete! " + customLibrary.
 
         java.util.HashSet<String> albums = new java.util.HashSet<String>();
         for (SongItem song : customLibrary) {
-            if (song.artist.equals(virtualQueryArtist)) albums.add(song.album);
+            if (songMatchesArtist(song, virtualQueryArtist)) albums.add(song.album);
         }
         List<String> categories = new ArrayList<>(albums);
         java.util.Collections.sort(categories);
@@ -10731,6 +11003,7 @@ UserToast.showError(MainActivity.this, prefs, "Scan Complete! " + customLibrary.
         } else {
             for (final PlaylistManager.Entry pl : libraryPlaylists) {
                 Button b = createListButton("📋 " + pl.name + " (" + pl.tracks.size() + ")");
+                b.setTag(pl.name);
                 b.setOnClickListener(new View.OnClickListener() {
                     @Override
                     public void onClick(View v) {
@@ -10830,6 +11103,411 @@ UserToast.showError(MainActivity.this, prefs, "Scan Complete! " + customLibrary.
         return new SongItem(f, title, artist, album, genre);
     }
 
+    private static boolean isKnownArtist(String artist) {
+        return artist != null && !artist.trim().isEmpty() && !"Unknown Artist".equals(artist);
+    }
+
+    private static boolean isKnownAlbum(String album) {
+        return album != null && !album.trim().isEmpty() && !"Unknown Album".equals(album);
+    }
+
+    private static boolean isKnownGenre(String genre) {
+        return genre != null && !genre.trim().isEmpty() && !"Unknown Genre".equals(genre);
+    }
+
+    private String virtualFocusedCategoryName() {
+        if (listVirtualSongs == null || listVirtualSongs.getVisibility() != View.VISIBLE) return null;
+        int pos = virtualListFocusPosition();
+        if (pos < 0) return null;
+        android.widget.ListAdapter ad = listVirtualSongs.getAdapter();
+        if (ad == null || pos >= ad.getCount()) return null;
+        Object item = ad.getItem(pos);
+        return item instanceof String ? (String) item : null;
+    }
+
+    private String browserFocusedPlaylistName() {
+        View c = getCurrentFocus();
+        if (c != null && c.getTag() instanceof String) {
+            String tag = (String) c.getTag();
+            if (tag != null && tag.length() > 0) return tag;
+        }
+        return null;
+    }
+
+    private List<File> collectTracksForArtist(String artist) {
+        List<File> out = new ArrayList<File>();
+        if (artist == null) return out;
+        for (SongItem song : customLibrary) {
+            if (songMatchesArtist(song, artist)) out.add(song.file);
+        }
+        return out;
+    }
+
+    private List<File> collectTracksForAlbum(String album) {
+        List<File> out = new ArrayList<File>();
+        if (album == null) return out;
+        for (SongItem song : customLibrary) {
+            if (album.equals(song.album)) out.add(song.file);
+        }
+        return out;
+    }
+
+    private List<File> collectTracksForGenre(String genre) {
+        List<File> out = new ArrayList<File>();
+        if (genre == null) return out;
+        for (SongItem song : customLibrary) {
+            if (genre.equals(song.genre)) out.add(song.file);
+        }
+        return out;
+    }
+
+    private List<File> collectTracksForArtistAlbum(String artist, String album) {
+        List<File> out = new ArrayList<File>();
+        if (artist == null || album == null) return out;
+        for (SongItem song : customLibrary) {
+            if (songMatchesArtist(song, artist) && album.equals(song.album)) out.add(song.file);
+        }
+        return out;
+    }
+
+    private String representativeArtistForAlbum(String album) {
+        if (album == null) return null;
+        for (SongItem song : customLibrary) {
+            if (!album.equals(song.album)) continue;
+            java.util.List<ArtistTagParser.Credit> credits = ArtistTagParser.mergeTrackCredits(
+                    song.artist, song.albumArtist);
+            for (ArtistTagParser.Credit c : credits) {
+                if (!ArtistTagParser.isIgnorable(c.display)) {
+                    return libraryArtistIndex.displayForCanonical(c.display);
+                }
+            }
+        }
+        return null;
+    }
+
+    private SongItem representativeSongForTracks(List<File> tracks) {
+        if (tracks == null || tracks.isEmpty()) return null;
+        for (File f : tracks) {
+            SongItem si = findSongItem(f);
+            if (si != null) return si;
+        }
+        return resolveSongMetadata(tracks.get(0));
+    }
+
+    private void appendTracksToPlaylist(PlaylistManager.Entry pl, List<File> tracks) {
+        if (pl == null || pl.sourceFile == null || tracks == null || tracks.isEmpty()) {
+toastError(R.string.context_playlist_add_failed);
+            return;
+        }
+        try {
+            PlaylistManager.appendTracks(pl.sourceFile, rootFolder, tracks);
+UserToast.show(this, getString(R.string.context_playlist_tracks_added, pl.name), Toast.LENGTH_SHORT);
+            libraryPlaylists = PlaylistManager.scan(rootFolder);
+            if (currentBrowserMode == BROWSER_PLAYLISTS) buildPlaylistsUI();
+        } catch (Exception e) {
+toastError(R.string.context_playlist_add_failed);
+        }
+    }
+
+    private void addContextAddToPlaylistActions(final List<File> tracks) {
+        if (tracks == null || tracks.isEmpty()) return;
+        if (libraryPlaylists == null || libraryPlaylists.isEmpty()) {
+            libraryPlaylists = PlaylistManager.scan(rootFolder);
+        }
+        if (libraryPlaylists.isEmpty()) return;
+        addContextSectionHeader(getString(R.string.context_add_to_playlist_header));
+        int shown = 0;
+        for (final PlaylistManager.Entry pl : libraryPlaylists) {
+            if (pl.sourceFile == null) continue;
+            if (shown >= 12) break;
+            addContextAction(getString(R.string.context_action_add_to_playlist, pl.name), new Runnable() {
+                @Override
+                public void run() {
+                    appendTracksToPlaylist(pl, tracks);
+                }
+            });
+            shown++;
+        }
+    }
+
+    private void addContextReachId3Suggestions(String title, String artist, String album, String genre) {
+        addContextReachId3Suggestions(title, artist, album, genre, null);
+    }
+
+    private void addContextReachId3Suggestions(String title, String artist, String album, String genre,
+            String anchorArtist) {
+        if (!ConnectivityHelper.isOnline(this) || !ConnectivityHelper.isReachLoginOk()) return;
+        java.util.LinkedHashSet<String> queries = new java.util.LinkedHashSet<String>();
+        for (String q : SoulseekSearchSuggestions.suggestionsFromId3(title, artist, album, genre)) {
+            queries.add(q);
+        }
+        if (anchorArtist != null && !anchorArtist.trim().isEmpty()) {
+            String anchor = libraryArtistIndex.displayForCanonical(anchorArtist);
+            for (String collab : libraryArtistIndex.topCollaborators(anchor, 4)) {
+                if (queries.size() >= 12) break;
+                queries.add(anchor + " " + collab);
+                if (queries.size() >= 12) break;
+                queries.add(collab + " " + anchor);
+            }
+        }
+        if (queries.isEmpty()) return;
+        addContextSectionHeader(getString(R.string.context_search_online_for));
+        int shown = 0;
+        for (final String q : queries) {
+            if (shown >= 8) break;
+            addContextAction(q, new Runnable() {
+                @Override
+                public void run() {
+                    if (requireInternet(R.string.soulseek_wifi_required)) {
+                        if (ConnectivityHelper.shouldShowHomeShortcut(MainActivity.this,
+                                HomeMenuConfig.ID_SOULSEEK)) {
+                            openSoulseekSearchKeyboard(q);
+                        } else {
+MainActivity.this.toastError(R.string.soulseek_wifi_required);
+                        }
+                    }
+                }
+            });
+            shown++;
+        }
+    }
+
+    private void addContextGoToArtistIf(String artist) {
+        if (!isKnownArtist(artist) || isOnSameMusicListing("ARTIST", artist, null)) return;
+        addContextAction(getString(R.string.context_go_to_artist, artist), new Runnable() {
+            @Override
+            public void run() {
+                openMusicArtistListing(artist);
+            }
+        });
+    }
+
+    private void addContextGoToAlbumIf(final String artist, final String album) {
+        if (!isKnownAlbum(album)) return;
+        final String listingType = isKnownArtist(artist) ? "ARTIST_ALBUM" : "ALBUM";
+        if (isOnSameMusicListing(listingType, album, artist)) return;
+        addContextAction(getString(R.string.context_go_to_album, album), new Runnable() {
+            @Override
+            public void run() {
+                openMusicAlbumListing(artist, album);
+            }
+        });
+    }
+
+    private void addContextGoToGenreIf(String genre) {
+        if (!isKnownGenre(genre) || isOnSameMusicListing("GENRE", genre, null)) return;
+        addContextAction(getString(R.string.context_go_to_genre, genre), new Runnable() {
+            @Override
+            public void run() {
+                openMusicGenreListing(genre);
+            }
+        });
+    }
+
+    private void addContextGoToPlaylistIf(String playlistName) {
+        if (playlistName == null || playlistName.isEmpty()
+                || isOnSameMusicListing("PLAYLIST", playlistName, null)) return;
+        addContextAction(getString(R.string.context_go_to_playlist, playlistName), new Runnable() {
+            @Override
+            public void run() {
+                openMusicPlaylistListing(playlistName);
+            }
+        });
+    }
+
+    private void addMusicCategoryBrowseContextActions() {
+        final String category = virtualFocusedCategoryName();
+        if (category == null || category.isEmpty()) return;
+
+        List<File> tracks = null;
+        String artist = null;
+        String album = null;
+        String genre = null;
+
+        if (currentBrowserMode == BROWSER_ARTISTS) {
+            if (!isKnownArtist(category)) return;
+            tracks = collectTracksForArtist(category);
+            artist = category;
+        } else if (currentBrowserMode == BROWSER_ALBUMS) {
+            if (!isKnownAlbum(category)) return;
+            tracks = collectTracksForAlbum(category);
+            album = category;
+            artist = representativeArtistForAlbum(category);
+        } else if (currentBrowserMode == BROWSER_GENRES) {
+            if (!isKnownGenre(category)) return;
+            tracks = collectTracksForGenre(category);
+            genre = category;
+        } else if (currentBrowserMode == BROWSER_ARTIST_ALBUMS) {
+            if (!isKnownAlbum(category) || !isKnownArtist(virtualQueryArtist)) return;
+            tracks = collectTracksForArtistAlbum(virtualQueryArtist, category);
+            artist = virtualQueryArtist;
+            album = category;
+        }
+        if (tracks == null || tracks.isEmpty()) return;
+
+        final List<File> playTracks = new ArrayList<File>(tracks);
+        final String playlistCtx = null;
+        addContextAction(getString(R.string.context_action_play_all), new Runnable() {
+            @Override
+            public void run() {
+                playTrackList(playTracks, 0, playlistCtx);
+            }
+        });
+        addContextAction(getString(R.string.context_action_add_all_to_queue), new Runnable() {
+            @Override
+            public void run() {
+                playback.appendToMusicQueue(playTracks);
+                suppressListClickUntil = System.currentTimeMillis() + 400;
+toast(R.string.toast_added_to_queue);
+            }
+        });
+
+        if (currentBrowserMode == BROWSER_ARTISTS) {
+            addContextGoToArtistIf(artist);
+        } else if (currentBrowserMode == BROWSER_ALBUMS) {
+            addContextGoToAlbumIf(null, album);
+            addContextGoToArtistIf(artist);
+            SongItem sample = representativeSongForTracks(playTracks);
+            if (sample != null) addContextGoToGenreIf(sample.genre);
+        } else if (currentBrowserMode == BROWSER_GENRES) {
+            addContextGoToGenreIf(genre);
+            SongItem sample = representativeSongForTracks(playTracks);
+            if (sample != null) {
+                addContextGoToArtistIf(sample.artist);
+                addContextGoToAlbumIf(sample.artist, sample.album);
+            }
+        } else if (currentBrowserMode == BROWSER_ARTIST_ALBUMS) {
+            addContextGoToAlbumIf(artist, album);
+            addContextGoToArtistIf(artist);
+            SongItem sample = representativeSongForTracks(playTracks);
+            if (sample != null) addContextGoToGenreIf(sample.genre);
+        }
+
+        addContextAction(getString(R.string.library_sort_label, librarySortLabel()), new Runnable() {
+            @Override
+            public void run() {
+                cycleLibrarySort();
+                if (currentBrowserMode == BROWSER_ARTIST_ALBUMS) buildArtistAlbums();
+                else if (currentBrowserMode == BROWSER_ARTISTS) buildVirtualCategories("ARTIST");
+                else if (currentBrowserMode == BROWSER_GENRES) buildVirtualCategories("GENRE");
+                else buildVirtualCategories("ALBUM");
+            }
+        });
+
+        addContextAddToPlaylistActions(playTracks);
+
+        SongItem sample = representativeSongForTracks(playTracks);
+        String anchor = artist;
+        if (currentBrowserMode == BROWSER_GENRES) anchor = genre;
+        else if (currentBrowserMode == BROWSER_ALBUMS && sample != null) {
+            java.util.List<ArtistTagParser.Credit> cr = ArtistTagParser.mergeTrackCredits(
+                    sample.artist, sample.albumArtist);
+            anchor = cr.isEmpty() ? artist : cr.get(0).display;
+        }
+        if (sample != null) {
+            addContextReachId3Suggestions(sample.title, sample.artist, sample.album, sample.genre, anchor);
+        } else if (isKnownArtist(artist)) {
+            addContextReachId3Suggestions(null, artist, album, genre, anchor);
+        } else if (isKnownAlbum(album)) {
+            addContextReachId3Suggestions(null, null, album, genre, null);
+        } else if (isKnownGenre(genre)) {
+            addContextReachId3Suggestions(null, null, null, genre, genre);
+        }
+    }
+
+    private void addMusicVirtualListingContextActions() {
+        if (virtualSongList == null || virtualSongList.isEmpty()) return;
+        if (virtualQueryType == null || virtualQueryType.isEmpty()) return;
+
+        final List<File> playTracks = new ArrayList<File>(virtualSongList);
+        final String playlistCtx = "PLAYLIST".equals(virtualQueryType) ? virtualQueryValue : null;
+
+        addContextAction(getString(R.string.context_action_play_all), new Runnable() {
+            @Override
+            public void run() {
+                playTrackList(playTracks, 0, playlistCtx);
+            }
+        });
+        addContextAction(getString(R.string.context_action_add_all_to_queue), new Runnable() {
+            @Override
+            public void run() {
+                playback.appendToMusicQueue(playTracks);
+                suppressListClickUntil = System.currentTimeMillis() + 400;
+toast(R.string.toast_added_to_queue);
+            }
+        });
+
+        if ("ARTIST".equals(virtualQueryType)) {
+            addContextGoToArtistIf(virtualQueryValue);
+        } else if ("ALBUM".equals(virtualQueryType)) {
+            addContextGoToAlbumIf(null, virtualQueryValue);
+        } else if ("ARTIST_ALBUM".equals(virtualQueryType)) {
+            addContextGoToAlbumIf(virtualQueryArtist, virtualQueryValue);
+            addContextGoToArtistIf(virtualQueryArtist);
+        } else if ("GENRE".equals(virtualQueryType)) {
+            addContextGoToGenreIf(virtualQueryValue);
+        } else if ("PLAYLIST".equals(virtualQueryType)) {
+            addContextGoToPlaylistIf(virtualQueryValue);
+        }
+
+        addContextAddToPlaylistActions(playTracks);
+
+        SongItem sample = representativeSongForTracks(playTracks);
+        String anchor = null;
+        if ("ARTIST".equals(virtualQueryType)) anchor = virtualQueryValue;
+        else if ("ARTIST_ALBUM".equals(virtualQueryType)) anchor = virtualQueryArtist;
+        if (sample != null) {
+            addContextReachId3Suggestions(sample.title, sample.artist, sample.album, sample.genre, anchor);
+        }
+    }
+
+    private void addMusicPlaylistBrowseContextActions() {
+        final String name = browserFocusedPlaylistName();
+        if (name == null) return;
+        PlaylistManager.Entry pl = null;
+        if (libraryPlaylists == null || libraryPlaylists.isEmpty()) {
+            libraryPlaylists = PlaylistManager.scan(rootFolder);
+        }
+        for (PlaylistManager.Entry e : libraryPlaylists) {
+            if (name.equals(e.name)) {
+                pl = e;
+                break;
+            }
+        }
+        if (pl == null || pl.tracks.isEmpty()) return;
+
+        final List<File> playTracks = new ArrayList<File>(pl.tracks);
+        final String playlistCtx = pl.name;
+        addContextAction(getString(R.string.context_action_play_all), new Runnable() {
+            @Override
+            public void run() {
+                playTrackList(playTracks, 0, playlistCtx);
+            }
+        });
+        addContextAction(getString(R.string.context_action_add_all_to_queue), new Runnable() {
+            @Override
+            public void run() {
+                playback.appendToMusicQueue(playTracks);
+                suppressListClickUntil = System.currentTimeMillis() + 400;
+toast(R.string.toast_added_to_queue);
+            }
+        });
+        addContextGoToPlaylistIf(pl.name);
+
+        SongItem sample = representativeSongForTracks(playTracks);
+        if (sample != null) {
+            String firstArtist = null;
+            for (ArtistTagParser.Credit c : ArtistTagParser.mergeTrackCredits(
+                    sample.artist, sample.albumArtist)) {
+                if (firstArtist == null) firstArtist = c.display;
+                addContextGoToArtistIf(c.display);
+            }
+            addContextGoToAlbumIf(firstArtist, sample.album);
+            addContextGoToGenreIf(sample.genre);
+            addContextReachId3Suggestions(sample.title, sample.artist, sample.album, sample.genre, firstArtist);
+        }
+    }
+
     private boolean isOnSameMusicListing(String type, String value, String artistForAlbum) {
         if (currentScreenState != STATE_BROWSER || currentBrowserMode != BROWSER_VIRTUAL_SONGS) return false;
         if (type == null || !type.equals(virtualQueryType)) return false;
@@ -10913,70 +11591,18 @@ UserToast.showError(MainActivity.this, prefs, "Scan Complete! " + customLibrary.
         final SongItem si = resolveSongMetadata(trackFile);
         if (si == null) return;
 
-        if (si.artist != null && !si.artist.trim().isEmpty() && !"Unknown Artist".equals(si.artist)
-                && !isOnSameMusicListing("ARTIST", si.artist, null)) {
-            addContextAction(getString(R.string.context_browse_artist, si.artist), new Runnable() {
-                @Override
-                public void run() {
-                    openMusicArtistListing(si.artist);
-                }
-            });
+        String firstArtist = null;
+        for (ArtistTagParser.Credit c : ArtistTagParser.mergeTrackCredits(si.artist, si.albumArtist)) {
+            if (firstArtist == null) firstArtist = c.display;
+            addContextGoToArtistIf(c.display);
         }
-        if (si.album != null && !si.album.trim().isEmpty() && !"Unknown Album".equals(si.album)) {
-            final String listingType = (si.artist != null && !si.artist.trim().isEmpty()
-                    && !"Unknown Artist".equals(si.artist)) ? "ARTIST_ALBUM" : "ALBUM";
-            if (!isOnSameMusicListing(listingType, si.album, si.artist)) {
-                addContextAction(getString(R.string.context_browse_album, si.album), new Runnable() {
-                    @Override
-                    public void run() {
-                        openMusicAlbumListing(si.artist, si.album);
-                    }
-                });
-            }
-        }
-        if (si.genre != null && !si.genre.trim().isEmpty() && !"Unknown Genre".equals(si.genre)
-                && !isOnSameMusicListing("GENRE", si.genre, null)) {
-            addContextAction(getString(R.string.context_browse_genre, si.genre), new Runnable() {
-                @Override
-                public void run() {
-                    openMusicGenreListing(si.genre);
-                }
-            });
-        }
-        if (playlistNameIfAny != null && !playlistNameIfAny.isEmpty()
-                && !isOnSameMusicListing("PLAYLIST", playlistNameIfAny, null)) {
-            addContextAction(getString(R.string.context_browse_playlist, playlistNameIfAny), new Runnable() {
-                @Override
-                public void run() {
-                    openMusicPlaylistListing(playlistNameIfAny);
-                }
-            });
-        }
-        if (ConnectivityHelper.isOnline(this) && ConnectivityHelper.isReachLoginOk()) {
-            List<String> findLike = SoulseekSearchSuggestions.suggestionsFromId3(
-                    si.title, si.artist, si.album, si.genre);
-            if (!findLike.isEmpty()) {
-                addContextSectionHeader(getString(R.string.context_search_online_for));
-                int shown = 0;
-                for (final String q : findLike) {
-                    if (shown >= 8) break;
-                    addContextAction(q, new Runnable() {
-                        @Override
-                        public void run() {
-                            if (requireInternet(R.string.soulseek_wifi_required)) {
-                                if (ConnectivityHelper.shouldShowHomeShortcut(MainActivity.this,
-                                        HomeMenuConfig.ID_SOULSEEK)) {
-                                    openSoulseekSearchKeyboard(q);
-                                } else {
-MainActivity.this.toastError(R.string.soulseek_wifi_required);
-                                }
-                            }
-                        }
-                    });
-                    shown++;
-                }
-            }
-        }
+        addContextGoToAlbumIf(firstArtist, si.album);
+        addContextGoToGenreIf(si.genre);
+        addContextGoToPlaylistIf(playlistNameIfAny);
+
+        addContextAddToPlaylistActions(java.util.Collections.singletonList(trackFile));
+
+        addContextReachId3Suggestions(si.title, si.artist, si.album, si.genre, firstArtist);
     }
 
     private void saveMusicQueueAsM3u() {
@@ -11528,11 +12154,11 @@ toastError(R.string.toast_bt_forget_failed);
         for (SongItem song : customLibrary) {
             boolean match = false;
             if (virtualQueryType.equals("ALL")) match = true;
-            else if (virtualQueryType.equals("ARTIST") && song.artist.equals(virtualQueryValue)) match = true;
+            else if (virtualQueryType.equals("ARTIST") && songMatchesArtist(song, virtualQueryValue)) match = true;
             else if (virtualQueryType.equals("ALBUM") && song.album.equals(virtualQueryValue)) match = true;
             else if (virtualQueryType.equals("GENRE") && song.genre.equals(virtualQueryValue)) match = true;
             else if (virtualQueryType.equals("ARTIST_ALBUM")
-                    && song.artist.equals(virtualQueryArtist) && song.album.equals(virtualQueryValue)) match = true;
+                    && songMatchesArtist(song, virtualQueryArtist) && song.album.equals(virtualQueryValue)) match = true;
             if (match) {
                 targetSongs.add(song);
                 virtualSongList.add(song.file);
@@ -14711,6 +15337,7 @@ MainActivity.this.toast(R.string.soulseek_account_saved);
                 libraryScanPaths.clear();
                 libraryScanMetaKeys.clear();
                 buildCustomLibrary(rootFolder);
+                rebuildLibraryArtistIndex();
                 runOnUiThread(new Runnable() {
                     @Override
                     public void run() {

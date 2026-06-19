@@ -1,5 +1,7 @@
 package com.solar.launcher.soulseek;
 
+import com.solar.launcher.ArtistTagParser;
+
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -111,23 +113,21 @@ public final class SoulseekSearchSuggestions {
         }
         if (LIST_SEP.matcher(t).find()) {
             for (String segment : LIST_SEP.split(t)) {
-                addExpandedSegment(phrases, segment);
+                addExpandedArtistSegment(phrases, segment);
             }
         } else {
-            addExpandedSegment(phrases, t);
+            addExpandedArtistSegment(phrases, t);
         }
     }
 
-    private static void addExpandedSegment(List<String> phrases, String segment) {
-        String p = cleanPhrase(segment);
-        if (p == null) return;
+    private static void addExpandedArtistSegment(List<String> phrases, String segment) {
+        String p = segment != null ? segment.trim() : "";
+        if (p.isEmpty()) return;
         addPhrase(phrases, p);
+        for (String name : ArtistTagParser.splitNames(p)) {
+            addPhrase(phrases, name);
+        }
         if (p.contains("&")) {
-            String[] bits = PHRASE_AMP.split(p, -1);
-            for (String bit : bits) {
-                String b = cleanPhrase(bit);
-                if (b != null) addPhrase(phrases, b);
-            }
             String flat = p.replace("&", " ").replaceAll("\\s+", " ").trim();
             if (flat.length() >= 2) addPhrase(phrases, flat);
         }
