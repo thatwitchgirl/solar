@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Download a GitHub release from thatwitchgirl/solar and install on the connected Y1.
+# Download a GitHub release from thesolarproject/solar and install on the connected Y1.
 # Usage: ./scripts/install_release_adb.sh [tag|stable|nightly|latest]
 #   stable   — newest v* release
 #   nightly  — newest nightly-* release
@@ -10,7 +10,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck source=/dev/null
 source "$ROOT/scripts/env.sh"
 
-REPO="${SOLAR_GITHUB_REPO:-thatwitchgirl/solar}"
+REPO="${SOLAR_GITHUB_REPO:-thesolarproject/solar}"
 SELECT="${1:-latest}"
 PAT="${SOLAR_UPDATES_PAT:-}"
 SERIAL="${ANDROID_SERIAL:-}"

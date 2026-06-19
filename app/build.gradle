@@ -13,9 +13,7 @@ android {
         versionCode 2
         versionName "0.2"
         buildConfigField "boolean", "FEATURE_OTA_UPDATE", "true"
-        buildConfigField "String", "OTA_GITHUB_REPO", "\"thatwitchgirl/solar\""
-        def otaPat = System.getenv("SOLAR_UPDATES_PAT") ?: project.findProperty("SOLAR_UPDATES_PAT") ?: ""
-        buildConfigField "String", "OTA_GITHUB_TOKEN", "\"${otaPat}\""
+        buildConfigField "String", "OTA_UPDATES_URL", "\"https://thesolarproject.github.io/solar-update/updates.xml\""
         def podcastIndexKey = project.findProperty("PODCAST_INDEX_API_KEY") ?: ""
         def podcastIndexSecret = project.findProperty("PODCAST_INDEX_API_SECRET") ?: ""
         buildConfigField "String", "PODCAST_INDEX_API_KEY", "\"${podcastIndexKey}\""

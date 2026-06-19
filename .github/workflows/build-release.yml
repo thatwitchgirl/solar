@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 env:
-  SOLAR_GITHUB_REPO: thatwitchgirl/solar
+  SOLAR_GITHUB_REPO: thesolarproject/solar
 
 concurrency:
   group: solar-release-${{ github.ref }}
@@ -78,14 +78,13 @@ jobs:
           JAVA_HOME: ${{ env.JAVA_HOME }}
           ANDROID_HOME: ${{ env.ANDROID_HOME }}
           ANDROID_SDK_ROOT: ${{ env.ANDROID_HOME }}
-          SOLAR_UPDATES_PAT: ${{ secrets.SOLAR_UPDATES_PAT }}
         run: |
           chmod +x gradlew scripts/build.sh
           ./scripts/build.sh
 
       - name: Build ROM images
         env:
-          SOLAR_GITHUB_REPO: thatwitchgirl/solar
+          SOLAR_GITHUB_REPO: thesolarproject/solar
         run: |
           APK="$GITHUB_WORKSPACE/app/build/outputs/apk/release/app-release.apk"
           test -f "$APK"
@@ -115,6 +114,20 @@ jobs:
           prerelease: ${{ github.ref == 'refs/heads/nightly' }}
           generate_release_notes: false
 
+      - name: Publish OTA catalog
+        env:
+          SOLAR_GITHUB_PAT: ${{ secrets.SOLAR_GITHUB_PAT }}
+        run: |
+          chmod +x scripts/publish-ota-updates.sh
+          NIGHTLY=false
+          if [ "${{ github.ref }}" = "refs/heads/nightly" ]; then NIGHTLY=true; fi
+          ./scripts/publish-ota-updates.sh add \
+            --apk app/build/outputs/apk/release/app-release.apk \
+            --tag "${{ steps.meta.outputs.tag }}" \
+            --version-name "${{ steps.meta.outputs.version_name }}" \
+            --version-code "${{ steps.meta.outputs.version_code }}" \
+            $([ "$NIGHTLY" = true ] && echo --nightly)
+
       - name: Bump stable version for next release
         if: github.ref == 'refs/heads/main'
         run: ./solar-rom/scripts/bump-stable-version.sh
@@ -124,7 +137,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.SOLAR_GITHUB_PAT }}
         run: |
-          git config user.name "ThatWitchGirl"
+          git config user.name "thesolarproject"
           git config user.email "anonymous@local"
           git add app/build.gradle
           if git diff --staged --quiet; then
@@ -132,7 +145,7 @@ jobs:
             exit 0
           fi
           git commit -m "Bump stable version for next release."
-          git push "https://x-access-token:${GH_TOKEN}@github.com/thatwitchgirl/solar.git" HEAD:main
+          git push "https://x-access-token:${GH_TOKEN}@github.com/thesolarproject/solar.git" HEAD:main
 
       - name: Remove signing keys
         if: always()

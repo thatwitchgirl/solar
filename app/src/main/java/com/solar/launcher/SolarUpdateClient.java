@@ -3,22 +3,22 @@ package com.solar.launcher;
 import com.solar.launcher.net.SolarHttp;
 import com.solar.launcher.net.TlsHelper;
 
-import org.json.JSONArray;
-import org.json.JSONException;
-import org.json.JSONObject;
-
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;
 
-/** GitHub releases for thatwitchgirl/solar — stable (v*) and nightly (nightly-*). */
+/** OTA catalog from thesolarproject/solar-update GitHub Pages (updates.xml + APKs). */
 public final class SolarUpdateClient {
-    public static final String DEFAULT_REPO = "thatwitchgirl/solar";
-    public static final String APK_ASSET = "app-release.apk";
+    public static final String DEFAULT_UPDATES_URL =
+            "https://thesolarproject.github.io/solar-update/updates.xml";
 
     public static final class ReleaseInfo {
         public final String tag;
@@ -76,50 +76,57 @@ public final class SolarUpdateClient {
 
     private SolarUpdateClient() {}
 
-    public static List<ReleaseInfo> fetchReleases(String repo, String token) throws IOException {
-        if (repo == null || repo.trim().isEmpty()) repo = DEFAULT_REPO;
-        String url = "https://api.github.com/repos/" + repo.trim() + "/releases?per_page=40";
+    public static List<ReleaseInfo> fetchUpdates(String updatesUrl) throws IOException {
+        if (updatesUrl == null || updatesUrl.trim().isEmpty()) updatesUrl = DEFAULT_UPDATES_URL;
         TlsHelper.ensureSecurityProvider();
-        Request.Builder rb = new Request.Builder()
-                .url(url)
+        Request req = new Request.Builder()
+                .url(updatesUrl.trim())
                 .header("User-Agent", "SolarLauncher/1.0")
-                .header("Accept", "application/vnd.github+json");
-        if (token != null && !token.trim().isEmpty()) {
-            rb.header("Authorization", "Bearer " + token.trim());
-        }
+                .header("Accept", "application/xml,text/xml,*/*")
+                .build();
         OkHttpClient client = SolarHttp.longReadClient();
-        Response resp = client.newCall(rb.build()).execute();
+        Response resp = client.newCall(req).execute();
         try {
             if (!resp.isSuccessful() || resp.body() == null) {
-                throw new IOException("GitHub releases HTTP " + resp.code());
+                throw new IOException("updates.xml HTTP " + resp.code());
             }
-            JSONArray arr;
-            try {
-                arr = new JSONArray(new String(resp.body().bytes(), "UTF-8"));
-            } catch (JSONException e) {
-                throw new IOException("Invalid GitHub releases JSON", e);
-            }
-            List<ReleaseInfo> out = new ArrayList<ReleaseInfo>();
-            for (int i = 0; i < arr.length(); i++) {
-                JSONObject rel = arr.optJSONObject(i);
-                if (rel == null) continue;
-                if (rel.optBoolean("draft", false)) continue;
-                String tag = rel.optString("tag_name", "").trim();
-                if (tag.isEmpty()) continue;
-                String apkUrl = findApkAsset(rel.optJSONArray("assets"));
-                if (apkUrl.isEmpty()) continue;
-                if (tag.startsWith("nightly-")) {
-                    int code = parseNightlyCode(tag);
-                    out.add(new ReleaseInfo(tag, tag, code, apkUrl, true));
-                } else if (tag.startsWith("v")) {
-                    String name = tag.substring(1);
-                    out.add(new ReleaseInfo(tag, name, 0, apkUrl, false));
-                }
-            }
-            return out;
+            String xml = new String(resp.body().bytes(), "UTF-8");
+            return parseUpdatesXml(xml);
         } finally {
             if (resp.body() != null) resp.body().close();
         }
+    }
+
+    static List<ReleaseInfo> parseUpdatesXml(String xml) {
+        if (xml == null || xml.trim().isEmpty()) return new ArrayList<ReleaseInfo>();
+        String base = DEFAULT_UPDATES_URL.replace("updates.xml", "");
+        Matcher baseM = Pattern.compile("<solar-updates\\s+[^>]*\\bbase=\"([^\"]+)\"").matcher(xml);
+        if (baseM.find()) base = baseM.group(1).trim();
+        if (!base.endsWith("/")) base += "/";
+
+        List<ReleaseInfo> out = new ArrayList<ReleaseInfo>();
+        Matcher relM = Pattern.compile("<release\\s+([^>/]+)/?>").matcher(xml);
+        while (relM.find()) {
+            Map<String, String> attrs = parseAttrs(relM.group(1));
+            String tag = attrs.get("tag");
+            String apk = attrs.get("apk");
+            if (tag == null || tag.isEmpty() || apk == null || apk.isEmpty()) continue;
+            String versionName = attrs.containsKey("versionName") ? attrs.get("versionName") : tag;
+            int versionCode = parseIntPart(attrs.get("versionCode"));
+            boolean nightly = "true".equalsIgnoreCase(attrs.get("nightly"))
+                    || tag.startsWith("nightly-");
+            String apkUrl = apk.startsWith("http://") || apk.startsWith("https://")
+                    ? apk : base + apk;
+            out.add(new ReleaseInfo(tag, versionName, versionCode, apkUrl, nightly));
+        }
+        return out;
+    }
+
+    private static Map<String, String> parseAttrs(String raw) {
+        Map<String, String> out = new LinkedHashMap<String, String>();
+        Matcher m = Pattern.compile("(\\w+)=\"([^\"]*)\"").matcher(raw);
+        while (m.find()) out.put(m.group(1), m.group(2));
+        return out;
     }
 
     public static ReleaseInfo latestStable(List<ReleaseInfo> releases) {
@@ -138,18 +145,6 @@ public final class SolarUpdateClient {
             if (best == null || r.versionCode > best.versionCode) best = r;
         }
         return best;
-    }
-
-    static String findApkAsset(JSONArray assets) {
-        if (assets == null) return "";
-        for (int i = 0; i < assets.length(); i++) {
-            JSONObject a = assets.optJSONObject(i);
-            if (a == null) continue;
-            if (APK_ASSET.equals(a.optString("name", ""))) {
-                return a.optString("browser_download_url", "").trim();
-            }
-        }
-        return "";
     }
 
     static int parseNightlyCode(String tag) {
@@ -176,7 +171,7 @@ public final class SolarUpdateClient {
         return 0;
     }
 
-    private static int parseIntPart(String s) {
+    static int parseIntPart(String s) {
         if (s == null || s.isEmpty()) return 0;
         StringBuilder n = new StringBuilder();
         for (int i = 0; i < s.length(); i++) {
@@ -211,6 +206,15 @@ public final class SolarUpdateClient {
         }
         if (r.compareToInstalled(0, "0.3") != InstallRelation.DOWNGRADE) {
             throw new AssertionError("stable downgrade");
+        }
+        String sample = "<?xml version=\"1.0\"?><solar-updates base=\"https://example.com/ota/\">"
+                + "<release tag=\"v0.2\" versionName=\"0.2\" versionCode=\"0\" nightly=\"false\" apk=\"solar-v0.2.apk\"/>"
+                + "<release tag=\"nightly-9\" versionName=\"nightly-9\" versionCode=\"9\" nightly=\"true\" apk=\"solar-nightly-9.apk\"/>"
+                + "</solar-updates>";
+        List<ReleaseInfo> parsed = parseUpdatesXml(sample);
+        if (parsed.size() != 2) throw new AssertionError("xml count");
+        if (!parsed.get(0).apkUrl.equals("https://example.com/ota/solar-v0.2.apk")) {
+            throw new AssertionError("xml base url");
         }
     }
 }

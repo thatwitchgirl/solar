@@ -82,8 +82,7 @@ import android.renderscript.RenderScript;
 import android.renderscript.ScriptIntrinsicBlur;
 
 public class MainActivity extends Activity {
-    private static final String OTA_GITHUB_REPO = BuildConfig.OTA_GITHUB_REPO;
-    private static final String OTA_GITHUB_TOKEN = BuildConfig.OTA_GITHUB_TOKEN;
+    private static final String OTA_UPDATES_URL = BuildConfig.OTA_UPDATES_URL;
     // 💡 [추가] 퀵 스크롤 (알파벳 인덱스) 관련 변수들
     private TextView tvFastScrollLetter;
     private Handler fastScrollHandler = new Handler();
@@ -8376,22 +8375,21 @@ public class MainActivity extends Activity {
         loadingRow.setEnabled(false);
         containerSettingsItems.addView(loadingRow);
 
-        loadGitHubReleaseList(localCode, localName, loadingRow);
+        loadOtaReleaseList(localCode, localName, loadingRow);
         if (containerSettingsItems.getChildCount() > 1) {
             containerSettingsItems.getChildAt(1).requestFocus();
         }
     }
 
-    private void loadGitHubReleaseList(final int localCode, final String localName, final View loadingView) {
-        final String repo = OTA_GITHUB_REPO != null && !OTA_GITHUB_REPO.trim().isEmpty()
-                ? OTA_GITHUB_REPO.trim() : SolarUpdateClient.DEFAULT_REPO;
-        final String token = OTA_GITHUB_TOKEN;
+    private void loadOtaReleaseList(final int localCode, final String localName, final View loadingView) {
+        final String updatesUrl = OTA_UPDATES_URL != null && !OTA_UPDATES_URL.trim().isEmpty()
+                ? OTA_UPDATES_URL.trim() : SolarUpdateClient.DEFAULT_UPDATES_URL;
         new Thread(new Runnable() {
             @Override
             public void run() {
                 try {
                     final List<SolarUpdateClient.ReleaseInfo> releases =
-                            SolarUpdateClient.fetchReleases(repo, token);
+                            SolarUpdateClient.fetchUpdates(updatesUrl);
                     runOnUiThread(new Runnable() {
                         @Override
                         public void run() {
@@ -8492,11 +8490,8 @@ public class MainActivity extends Activity {
                     okhttp3.Request.Builder rb = new okhttp3.Request.Builder()
                             .url(apkUrl)
                             .header("User-Agent", "SolarLauncher/1.0")
-                            .header("Accept", "application/octet-stream")
+                            .header("Accept", "application/vnd.android.package-archive,*/*")
                             .header("Accept-Encoding", "identity");
-                    if (OTA_GITHUB_TOKEN != null && !OTA_GITHUB_TOKEN.trim().isEmpty()) {
-                        rb.header("Authorization", "Bearer " + OTA_GITHUB_TOKEN.trim());
-                    }
                     okhttp3.Response resp = client.newCall(rb.build()).execute();
                     if (!resp.isSuccessful() || resp.body() == null) {
                         int code = resp.code();
