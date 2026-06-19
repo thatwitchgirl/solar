@@ -80,7 +80,8 @@ public final class SolarHttp {
         long existing = resumeFromBytes > 0 ? resumeFromBytes : (dest.isFile() ? dest.length() : 0L);
         Request.Builder rb = new Request.Builder()
                 .url(urlStr)
-                .header("User-Agent", DEFAULT_UA);
+                .header("User-Agent", DEFAULT_UA)
+                .header("Accept-Encoding", "identity");
         if (existing > 0) rb.header("Range", "bytes=" + existing + "-");
         Response resp = executeDownload(rb.build());
         InputStream in = null;

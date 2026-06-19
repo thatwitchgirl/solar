@@ -373,6 +373,9 @@ public class MainActivity extends Activity {
     private TextView otaDownloadPercentText = null;
     private TextView otaDownloadDetailText = null;
     private Button otaDownloadStatusRow = null;
+    private Button otaDownloadCancelButton = null;
+    private boolean otaInstallInProgress = false;
+    private String otaInstallStatus = null;
     private long otaDownloadStartMs = 0;
     private long otaDownloadLastDone = 0;
     private long otaDownloadLastSpeedMs = 0;
@@ -8803,7 +8806,8 @@ public class MainActivity extends Activity {
     }
 
     private void beginOtaDownloadUi(SolarUpdateClient.ReleaseInfo release, int localCode, String localName) {
-        // ponytail: ota-chain-test wave 2 — symbolic release for OTA verification
+        otaInstallInProgress = false;
+        otaInstallStatus = null;
         otaActiveDownload = release;
         otaDownloadLocalCode = localCode;
         otaDownloadLocalName = localName != null ? localName : "";
@@ -8881,16 +8885,71 @@ public class MainActivity extends Activity {
         otaDownloadStatusRow.setEnabled(false);
         containerSettingsItems.addView(otaDownloadStatusRow);
 
-        Button cancel = createListButton(getString(R.string.soulseek_cancel_download));
-        cancel.setOnClickListener(new View.OnClickListener() {
+        otaDownloadCancelButton = createListButton(getString(R.string.soulseek_cancel_download));
+        otaDownloadCancelButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
                 clickFeedback();
                 cancelOtaDownload();
             }
         });
-        containerSettingsItems.addView(cancel);
-        cancel.requestFocus();
+        containerSettingsItems.addView(otaDownloadCancelButton);
+        otaDownloadCancelButton.requestFocus();
+    }
+
+    private void showOtaInstallPhase(int statusResId) {
+        showOtaInstallPhase(getString(statusResId), null);
+    }
+
+    private void showOtaInstallPhase(String status, String detail) {
+        otaInstallInProgress = true;
+        otaInstallStatus = status;
+        if (otaDownloadProgressBar != null) otaDownloadProgressBar.setProgress(100);
+        if (otaDownloadPercentText != null) otaDownloadPercentText.setText(status);
+        if (otaDownloadDetailText != null) {
+            otaDownloadDetailText.setText(detail != null && detail.length() > 0
+                    ? detail : getString(R.string.soulseek_download_eta_done));
+        }
+        if (otaDownloadStatusRow != null) otaDownloadStatusRow.setText(status);
+        if (tvSettingsPreviewState != null) tvSettingsPreviewState.setText(status);
+        if (tvSettingsPreviewTitle != null && otaActiveDownload != null) {
+            tvSettingsPreviewTitle.setText(otaActiveDownload.listLabel());
+        }
+        if (otaDownloadCancelButton != null) {
+            otaDownloadCancelButton.setVisibility(View.GONE);
+        }
+        forceOtaUiRefresh();
+        android.util.Log.i("SolarOTA", status + (detail != null ? " | " + detail : ""));
+    }
+
+    private void forceOtaUiRefresh() {
+        if (containerSettingsItems != null) containerSettingsItems.invalidate();
+        View decor = getWindow() != null ? getWindow().getDecorView() : null;
+        if (decor != null) decor.postInvalidate();
+    }
+
+    private void runAfterOtaUiPhase(final Runnable next, long delayMs) {
+        otaDownloadUiHandler.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                if (!SettingsScreens.SYSTEM_UPDATE_DOWNLOAD.equals(settingsSubScreenKey)
+                        && !otaInstallInProgress) {
+                    return;
+                }
+                forceOtaUiRefresh();
+                if (next != null) next.run();
+            }
+        }, delayMs);
+    }
+
+    private void finishOtaDownloadSession() {
+        otaDownloadUiHandler.removeCallbacks(otaDownloadTickRunnable);
+        otaActiveDownload = null;
+        otaInstallInProgress = false;
+        otaInstallStatus = null;
+        otaDownloadCancel = null;
+        otaDownloadThread = null;
+        clearOtaDownloadUiRefs();
     }
 
     private String formatOtaDownloadRelation(SolarUpdateClient.ReleaseInfo release,
@@ -8907,8 +8966,13 @@ public class MainActivity extends Activity {
     }
 
     private void updateOtaDownloadStatusUi() {
-        if (!SettingsScreens.SYSTEM_UPDATE_DOWNLOAD.equals(settingsSubScreenKey)
-                || otaActiveDownload == null) return;
+        if (!SettingsScreens.SYSTEM_UPDATE_DOWNLOAD.equals(settingsSubScreenKey)) return;
+        if (otaInstallInProgress && otaInstallStatus != null) {
+            if (otaDownloadStatusRow != null) otaDownloadStatusRow.setText(otaInstallStatus);
+            if (tvSettingsPreviewState != null) tvSettingsPreviewState.setText(otaInstallStatus);
+            return;
+        }
+        if (otaActiveDownload == null) return;
         if (tvSettingsPreviewState != null) {
             int pct = otaDownloadProgressBar != null ? otaDownloadProgressBar.getProgress() : 0;
             if (pct > 0) {
@@ -8971,17 +9035,193 @@ public class MainActivity extends Activity {
         otaDownloadPercentText = null;
         otaDownloadDetailText = null;
         otaDownloadStatusRow = null;
+        otaDownloadCancelButton = null;
     }
 
     private void cancelOtaDownload() {
+        if (otaInstallInProgress) return;
         if (otaDownloadCancel != null) otaDownloadCancel.set(true);
         if (otaDownloadThread != null) otaDownloadThread.interrupt();
         otaDownloadUiHandler.removeCallbacks(otaDownloadTickRunnable);
-        otaActiveDownload = null;
-        otaDownloadCancel = null;
-        otaDownloadThread = null;
-        clearOtaDownloadUiRefs();
+        finishOtaDownloadSession();
         buildUpdateSettingsUI();
+    }
+
+    private void startOtaInstall(final File apkFile, final SolarUpdateClient.ReleaseInfo release) {
+        otaDownloadUiHandler.removeCallbacks(otaDownloadTickRunnable);
+        final long fileSize = apkFile.length();
+        showOtaInstallPhase(R.string.update_download_status_complete);
+        updateOtaDownloadProgress(100, fileSize > 0 ? fileSize : 1, fileSize > 0 ? fileSize : 1);
+
+        runAfterOtaUiPhase(new Runnable() {
+            @Override
+            public void run() {
+                showOtaInstallPhase(R.string.update_download_status_preparing);
+                runAfterOtaUiPhase(new Runnable() {
+                    @Override
+                    public void run() {
+                        queueOtaInstallExecution(apkFile, release);
+                    }
+                }, isInstalledAsSystemApp() ? 900L : 450L);
+            }
+        }, 400L);
+    }
+
+    private void queueOtaInstallExecution(final File apkFile, final SolarUpdateClient.ReleaseInfo release) {
+        if (isInstalledAsSystemApp()) {
+            showOtaInstallPhase(getString(R.string.update_download_status_freeze_warning),
+                    getString(R.string.update_download_status_freeze_detail));
+            runAfterOtaUiPhase(new Runnable() {
+                @Override
+                public void run() {
+                    showOtaInstallPhase(R.string.update_download_status_launching_root);
+                    runAfterOtaUiPhase(new Runnable() {
+                        @Override
+                        public void run() {
+                            showOtaInstallPhase(R.string.update_download_status_system_install);
+                            runAfterOtaUiPhase(new Runnable() {
+                                @Override
+                                public void run() {
+                                    launchOtaInstallWorker(apkFile, release);
+                                }
+                            }, 500L);
+                        }
+                    }, 700L);
+                }
+            }, 1400L);
+            return;
+        }
+        showOtaInstallPhase(R.string.update_download_status_installing);
+        runAfterOtaUiPhase(new Runnable() {
+            @Override
+            public void run() {
+                launchOtaInstallWorker(apkFile, release);
+            }
+        }, 450L);
+    }
+
+    private void launchOtaInstallWorker(final File apkFile, final SolarUpdateClient.ReleaseInfo release) {
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                executeOtaInstallWork(apkFile, release);
+            }
+        }, "SolarOtaInstall").start();
+    }
+
+    private void executeOtaInstallWork(final File apkFile, final SolarUpdateClient.ReleaseInfo release) {
+        try {
+            if (!apkFile.isFile() || apkFile.length() <= 0) {
+                throw new IllegalStateException("missing apk");
+            }
+            int localCode = BuildConfig.VERSION_CODE;
+            String localName = BuildConfig.VERSION_NAME;
+            try {
+                android.content.pm.PackageInfo pInfo =
+                        getPackageManager().getPackageInfo(getPackageName(), 0);
+                localCode = pInfo.versionCode;
+                localName = pInfo.versionName;
+            } catch (Exception ignored) {}
+            final SolarUpdateClient.InstallRelation relation = release != null
+                    ? release.compareToInstalled(localCode, localName)
+                    : SolarUpdateClient.InstallRelation.UPGRADE;
+            if (release != null && relation == SolarUpdateClient.InstallRelation.SAME) {
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        finishOtaDownloadSession();
+                        Toast.makeText(MainActivity.this,
+                                getString(R.string.update_already_installed), Toast.LENGTH_SHORT).show();
+                        buildUpdateSettingsUI();
+                    }
+                });
+                return;
+            }
+
+            final boolean systemApp = isInstalledAsSystemApp();
+            final boolean allowDowngrade = relation == SolarUpdateClient.InstallRelation.DOWNGRADE
+                    || relation == SolarUpdateClient.InstallRelation.SIDEGRADE;
+            final long expectedSize = apkFile.length();
+            boolean installed = false;
+
+            if (!systemApp) {
+                installed = installViaPackageManager(apkFile, allowDowngrade);
+            }
+            if (!installed && systemApp) {
+                installed = installSystemApk(apkFile);
+                if (installed) {
+                    runOnUiThread(new Runnable() {
+                        @Override
+                        public void run() {
+                            showOtaInstallPhase(R.string.update_download_status_verifying_install);
+                        }
+                    });
+                    installed = verifySystemApkSize(expectedSize);
+                }
+            }
+            if (!installed && !systemApp) {
+                installed = installViaPackageManager(apkFile, true);
+            }
+
+            final boolean ok = installed;
+            final boolean needsReboot = ok && systemApp;
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    if (ok && needsReboot) {
+                        showOtaInstallPhase(R.string.update_download_status_reboot_pending);
+                        showOtaRebootModal();
+                        return;
+                    }
+                    finishOtaDownloadSession();
+                    if (ok) {
+                        Toast.makeText(MainActivity.this,
+                                getString(R.string.toast_install_ok), Toast.LENGTH_SHORT).show();
+                        buildUpdateSettingsUI();
+                        return;
+                    }
+                    Toast.makeText(MainActivity.this,
+                            getString(R.string.update_install_failed), Toast.LENGTH_LONG).show();
+                    buildUpdateSettingsUI();
+                }
+            });
+        } catch (Exception e) {
+            android.util.Log.w("SolarOTA", "install failed", e);
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    finishOtaDownloadSession();
+                    Toast.makeText(MainActivity.this,
+                            getString(R.string.update_install_failed), Toast.LENGTH_LONG).show();
+                    buildUpdateSettingsUI();
+                }
+            });
+        }
+    }
+
+    private boolean verifySystemApkSize(long expectedSize) {
+        if (expectedSize <= 0) return false;
+        java.io.BufferedReader reader = null;
+        Process process = null;
+        try {
+            process = Runtime.getRuntime().exec(new String[] {
+                    "su", "-c", "stat -c %s " + SYSTEM_APK_PATH
+            });
+            reader = new java.io.BufferedReader(
+                    new java.io.InputStreamReader(process.getInputStream()));
+            String line = reader.readLine();
+            int exit = process.waitFor();
+            if (exit != 0 || line == null) return false;
+            long onDisk = Long.parseLong(line.trim());
+            android.util.Log.i("SolarOTA", "system apk bytes on disk=" + onDisk + " expected=" + expectedSize);
+            return onDisk == expectedSize;
+        } catch (Exception e) {
+            android.util.Log.w("SolarOTA", "verifySystemApkSize failed", e);
+            return false;
+        } finally {
+            if (reader != null) try { reader.close(); } catch (Exception ignored) {}
+            if (process != null) process.destroy();
+        }
     }
 
     private void startOtaDownload(final SolarUpdateClient.ReleaseInfo release) {
@@ -8993,6 +9233,7 @@ public class MainActivity extends Activity {
             public void run() {
                 File updateFile = null;
                 try {
+                    android.util.Log.i("SolarOTA", "download " + release.listLabel() + " from " + apkUrl);
                     File dir = getDir("update", Context.MODE_PRIVATE);
                     updateFile = new File(dir, "Solar_Update.apk");
                     if (updateFile.exists()) updateFile.delete();
@@ -9001,38 +9242,40 @@ public class MainActivity extends Activity {
                                 @Override
                                 public void onProgress(final long bytesRead, final long totalBytes) {
                                     long now = android.os.SystemClock.uptimeMillis();
-                                    if (now - otaDownloadLastProgressUiMs < 200 && totalBytes > 0) {
-                                        int pct = (int) (bytesRead * 100 / totalBytes);
-                                        if (pct < 100) return;
+                                    int rawPct = totalBytes > 0
+                                            ? (int) Math.min(100, bytesRead * 100 / totalBytes) : 0;
+                                    if (now - otaDownloadLastProgressUiMs < 200 && totalBytes > 0
+                                            && rawPct < 97) {
+                                        return;
                                     }
                                     otaDownloadLastProgressUiMs = now;
-                                    final int pct = totalBytes > 0
-                                            ? (int) Math.min(100, bytesRead * 100 / totalBytes) : 0;
+                                    final int pct = rawPct;
                                     final long done = bytesRead;
                                     final long total = totalBytes;
+                                    final boolean finishing = totalBytes > 0 && bytesRead < totalBytes
+                                            && pct >= 97;
                                     runOnUiThread(new Runnable() {
                                         @Override
                                         public void run() {
                                             if (!SettingsScreens.SYSTEM_UPDATE_DOWNLOAD
                                                     .equals(settingsSubScreenKey)) return;
                                             updateOtaDownloadProgress(pct, done, total);
+                                            if (finishing && otaDownloadStatusRow != null) {
+                                                otaDownloadStatusRow.setText(getString(
+                                                        R.string.update_download_status_finishing_download));
+                                            }
                                         }
                                     });
                                 }
                             }, 0L, null, otaDownloadCancel);
+                    android.util.Log.i("SolarOTA", "download complete bytes=" + updateFile.length());
                     final File ready = updateFile;
                     runOnUiThread(new Runnable() {
                         @Override
                         public void run() {
-                            otaDownloadUiHandler.removeCallbacks(otaDownloadTickRunnable);
-                            otaActiveDownload = null;
-                            otaDownloadCancel = null;
                             otaDownloadThread = null;
-                            clearOtaDownloadUiRefs();
-                            installApk(ready, release);
-                            if (!isInstalledAsSystemApp()) {
-                                buildUpdateSettingsUI();
-                            }
+                            otaDownloadCancel = null;
+                            startOtaInstall(ready, release);
                         }
                     });
                 } catch (Exception e) {
@@ -9041,11 +9284,7 @@ public class MainActivity extends Activity {
                         @Override
                         public void run() {
                             boolean cancelled = otaDownloadCancel != null && otaDownloadCancel.get();
-                            otaDownloadUiHandler.removeCallbacks(otaDownloadTickRunnable);
-                            otaActiveDownload = null;
-                            otaDownloadCancel = null;
-                            otaDownloadThread = null;
-                            clearOtaDownloadUiRefs();
+                            finishOtaDownloadSession();
                             if (cancelled) {
                                 buildUpdateSettingsUI();
                                 return;
@@ -14242,7 +14481,8 @@ public class MainActivity extends Activity {
         }
         String[] labels = new String[] { getString(R.string.common_ok) };
         themedContextMenu.show(root, getString(R.string.update_installing_title),
-                getString(R.string.update_install_reboot), labels, null, null,
+                getString(R.string.update_install_reboot) + "\n\n"
+                        + getString(R.string.update_download_status_freeze_detail), labels, null, null,
                 new boolean[] { false },
                 new ThemedContextMenu.Listener() {
                     @Override

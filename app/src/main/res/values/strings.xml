@@ -548,6 +548,17 @@
     <string name="update_download_status_connecting">Connecting to GitHub…</string>
     <string name="update_download_status_receiving">Downloading update</string>
     <string name="update_download_failed">Download failed</string>
+    <string name="update_download_status_complete">Download complete</string>
+    <string name="update_download_status_finishing_download">Finishing download…</string>
+    <string name="update_download_status_preparing">Preparing install…</string>
+    <string name="update_download_status_installing">Installing update…</string>
+    <string name="update_download_status_system_install">Writing system APK (root)…</string>
+    <string name="update_download_status_freeze_warning">Writing system APK now</string>
+    <string name="update_download_status_freeze_detail">Screen may freeze 1–2 min. Do not power off.</string>
+    <string name="update_download_status_launching_root">Starting root install script…</string>
+    <string name="update_download_status_verifying_install">Verifying system APK…</string>
+    <string name="update_download_status_reboot_pending">Update installed — reboot required</string>
+    <string name="update_install_failed">Install failed</string>
     <string name="context_action_lock_failed">Could not lock screen</string>
     <string name="podcasts_saved_on_device">Saved on device</string>
     <string name="podcasts_resume_badge">[Resume]</string>

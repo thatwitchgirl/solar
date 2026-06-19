@@ -340,6 +340,17 @@
     <string name="update_download_status_connecting">GitHub에 연결 중…</string>
     <string name="update_download_status_receiving">업데이트 다운로드 중</string>
     <string name="update_download_failed">다운로드 실패</string>
+    <string name="update_download_status_complete">다운로드 완료</string>
+    <string name="update_download_status_finishing_download">다운로드 마무리 중…</string>
+    <string name="update_download_status_preparing">설치 준비 중…</string>
+    <string name="update_download_status_installing">업데이트 설치 중…</string>
+    <string name="update_download_status_system_install">시스템 APK 기록 중 (root)…</string>
+    <string name="update_download_status_freeze_warning">시스템 APK 기록 시작</string>
+    <string name="update_download_status_freeze_detail">화면이 1–2분 멈출 수 있습니다. 전원을 끄지 마세요.</string>
+    <string name="update_download_status_launching_root">root 설치 스크립트 시작…</string>
+    <string name="update_download_status_verifying_install">시스템 APK 확인 중…</string>
+    <string name="update_download_status_reboot_pending">설치 완료 — 재부팅 필요</string>
+    <string name="update_install_failed">설치 실패</string>
     <string name="soulseek_search_row">검색</string>
     <string name="soulseek_account_row">계정</string>
     <string name="soulseek_wifi_required">Reach에는 인터넷 연결이 필요합니다.</string>
