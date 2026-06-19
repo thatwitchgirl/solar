@@ -219,7 +219,7 @@
     <string name="home_menu_fm">FM Radio</string>
     <string name="home_menu_pc_upload">Wi‑Fi Transfer</string>
     <string name="home_menu_podcasts">Podcasts</string>
-    <string name="home_menu_soulseek">Get Music</string>
+    <string name="home_menu_soulseek">Reach</string>
     <string name="home_menu_themes">Themes</string>
     <string name="home_menu_more">More</string>
     <string name="more_menu_empty">No shortcuts in More</string>
@@ -526,7 +526,7 @@
     <string name="context_action_open_player">Open player</string>
     <string name="context_action_open_music">Open music library</string>
     <string name="context_action_open_podcasts">Open podcasts</string>
-    <string name="context_action_open_reach">Get Music</string>
+    <string name="context_action_open_reach">Open Reach</string>
     <string name="context_action_open_apps">Open Apps</string>
     <string name="context_action_lock_screen">Lock Screen</string>
     <string name="context_quick_volume">Volume</string>

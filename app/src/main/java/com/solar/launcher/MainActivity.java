@@ -509,6 +509,7 @@ public class MainActivity extends Activity {
     };
     private long backKeyDownTime = 0;
     private boolean backLongPressHandled = false;
+    private long backContextMenuOpenedAt = 0;
     private static final long BACK_LONG_PRESS_MS = 600;
     private static final long MEDIA_SKIP_LONG_PRESS_MS = 500;
     private static final int MEDIA_SCRUB_STEP_MS = 5000;
@@ -6833,12 +6834,22 @@ public class MainActivity extends Activity {
         if (themedContextMenu == null) return;
         if (layoutLoadingOverlay != null && layoutLoadingOverlay.getVisibility() == View.VISIBLE) return;
         populateContextMenu();
-        if (contextMenuActions.isEmpty()) return;
-        String[] labels = contextMenuLabels.toArray(new String[contextMenuLabels.size()]);
-        String[] iconKeys = contextMenuIconKeys.toArray(new String[contextMenuIconKeys.size()]);
-        String[] stateTexts = contextMenuStateTexts.toArray(new String[contextMenuStateTexts.size()]);
-        boolean[] headers = new boolean[contextMenuHeaders.size()];
-        for (int i = 0; i < headers.length; i++) headers[i] = contextMenuHeaders.get(i);
+        String[] labels;
+        String[] iconKeys;
+        String[] stateTexts;
+        boolean[] headers;
+        if (contextMenuActions.isEmpty()) {
+            labels = new String[0];
+            iconKeys = new String[0];
+            stateTexts = new String[0];
+            headers = new boolean[0];
+        } else {
+            labels = contextMenuLabels.toArray(new String[contextMenuLabels.size()]);
+            iconKeys = contextMenuIconKeys.toArray(new String[contextMenuIconKeys.size()]);
+            stateTexts = contextMenuStateTexts.toArray(new String[contextMenuStateTexts.size()]);
+            headers = new boolean[contextMenuHeaders.size()];
+            for (int i = 0; i < headers.length; i++) headers[i] = contextMenuHeaders.get(i);
+        }
         ViewGroup root = (ViewGroup) findViewById(android.R.id.content);
         boolean menuRows = currentScreenState == STATE_MENU || currentScreenState == STATE_SETTINGS;
         int margin = (int) (10 * getResources().getDisplayMetrics().density);
@@ -6867,6 +6878,7 @@ public class MainActivity extends Activity {
                         handleContextQuickBar(index);
                     }
                 });
+        backContextMenuOpenedAt = System.currentTimeMillis();
         clickFeedback();
     }
 
@@ -7359,16 +7371,39 @@ public class MainActivity extends Activity {
     /** Screen off — su power key first (Y1), then goToSleep; shared by hold-center and context menu. */
     private void performScreenSleep(boolean feedback) {
         if (feedback) clickFeedback();
-        if (trySuScreenOff()) return;
-        try {
-            PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
-            java.lang.reflect.Method goToSleep = PowerManager.class.getMethod(
-                    "goToSleep", long.class);
-            goToSleep.invoke(pm, android.os.SystemClock.uptimeMillis());
-            if (!isScreenInteractive()) return;
-        } catch (Exception ignored) {}
-        if (trySuScreenOff()) return;
-        Toast.makeText(this, getString(R.string.context_action_lock_failed), Toast.LENGTH_SHORT).show();
+        if (layoutLoadingOverlay != null) layoutLoadingOverlay.setVisibility(View.GONE);
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                if (trySuScreenOff()) return;
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        try {
+                            PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+                            java.lang.reflect.Method goToSleep = PowerManager.class.getMethod(
+                                    "goToSleep", long.class);
+                            goToSleep.invoke(pm, android.os.SystemClock.uptimeMillis());
+                            if (!isScreenInteractive()) return;
+                        } catch (Exception ignored) {}
+                        new Thread(new Runnable() {
+                            @Override
+                            public void run() {
+                                if (trySuScreenOff()) return;
+                                runOnUiThread(new Runnable() {
+                                    @Override
+                                    public void run() {
+                                        Toast.makeText(MainActivity.this,
+                                                getString(R.string.context_action_lock_failed),
+                                                Toast.LENGTH_SHORT).show();
+                                    }
+                                });
+                            }
+                        }, "SolarSleepSu").start();
+                    }
+                });
+            }
+        }, "SolarSleep").start();
     }
 
     private boolean isScreenInteractive() {
@@ -7820,6 +7855,13 @@ public class MainActivity extends Activity {
     }
 
     private boolean handleBackKeyDown(KeyEvent event) {
+        if (themedContextMenu != null && themedContextMenu.isShowing()) {
+            if (event.getRepeatCount() == 0) {
+                if (popContextMenuTier()) return true;
+                dismissThemedContextMenu();
+            }
+            return true;
+        }
         if (event.getRepeatCount() == 0) {
             backKeyDownTime = System.currentTimeMillis();
             backLongPressHandled = false;
@@ -15491,8 +15533,10 @@ public class MainActivity extends Activity {
                 return true;
             }
             if (keyCode == KeyEvent.KEYCODE_BACK) {
-                if (popContextMenuTier()) return true;
-                dismissThemedContextMenu();
+                if (event.getRepeatCount() == 0) {
+                    if (popContextMenuTier()) return true;
+                    dismissThemedContextMenu();
+                }
                 return true;
             }
             return true;
@@ -15822,7 +15866,8 @@ public class MainActivity extends Activity {
         if (keyCode == KeyEvent.KEYCODE_BACK) {
             long held = System.currentTimeMillis() - backKeyDownTime;
             if (themedContextMenu != null && themedContextMenu.isShowing()) {
-                if (held < BACK_LONG_PRESS_MS) {
+                if (held < BACK_LONG_PRESS_MS
+                        && System.currentTimeMillis() - backContextMenuOpenedAt > 150) {
                     dismissThemedContextMenu();
                 }
                 return true;

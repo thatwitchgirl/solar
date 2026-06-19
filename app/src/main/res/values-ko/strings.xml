@@ -485,7 +485,7 @@
     <string name="context_action_open_player">플레이어 열기</string>
     <string name="context_action_open_music">음악 라이브러리</string>
     <string name="context_action_open_podcasts">팟캐스트</string>
-    <string name="context_action_open_reach">Reach</string>
+    <string name="context_action_open_reach">Reach 열기</string>
     <string name="context_action_open_apps">앱</string>
     <string name="context_action_lock_screen">화면 잠금</string>
     <string name="context_action_lock_failed">화면을 잠글 수 없습니다</string>
