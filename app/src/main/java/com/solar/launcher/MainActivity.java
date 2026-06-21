@@ -278,6 +278,9 @@ public class MainActivity extends Activity {
     private static final String PREF_PODCAST_STOREFRONT = "podcast_storefront";
     private static final int PODCAST_UI_RESTORE_NONE = -1;
     private int playerReturnScreen = STATE_MENU;
+    /** Screen to return to on Back from Wi‑Fi, PC upload, Bluetooth, brightness, storage, etc. */
+    private int screenBackReturnTo = STATE_MENU;
+    private boolean settingsAboutFullWidth;
     private int playerReturnPodcastUiMode = PODCAST_UI_SEARCH;
     private int soulseekReturnPodcastUiMode = PODCAST_UI_SEARCH;
     /** When >= 0, next {@link #changeScreen} to podcasts restores this sub-screen instead of search root. */
@@ -3018,6 +3021,7 @@ public class MainActivity extends Activity {
             return true;
         }
         if (SettingsScreens.ABOUT.equals(settingsSubScreenKey)) {
+            setSettingsAboutFullWidth(false);
             restoreSettingsPreviewPane();
             buildSettingsUI();
             return true;
@@ -4410,7 +4414,7 @@ public class MainActivity extends Activity {
             currentBrowserMode = BROWSER_ROOT;
             changeScreen(STATE_BROWSER);
         } else if (HomeMenuConfig.ID_BLUETOOTH.equals(id)) {
-            changeScreen(STATE_BLUETOOTH);
+            openScreenWithReturn(STATE_BLUETOOTH);
         } else if (HomeMenuConfig.ID_SETTINGS.equals(id)) {
             changeScreen(STATE_SETTINGS);
         } else if (HomeMenuConfig.ID_FM.equals(id)) {
@@ -4427,7 +4431,7 @@ public class MainActivity extends Activity {
                 Toast.makeText(this, getString(R.string.toast_requires_wifi), Toast.LENGTH_SHORT).show();
                 return;
             }
-            changeScreen(STATE_WEBSERVER);
+            openScreenWithReturn(STATE_WEBSERVER);
         } else if (HomeMenuConfig.ID_PODCASTS.equals(id)) {
             if (ConnectivityHelper.isOnline(this)) {
                 changeScreen(STATE_PODCASTS);
@@ -4539,6 +4543,17 @@ public class MainActivity extends Activity {
             ivStatusPlayback.setColorFilter(ThemeManager.getTextColorPrimary());
         }
         ivStatusPlayback.setVisibility(View.VISIBLE);
+    }
+
+    private void openScreenWithReturn(int state) {
+        if (state != currentScreenState) {
+            screenBackReturnTo = currentScreenState;
+        }
+        changeScreen(state);
+    }
+
+    private void returnFromAuxScreen() {
+        changeScreen(screenBackReturnTo);
     }
 
     private void changeScreen(int state) {
@@ -5913,22 +5928,26 @@ public class MainActivity extends Activity {
         }
         if (settingsMenuHost != null) {
             FrameLayout.LayoutParams slp = (FrameLayout.LayoutParams) settingsMenuHost.getLayoutParams();
-            slp.width = isFullWidthMenus
+            boolean settingsWide = isFullWidthMenus || settingsAboutFullWidth;
+            slp.width = settingsWide
                     ? FrameLayout.LayoutParams.MATCH_PARENT : settingsMenuWidthPx;
             slp.height = isFullWidthMenus ? fullMenuH : defaultSettingsH;
-            slp.leftMargin = isFullWidthMenus ? 0 : menuLeft;
+            slp.leftMargin = settingsWide ? 0 : menuLeft;
             settingsMenuHost.setLayoutParams(slp);
         }
         if (settingsPreviewPane != null) {
-            settingsPreviewPane.setVisibility(isFullWidthMenus ? View.GONE : View.VISIBLE);
+            boolean hidePreview = isFullWidthMenus || settingsAboutFullWidth;
+            settingsPreviewPane.setVisibility(hidePreview ? View.GONE : View.VISIBLE);
         }
         updateHomeMenuPreviewVisibility();
-        int settingsPanelH = isFullWidthMenus && screenHeightPx > 0
+        int settingsPanelH = (isFullWidthMenus || settingsAboutFullWidth) && screenHeightPx > 0
                 ? screenHeightPx - (int) getResources().getDimension(R.dimen.y1_status_bar_height)
                 : (int) getResources().getDimension(R.dimen.y1_settings_menu_height);
         applyMenuPanelBackground(menuListHost, y1RowWidthPx, menuListHeightPx,
                 (int) getResources().getDimension(R.dimen.y1_menu_height));
-        applyMenuPanelBackground(settingsMenuHost, settingsMenuWidthPx, settingsPanelH,
+        applyMenuPanelBackground(settingsMenuHost,
+                (isFullWidthMenus || settingsAboutFullWidth) && screenWidthPx > 0 ? screenWidthPx : settingsMenuWidthPx,
+                settingsPanelH,
                 (int) getResources().getDimension(R.dimen.y1_settings_menu_height));
         updateScreenBackground(currentScreenState);
         applyPodcastBrowserLayout();
@@ -6782,7 +6801,9 @@ public class MainActivity extends Activity {
         String solarKey = resolveSoulseekSolarConfigKey(rowKey);
         Bitmap icon = null;
         if (RowKeys.ABOUT.equals(rowKey)) {
-            icon = ThemeManager.getSolarConfigIcon("appAbout");
+            if (ThemeManager.hasThemeSolarConfigKey("appAbout")) {
+                icon = ThemeManager.getSolarConfigIcon("appAbout");
+            }
         }
         if (icon == null && isAppearancePreviewRow(rowKey)) {
             icon = ThemeManager.getSettingIcon("theme");
@@ -9032,33 +9053,15 @@ public class MainActivity extends Activity {
 
     /** Screen off — root power key only (Y1); shared by hold-center and context menu. */
     private void performScreenSleep(boolean feedback) {
-        // #region agent log
-        org.json.JSONObject d = new org.json.JSONObject();
-        try {
-            d.put("feedback", feedback);
-            d.put("contextMenuOpen", themedContextMenu != null && themedContextMenu.isShowing());
-            d.put("screenInteractive", isScreenInteractive());
-        } catch (Exception ignored) {}
-        AgentDebugLog.log("MainActivity.performScreenSleep", "enter", "H1-H3", d);
-        // #endregion
         if (feedback) clickFeedback();
         dismissThemedContextMenu();
         if (trySuScreenOff()) {
-            // #region agent log
-            AgentDebugLog.log("MainActivity.performScreenSleep", "su_ok_first", "H1", null);
-            // #endregion
             return;
         }
         try { Thread.sleep(80); } catch (InterruptedException ignored) {}
         if (trySuScreenOff()) {
-            // #region agent log
-            AgentDebugLog.log("MainActivity.performScreenSleep", "su_ok_retry", "H1", null);
-            // #endregion
             return;
         }
-        // #region agent log
-        AgentDebugLog.log("MainActivity.performScreenSleep", "su_failed", "H1", null);
-        // #endregion
         Toast.makeText(this, getString(R.string.context_action_lock_failed), Toast.LENGTH_SHORT).show();
     }
 
@@ -9376,11 +9379,11 @@ public class MainActivity extends Activity {
             return;
         }
         if (currentScreenState == STATE_BRIGHTNESS) {
-            changeScreen(STATE_SETTINGS);
+            returnFromAuxScreen();
             return;
         }
         if (currentScreenState == STATE_STORAGE) {
-            changeScreen(STATE_SETTINGS);
+            returnFromAuxScreen();
             return;
         }
         if (currentScreenState == STATE_WEBSERVER) {
@@ -9391,17 +9394,17 @@ public class MainActivity extends Activity {
                         .setPositiveButton(getString(R.string.webserver_stop_exit), new DialogInterface.OnClickListener() {
                             public void onClick(DialogInterface dialog, int which) {
                                 toggleWebServer();
-                                changeScreen(STATE_SETTINGS);
+                                returnFromAuxScreen();
                             }
                         })
                         .setNegativeButton(getString(R.string.webserver_keep_running), new DialogInterface.OnClickListener() {
                             public void onClick(DialogInterface dialog, int which) {
-                                changeScreen(STATE_SETTINGS);
+                                returnFromAuxScreen();
                             }
                         })
                         .show();
             } else {
-                changeScreen(STATE_SETTINGS);
+                returnFromAuxScreen();
             }
             return;
         }
@@ -9526,7 +9529,7 @@ public class MainActivity extends Activity {
             return;
         }
         if (currentScreenState == STATE_BLUETOOTH || currentScreenState == STATE_WIFI) {
-            changeScreen(STATE_SETTINGS);
+            returnFromAuxScreen();
             return;
         }
         if (currentScreenState == STATE_SETTINGS) {
@@ -9630,6 +9633,7 @@ public class MainActivity extends Activity {
     }
     private void buildSettingsUI() {
         final int targetFocusIndex = lastSettingsFocusIndex;
+        setSettingsAboutFullWidth(false);
         setThemesListVisible(false);
         clearThemeGalleryPreview();
         settingsSubScreenKey = null;
@@ -9880,7 +9884,7 @@ public class MainActivity extends Activity {
         btnServerMenu.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                changeScreen(STATE_WEBSERVER);
+                openScreenWithReturn(STATE_WEBSERVER);
                 clickFeedback();
             }
         });
@@ -9892,7 +9896,7 @@ public class MainActivity extends Activity {
         btnWifiMenu.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                changeScreen(STATE_WIFI);
+                openScreenWithReturn(STATE_WIFI);
                 clickFeedback();
             }
         });
@@ -9926,23 +9930,11 @@ public class MainActivity extends Activity {
         });
         containerSettingsItems.addView(btnAutoFetch);
 
-        LinearLayout btnAbout = createSettingsRow(RowKeys.ABOUT, R.string.settings_about, true);
-        btnAbout.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                clickFeedback();
-                buildAboutUI();
-            }
-        });
-        containerSettingsItems.addView(btnAbout);
-
-
-
         LinearLayout btnBtMenu = createSettingsRow(RowKeys.BLUETOOTH_SETUP, R.string.settings_bluetooth_setup, true);
         btnBtMenu.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                changeScreen(STATE_BLUETOOTH);
+                openScreenWithReturn(STATE_BLUETOOTH);
                 clickFeedback();
             }
         });
@@ -9952,7 +9944,7 @@ public class MainActivity extends Activity {
         btnBrightMenu.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                changeScreen(STATE_BRIGHTNESS);
+                openScreenWithReturn(STATE_BRIGHTNESS);
                 clickFeedback();
             }
         });
@@ -9962,7 +9954,7 @@ public class MainActivity extends Activity {
         btnStorageMenu.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                changeScreen(STATE_STORAGE);
+                openScreenWithReturn(STATE_STORAGE);
                 clickFeedback();
             }
         });
@@ -10029,6 +10021,16 @@ public class MainActivity extends Activity {
             }
         });
         containerSettingsItems.addView(btnTime);
+
+        LinearLayout btnAbout = createSettingsRow(RowKeys.ABOUT, R.string.settings_about, true);
+        btnAbout.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                clickFeedback();
+                buildAboutUI();
+            }
+        });
+        containerSettingsItems.addView(btnAbout);
 
         // 🚀 [수정] 오염되지 않은 안전한 백업 인덱스(targetFocusIndex)를 사용하여 정확한 위치로 강제 이동!
         containerSettingsItems.postDelayed(new Runnable() {
@@ -10365,6 +10367,11 @@ public class MainActivity extends Activity {
         btnBack.requestFocus();
     }
 
+    private void setSettingsAboutFullWidth(boolean fullWidth) {
+        settingsAboutFullWidth = fullWidth;
+        applyFullWidthMenusLayout();
+    }
+
     private void restoreSettingsPreviewPane() {
         if (settingsPreviewPane != null) {
             settingsPreviewPane.setVisibility(isFullWidthMenus ? View.GONE : View.VISIBLE);
@@ -10384,11 +10391,28 @@ public class MainActivity extends Activity {
                 ? 0xFF333333 : 0xFFCCCCCC;
     }
 
+    private static final int ABOUT_LOGO_MAX_PX = 292;
+
     private Bitmap loadAssetBitmap(String assetPath) {
+        return loadAssetBitmap(assetPath, ABOUT_LOGO_MAX_PX);
+    }
+
+    private Bitmap loadAssetBitmap(String assetPath, int maxSidePx) {
         java.io.InputStream in = null;
         try {
+            BitmapFactory.Options bounds = new BitmapFactory.Options();
+            bounds.inJustDecodeBounds = true;
             in = getAssets().open(assetPath);
-            return BitmapFactory.decodeStream(in);
+            BitmapFactory.decodeStream(in, null, bounds);
+            in.close();
+            in = null;
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null;
+            int sample = 1;
+            while (Math.max(bounds.outWidth, bounds.outHeight) / sample > maxSidePx) sample *= 2;
+            BitmapFactory.Options opts = new BitmapFactory.Options();
+            opts.inSampleSize = sample;
+            in = getAssets().open(assetPath);
+            return BitmapFactory.decodeStream(in, null, opts);
         } catch (Exception ignored) {
             return null;
         } finally {
@@ -10430,33 +10454,23 @@ public class MainActivity extends Activity {
     }
 
     private void buildAboutUI() {
+        setSettingsAboutFullWidth(true);
         setSettingsSubScreen(SettingsScreens.ABOUT);
         updateStatusBarTitle();
         updateScreenBackground(STATE_SETTINGS);
-        if (settingsPreviewPane != null) settingsPreviewPane.setVisibility(View.GONE);
         containerSettingsItems.removeAllViews();
 
-        Button btnBack = createListButton(getString(R.string.common_back_short));
-        styleSecondaryLabel(btnBack);
-        btnBack.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                clickFeedback();
-                restoreSettingsPreviewPane();
-                buildSettingsUI();
-            }
-        });
-        containerSettingsItems.addView(btnBack);
-
         float density = getResources().getDisplayMetrics().density;
-        int hPad = (int) (10 * density);
-        int logoSize = (int) (132 * density);
+        int hPad = (int) (12 * density);
+        int logoSize = (int) (96 * density);
+        int rowW = settingsAboutFullWidth && screenWidthPx > 0
+                ? screenWidthPx : (listRowWidthPx > 0 ? listRowWidthPx : y1ActiveRowWidthPx());
 
-        LinearLayout header = new LinearLayout(this);
-        header.setOrientation(LinearLayout.HORIZONTAL);
-        header.setGravity(Gravity.CENTER_VERTICAL);
-        header.setPadding(hPad, hPad, hPad, hPad / 2);
-        header.setFocusable(false);
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setGravity(Gravity.CENTER_HORIZONTAL);
+        content.setPadding(hPad, hPad, hPad, hPad);
+        content.setFocusable(false);
 
         ImageView logo = new ImageView(this);
         Bitmap appIcon = loadAssetBitmap("logo/square_full_logo_colour.png");
@@ -10464,19 +10478,21 @@ public class MainActivity extends Activity {
             logo.setImageBitmap(appIcon);
             logo.setScaleType(ImageView.ScaleType.FIT_CENTER);
         }
-        LinearLayout.LayoutParams logoLp = new LinearLayout.LayoutParams(logoSize, logoSize);
-        logoLp.rightMargin = hPad;
-        header.addView(logo, logoLp);
+        content.addView(logo, new LinearLayout.LayoutParams(logoSize, logoSize));
 
         TextView tvVersion = new TextView(this);
+        tvVersion.setFocusable(false);
+        tvVersion.setGravity(Gravity.CENTER);
+        tvVersion.setSingleLine(true);
         tvVersion.setText(getString(R.string.about_version, installedVersionName()));
         tvVersion.setTypeface(ThemeManager.getCustomFont(), android.graphics.Typeface.BOLD);
         tvVersion.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX,
-                getResources().getDimension(R.dimen.y1_menu_text_size) * 1.15f);
+                getResources().getDimension(R.dimen.y1_menu_text_size) * 1.1f);
         ThemeManager.applyThemedTextStyle(tvVersion, ThemeManager.getTextColorPrimary());
-        header.addView(tvVersion, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
-        containerSettingsItems.addView(header);
+        LinearLayout.LayoutParams verLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        verLp.topMargin = hPad / 2;
+        content.addView(tvVersion, verLp);
 
         TextView attribution = new TextView(this);
         attribution.setFocusable(false);
@@ -10485,17 +10501,23 @@ public class MainActivity extends Activity {
         attribution.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX,
                 getResources().getDimension(R.dimen.y1_menu_text_size));
         ThemeManager.applyThemedTextStyle(attribution, ThemeManager.getTextColorPrimary());
-        attribution.setPadding(hPad, hPad / 2, hPad, hPad);
-        containerSettingsItems.addView(attribution);
+        LinearLayout.LayoutParams attrLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        attrLp.topMargin = hPad / 2;
+        content.addView(attribution, attrLp);
+
+        containerSettingsItems.addView(content, new LinearLayout.LayoutParams(
+                rowW, LinearLayout.LayoutParams.WRAP_CONTENT));
 
         if (BuildConfig.FEATURE_OTA_UPDATE) {
             final Button otaProbe = createListButton(getString(R.string.update_checking));
             otaProbe.setEnabled(false);
             containerSettingsItems.addView(otaProbe);
             probeAboutOtaAvailability(otaProbe);
+            otaProbe.requestFocus();
+        } else if (containerSettingsItems.getChildCount() > 0) {
+            containerSettingsItems.getChildAt(0).requestFocus();
         }
-
-        btnBack.requestFocus();
     }
 
     private void probeAboutOtaAvailability(final Button placeholder) {
@@ -10543,6 +10565,7 @@ public class MainActivity extends Activity {
         containerSettingsItems.removeView(placeholder);
         if (replacement != null) {
             containerSettingsItems.addView(replacement, idx);
+            replacement.requestFocus();
             return;
         }
         if (showUnavailable) {
@@ -10582,6 +10605,7 @@ public class MainActivity extends Activity {
 
     private void buildUpdateSettingsUI() {
         if (!BuildConfig.FEATURE_OTA_UPDATE) return;
+        setSettingsAboutFullWidth(true);
         setSettingsSubScreen(SettingsScreens.SYSTEM_UPDATE);
         updateStatusBarTitle();
         containerSettingsItems.removeAllViews();
@@ -14445,7 +14469,7 @@ public class MainActivity extends Activity {
         tvPlayerTimeTotal.setText("00:00");
         updateMusicTrackCountUi();
         isPausedByHand = false;
-        playerReturnScreen = STATE_SOULSEEK;
+        playerReturnScreen = currentScreenState;
         persistPlaybackQueue();
         applyScreenChange(STATE_PLAYER);
         startReachFromGrowingFile(partial, 0);
@@ -15808,28 +15832,13 @@ public class MainActivity extends Activity {
     }
 
     private boolean installSystemApk(File apkFile) {
-        // #region agent log
-        org.json.JSONObject d = new org.json.JSONObject();
-        try {
-            d.put("apk", apkFile != null ? apkFile.getAbsolutePath() : null);
-            d.put("apkBytes", apkFile != null && apkFile.isFile() ? apkFile.length() : 0);
-        } catch (Exception ignored) {}
-        AgentDebugLog.log("MainActivity.installSystemApk", "enter", "H4-H5", d);
-        // #endregion
         if (installSystemApkViaBundledScript(apkFile)) {
-            AgentDebugLog.log("MainActivity.installSystemApk", "script_ok", "H4", null);
             return true;
         }
         String cmd = "mount -o remount,rw /system && cp "
                 + shQuote(apkFile.getAbsolutePath()) + " " + shQuote(SYSTEM_APK_PATH)
                 + " && chmod 644 " + shQuote(SYSTEM_APK_PATH) + " && sync";
-        boolean ok = runSuCommandSilently(cmd);
-        // #region agent log
-        org.json.JSONObject r = new org.json.JSONObject();
-        try { r.put("ok", ok); } catch (Exception ignored) {}
-        AgentDebugLog.log("MainActivity.installSystemApk", "inline_cp", "H4", r);
-        // #endregion
-        return ok;
+        return runSuCommandSilently(cmd);
     }
 
     private boolean installSystemApkViaBundledScript(File apkFile) {
@@ -15858,14 +15867,6 @@ public class MainActivity extends Activity {
     }
 
     private void finishDownloadAndInstall(final File apkFile, final SolarUpdateClient.ReleaseInfo release) {
-        // #region agent log
-        org.json.JSONObject d = new org.json.JSONObject();
-        try {
-            d.put("systemReplace", shouldReplaceSystemApk());
-            d.put("sourceDir", getPackageManager().getApplicationInfo(getPackageName(), 0).sourceDir);
-        } catch (Exception ignored) {}
-        AgentDebugLog.log("MainActivity.finishDownloadAndInstall", "enter", "H4", d);
-        // #endregion
         if (shouldReplaceSystemApk()) {
             beginSystemApkReplaceWithOverlay(apkFile, release);
         } else {
@@ -15901,9 +15902,6 @@ public class MainActivity extends Activity {
             themedContextMenu.showInstallStatusOverlay(root,
                     getString(R.string.update_device_restarting), "");
         }
-        // #region agent log
-        AgentDebugLog.log("MainActivity.beginSystemApkReplaceWithOverlay", "overlay_shown", "H5-H6", null);
-        // #endregion
         new Thread(new Runnable() {
             @Override
             public void run() {
@@ -15912,9 +15910,6 @@ public class MainActivity extends Activity {
                     @Override
                     public void run() {
                         if (ok) {
-                            // #region agent log
-                            AgentDebugLog.log("MainActivity.beginSystemApkReplaceWithOverlay", "reboot", "H5", null);
-                            // #endregion
                             rebootDeviceSilently();
                         } else {
                             dismissThemedContextMenu();

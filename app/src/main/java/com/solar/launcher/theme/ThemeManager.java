@@ -38,6 +38,7 @@ public class ThemeManager {
 
     private static String themesRootPath = PATH_THEMES;
     private static ThemeEntry bundledFallback;
+    private static Context assetContext;
 
     public static class ThemeEntry {
         public final String folderPath;
@@ -84,6 +85,7 @@ public class ThemeManager {
 
     /** Extract bundled Default → themes root; load in-memory fallback if copy fails. */
     public static void ensureBundledDefault(Context ctx) {
+        assetContext = ctx.getApplicationContext();
         themesRootPath = resolveThemesRoot(ctx);
         try {
             File dest = new File(themesRootPath, BUILTIN_DEFAULT_FOLDER);
@@ -91,9 +93,57 @@ public class ThemeManager {
             if (!config.isFile() || config.length() == 0) {
                 if (!dest.exists()) dest.mkdirs();
                 copyAssetTree(ctx.getAssets(), BUNDLED_ASSET_DIR, dest);
+            } else {
+                syncBundledSolarAssets(ctx, dest);
             }
         } catch (Exception ignored) {}
         ensureBundledFallback(ctx);
+    }
+
+    /** Copy solarConfig assets + keys into an existing Default folder (legacy Circular installs). */
+    private static void syncBundledSolarAssets(Context ctx, File destDir) {
+        try {
+            byte[] raw = readAllFromAsset(ctx.getAssets(), BUNDLED_ASSET_DIR + "/config.json");
+            JSONObject bundled = new JSONObject(new String(raw, "UTF-8"));
+            JSONObject solar = bundled.optJSONObject("solarConfig");
+            if (solar == null) return;
+            java.util.Iterator<String> keys = solar.keys();
+            while (keys.hasNext()) {
+                String ref = solar.optString(keys.next(), "").trim();
+                if (ref.isEmpty() || ref.contains("://") || ref.startsWith("#")) continue;
+                String base = new File(ref.replace('\\', '/')).getName();
+                File out = new File(destDir, base);
+                if (!out.isFile() || out.length() == 0) {
+                    try {
+                        copyAsset(ctx.getAssets(), BUNDLED_ASSET_DIR + "/" + ref.replace('\\', '/'), out);
+                    } catch (Exception e) {
+                        copyAsset(ctx.getAssets(), BUNDLED_ASSET_DIR + "/" + base, out);
+                    }
+                }
+            }
+            File config = new File(destDir, "config.json");
+            JSONObject destRoot = new JSONObject(new String(readAll(config), "UTF-8"));
+            JSONObject destSolar = destRoot.optJSONObject("solarConfig");
+            boolean changed = false;
+            if (destSolar == null) {
+                destSolar = new JSONObject();
+                changed = true;
+            }
+            keys = solar.keys();
+            while (keys.hasNext()) {
+                String k = keys.next();
+                if (!destSolar.has(k)) {
+                    destSolar.put(k, solar.opt(k));
+                    changed = true;
+                }
+            }
+            if (changed) {
+                destRoot.put("solarConfig", destSolar);
+                OutputStream fos = new FileOutputStream(config);
+                fos.write(destRoot.toString(2).getBytes("UTF-8"));
+                fos.close();
+            }
+        } catch (Exception ignored) {}
     }
 
     private static void ensureBundledFallback(Context ctx) {
@@ -476,7 +526,23 @@ public class ThemeManager {
     }
 
     private static JSONObject solarBlock() {
-        return solarBlock(getCurrentTheme().root);
+        JSONObject solar = solarBlock(getCurrentTheme().root);
+        if (bundledFallback != null) {
+            JSONObject bundled = solarBlock(bundledFallback.root);
+            if (bundled != null) {
+                try {
+                    if (solar == null) return bundled;
+                    JSONObject merged = new JSONObject(solar.toString());
+                    java.util.Iterator<String> keys = bundled.keys();
+                    while (keys.hasNext()) {
+                        String k = keys.next();
+                        if (!merged.has(k)) merged.put(k, bundled.opt(k));
+                    }
+                    return merged;
+                } catch (Exception ignored) {}
+            }
+        }
+        return solar;
     }
 
     private static Integer colorFromSolarThen(String solarKey, JSONObject legacy, String legacyKey) {
@@ -934,6 +1000,67 @@ public class ThemeManager {
         return null;
     }
 
+    /** Max decode side for solarConfig icons (matches y1_setting_icon_max at ~2x density). */
+    private static final int SOLAR_CONFIG_ICON_MAX_PX = 292;
+
+    static Bitmap decodeBitmapFileMaxSide(String path, int maxSide) {
+        if (path == null || maxSide <= 0) return null;
+        try {
+            BitmapFactory.Options bounds = new BitmapFactory.Options();
+            bounds.inJustDecodeBounds = true;
+            BitmapFactory.decodeFile(path, bounds);
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null;
+            int sample = 1;
+            while (Math.max(bounds.outWidth, bounds.outHeight) / sample > maxSide) sample *= 2;
+            BitmapFactory.Options opts = new BitmapFactory.Options();
+            opts.inSampleSize = sample;
+            return BitmapFactory.decodeFile(path, opts);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static Bitmap decodeBundledThemeAsset(String relativePath, int maxSide) {
+        if (assetContext == null || relativePath == null || relativePath.isEmpty()) return null;
+        String norm = relativePath.trim().replace('\\', '/');
+        while (norm.startsWith("./")) norm = norm.substring(2);
+        String[] candidates = {
+                BUNDLED_ASSET_DIR + "/" + norm,
+                BUNDLED_ASSET_DIR + "/" + new File(norm).getName()
+        };
+        AssetManager am = assetContext.getAssets();
+        for (String assetPath : candidates) {
+            Bitmap bmp = decodeAssetStreamMaxSide(am, assetPath, maxSide);
+            if (bmp != null) return bmp;
+        }
+        return null;
+    }
+
+    private static Bitmap decodeAssetStreamMaxSide(AssetManager am, String assetPath, int maxSide) {
+        InputStream in = null;
+        try {
+            BitmapFactory.Options bounds = new BitmapFactory.Options();
+            bounds.inJustDecodeBounds = true;
+            in = am.open(assetPath);
+            BitmapFactory.decodeStream(in, null, bounds);
+            in.close();
+            in = null;
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null;
+            int sample = 1;
+            while (Math.max(bounds.outWidth, bounds.outHeight) / sample > maxSide) sample *= 2;
+            BitmapFactory.Options opts = new BitmapFactory.Options();
+            opts.inSampleSize = sample;
+            in = am.open(assetPath);
+            return BitmapFactory.decodeStream(in, null, opts);
+        } catch (Exception e) {
+            return null;
+        } finally {
+            if (in != null) {
+                try { in.close(); } catch (Exception ignored) {}
+            }
+        }
+    }
+
     public static Bitmap getThemeBitmap(String relativePath) {
         if (relativePath == null || relativePath.isEmpty()) return null;
         ThemeEntry t = getCurrentTheme();
@@ -978,6 +1105,14 @@ public class ThemeManager {
         return "app" + suffix;
     }
 
+    /** True when the active theme's config.json sets {@code solarConfig.{key}} (not bundled merge). */
+    public static boolean hasThemeSolarConfigKey(String key) {
+        if (key == null || key.isEmpty()) return false;
+        JSONObject solar = solarBlock(getCurrentTheme().root);
+        if (solar == null) return false;
+        return !solar.optString(key, "").trim().isEmpty();
+    }
+
     /**
      * solarConfig icon by key — theme asset filename; null if unset.
      * Soulseek keys: {@code appSoulseek} (home + Settings → Soulseek row),
@@ -989,7 +1124,19 @@ public class ThemeManager {
         if (solar == null || key == null || key.isEmpty()) return null;
         String path = solar.optString(key, "").trim();
         if (path.isEmpty()) return null;
-        return getThemeBitmap(path);
+        ThemeEntry t = getCurrentTheme();
+        String cacheKey = t.folderPath + ":solar:" + key;
+        if (bitmapCache.containsKey(cacheKey)) return bitmapCache.get(cacheKey);
+        Bitmap bmp = null;
+        File f = resolveThemeAssetFile(t.folderPath, path);
+        if (f != null) {
+            bmp = decodeBitmapFileMaxSide(f.getAbsolutePath(), SOLAR_CONFIG_ICON_MAX_PX);
+        }
+        if (bmp == null) {
+            bmp = decodeBundledThemeAsset(path, SOLAR_CONFIG_ICON_MAX_PX);
+        }
+        if (bmp != null) bitmapCache.put(cacheKey, bmp);
+        return bmp;
     }
 
     /** solarConfig app{Name} — theme asset for Solar-only apps; null if unset */
