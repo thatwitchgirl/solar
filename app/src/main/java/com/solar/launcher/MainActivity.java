@@ -17459,7 +17459,7 @@ public class MainActivity extends Activity {
                 return handleMediaSkipKeyUp(keyCode, event);
             }
             if (isMediaPlayPauseKey(keyCode)) {
-                return true;
+                return handlePlayPauseKeyUp();
             }
         }
 
