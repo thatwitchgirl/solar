@@ -680,7 +680,11 @@ public final class ThemedContextMenu {
         if (viewport <= 0) return;
         if (queueMode && !isQueueMoveActive()) {
             applyQueueViewportPadding();
-            itemsScroll.scrollTo(0, queueScrollTargetY(index, count, viewport));
+            int scrollY = queueScrollTargetY(index, count, viewport);
+            itemsScroll.scrollTo(0, scrollY);
+            SolarAdbTest.queueScroll(focusIndex, count,
+                    itemsHost.getPaddingTop(), itemsScroll.getScrollY(), queueScrollMaxY(),
+                    queueScrollViewportSlot(index, count));
             return;
         }
         View row = queueMode ? findQueueRowByIndex(index) : null;

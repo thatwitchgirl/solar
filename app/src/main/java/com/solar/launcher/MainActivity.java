@@ -479,9 +479,6 @@ public class MainActivity extends Activity {
             centerMovePickHandled = true;
             performCenterMovePickUp();
             clickFeedback();
-            if (themedContextMenu != null && contextMenuInQueueTier && contextQueueMoveFrom >= 0) {
-                themedContextMenu.setQueueMoveFrom(contextQueueMoveFrom);
-            }
         }
     };
     private final Runnable keyboardDelRepeatRunnable = new Runnable() {
@@ -573,6 +570,10 @@ public class MainActivity extends Activity {
     private final java.util.ArrayList<File> playlistEditTracks = new java.util.ArrayList<File>();
     private int contextQueueMoveFrom = -1;
     private boolean contextQueueMoveDirty = false;
+    private int contextQueueMovePickIndex = -1;
+    private java.util.ArrayList<PlayQueue.QueueItem> contextQueueMoveSnapshot;
+    private int contextQueueMoveSnapshotIndex = -1;
+    private java.util.ArrayList<File> contextPlaylistMoveSnapshot;
     private final QueueMoveWheelFilter contextQueueMoveWheelFilter = new QueueMoveWheelFilter();
     private static final int QUEUE_SPEC_FULL_METADATA_MAX = 80;
     private java.util.HashMap<String, SongItem> songPathIndex;
@@ -1600,6 +1601,22 @@ public class MainActivity extends Activity {
             buildThemeSelectorUI(); // 테마 리스트 화면을 바로 띄워줍니다.
         } else {
             requestFirstHomeMenuFocus(); // 평소 앱을 켤 때는 원래대로 메인 메뉴 포커스
+        }
+
+        if (getIntent().getBooleanExtra("solar_adb_open_queue", false)) {
+            getIntent().removeExtra("solar_adb_open_queue");
+            new Handler().postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    if (!playback.hasAnyQueue()) {
+                        SolarAdbTest.fail("no_queue");
+                        return;
+                    }
+                    showThemedContextMenu();
+                    openPlaybackQueueInContextMenu();
+                    SolarAdbTest.pass("queue_opened");
+                }
+            }, 2000);
         }
 
         final String soulseekTest = getIntent().getStringExtra("soulseek_test");
@@ -7027,7 +7044,7 @@ public class MainActivity extends Activity {
         contextQueueEditPlaylist = false;
         playlistEditEntry = null;
         playlistEditTracks.clear();
-        contextQueueMoveFrom = -1;
+        clearContextQueueMoveSession();
         contextMenuVolumeReturnTier = null;
         contextMenuVolumeOnly = false;
         contextMenuOpenedAtMs = 0;
@@ -7207,6 +7224,9 @@ public class MainActivity extends Activity {
     }
 
     private void handleContextQuickBar(int index) {
+        if (contextMenuInQueueTier && contextQueueMoveFrom >= 0) {
+            cancelContextQueueMove(false);
+        }
         if (index != CONTEXT_QUICK_VOLUME_INDEX && index != CONTEXT_QUICK_BRIGHTNESS_INDEX) {
             dismissContextVolumeSliderUi();
         }
@@ -7397,7 +7417,7 @@ public class MainActivity extends Activity {
         contextQueueEditPlaylist = false;
         playlistEditEntry = null;
         playlistEditTracks.clear();
-        contextQueueMoveFrom = -1;
+        clearContextQueueMoveSession();
         populateContextMenu();
         boolean menuRows = currentScreenState == STATE_MENU || currentScreenState == STATE_SETTINGS;
         String[] labels = contextMenuLabels.toArray(new String[contextMenuLabels.size()]);
@@ -7484,7 +7504,7 @@ public class MainActivity extends Activity {
         contextQueueEditPlaylist = false;
         playlistEditEntry = null;
         playlistEditTracks.clear();
-        contextQueueMoveFrom = -1;
+        clearContextQueueMoveSession();
         cancelPendingContextWifiRefresh();
         contextMenuTierStack.removeLast();
         contextMenuInQueueTier = "queue".equals(contextMenuTopTier());
@@ -7907,7 +7927,7 @@ public class MainActivity extends Activity {
         PlayQueue q = playback.unifiedQueue();
         q.clampIndex();
         contextQueueFocusIndex = q.index();
-        contextQueueMoveFrom = -1;
+        clearContextQueueMoveSession();
         pushContextQueueTier();
     }
 
@@ -8131,14 +8151,63 @@ public class MainActivity extends Activity {
         persistPlaybackQueue();
     }
 
+    private void clearContextQueueMoveSession() {
+        contextQueueMoveFrom = -1;
+        contextQueueMovePickIndex = -1;
+        contextQueueMoveSnapshot = null;
+        contextQueueMoveSnapshotIndex = -1;
+        contextPlaylistMoveSnapshot = null;
+        contextQueueMoveWheelFilter.reset();
+    }
+
+    private void beginContextQueueMoveSession(int pickIndex) {
+        contextQueueMovePickIndex = pickIndex;
+        if (contextQueueEditPlaylist) {
+            contextPlaylistMoveSnapshot = new java.util.ArrayList<File>(playlistEditTracks);
+        } else {
+            contextQueueMoveSnapshot = new java.util.ArrayList<PlayQueue.QueueItem>(
+                    playback.unifiedQueue().items());
+            contextQueueMoveSnapshotIndex = playback.unifiedQueue().index();
+        }
+    }
+
+    /** Back cancels move and restores the pre-move queue order. */
+    private void cancelContextQueueMove(boolean focusList) {
+        if (contextQueueMoveFrom < 0 && (themedContextMenu == null || themedContextMenu.queueMoveFrom() < 0)) {
+            return;
+        }
+        // #region agent log
+        try {
+            org.json.JSONObject d = new org.json.JSONObject();
+            d.put("focusList", focusList);
+            d.put("moveFrom", contextQueueMoveFrom);
+            d.put("hadSnapshot", contextQueueMoveSnapshot != null || contextPlaylistMoveSnapshot != null);
+            DebugAgentLog.log(this, "MainActivity.cancelContextQueueMove", "cancel move", "H8", d);
+        } catch (Exception ignored) {}
+        // #endregion
+        contextQueueMoveDirty = false;
+        int focus = contextQueueMovePickIndex >= 0 ? contextQueueMovePickIndex : contextQueueFocusIndex;
+        if (contextQueueEditPlaylist && contextPlaylistMoveSnapshot != null) {
+            playlistEditTracks.clear();
+            playlistEditTracks.addAll(contextPlaylistMoveSnapshot);
+        } else if (contextQueueMoveSnapshot != null) {
+            playback.restoreQueueState(contextQueueMoveSnapshot, contextQueueMoveSnapshotIndex);
+        }
+        clearContextQueueMoveSession();
+        contextQueueFocusIndex = Math.max(0, focus);
+        if (themedContextMenu != null) {
+            rebuildContextQueueTier(focusList);
+        }
+    }
+
     private void confirmContextQueueMove() {
         if (themedContextMenu == null) return;
         int placed = contextQueueMoveFrom >= 0 ? contextQueueMoveFrom : themedContextMenu.focusIndex();
         flushContextQueueMoveIfDirty();
-        contextQueueMoveFrom = -1;
+        clearContextQueueMoveSession();
         contextQueueFocusIndex = placed;
-        contextQueueMoveWheelFilter.reset();
-        themedContextMenu.finishQueueMove(placed);
+        rebuildContextQueueTier(true);
+        themedContextMenu.flashQueueConfirm(placed);
         if (!contextQueueEditPlaylist) {
             themedContextMenu.refreshQueuePlayingState(buildContextQueueRowSpecs());
         }
@@ -8175,6 +8244,7 @@ public class MainActivity extends Activity {
         if (longPress) {
             if (canPickContextQueueMoveFrom(idx)) {
                 contextQueueMoveFrom = idx;
+                beginContextQueueMoveSession(idx);
                 contextQueueMoveWheelFilter.reset();
                 themedContextMenu.setQueueMoveFrom(idx);
             }
@@ -8505,7 +8575,14 @@ public class MainActivity extends Activity {
             return;
         }
         if (contextMenuInQueueTier && contextQueueMoveFrom >= 0) {
-            confirmContextQueueMove();
+            // #region agent log
+            try {
+                org.json.JSONObject d = new org.json.JSONObject();
+                d.put("action", "cancelMove");
+                DebugAgentLog.log(this, "MainActivity.handleContextMenuBackKeyUp", "back during move", "H8", d);
+            } catch (Exception ignored) {}
+            // #endregion
+            cancelContextQueueMove(true);
             return;
         }
         if (contextMenuInQueueTier) {
@@ -8533,7 +8610,7 @@ public class MainActivity extends Activity {
             return true;
         }
         if (contextMenuInQueueTier && contextQueueMoveFrom >= 0) {
-            confirmContextQueueMove();
+            cancelContextQueueMove(true);
             return true;
         }
         if (contextMenuInQueueTier) {
@@ -8589,12 +8666,16 @@ public class MainActivity extends Activity {
 
     /** Back from queue tier — pop queue and restore parent tier (usually root options). */
     private void returnFromContextQueueTier() {
-        flushContextQueueMoveIfDirty();
+        if (contextQueueMoveFrom >= 0) {
+            cancelContextQueueMove(false);
+        } else {
+            flushContextQueueMoveIfDirty();
+        }
         contextMenuInQueueTier = false;
         contextQueueEditPlaylist = false;
         playlistEditEntry = null;
         playlistEditTracks.clear();
-        contextQueueMoveFrom = -1;
+        clearContextQueueMoveSession();
         if ("queue".equals(contextMenuTopTier())) {
             contextMenuTierStack.removeLast();
         }
@@ -8666,6 +8747,16 @@ public class MainActivity extends Activity {
         if (event.getRepeatCount() == 0) {
             globalPpKeyDownAt = System.currentTimeMillis();
             globalPpLongClearHandled = false;
+            // #region agent log
+            try {
+                org.json.JSONObject d = new org.json.JSONObject();
+                d.put("contextMenu", themedContextMenu != null && themedContextMenu.isShowing());
+                d.put("queueTier", contextMenuInQueueTier);
+                d.put("queueMoveFrom", contextQueueMoveFrom);
+                DebugAgentLog.log(this, "MainActivity.handlePlayPauseKeyDown",
+                        "pp key down armed", "H6-H7", d);
+            } catch (Exception ignored) {}
+            // #endregion
             return true;
         }
         if (!globalPpLongClearHandled && playback.hasAnyQueue()
@@ -8679,8 +8770,20 @@ public class MainActivity extends Activity {
 
     private boolean handlePlayPauseKeyUp() {
         if (currentScreenState == STATE_WIFI_KEYBOARD) return false;
-        if (!globalPpLongClearHandled && globalPpKeyDownAt > 0
-                && System.currentTimeMillis() - globalPpKeyDownAt < QUEUE_CLEAR_HOLD_MS) {
+        boolean willToggle = !globalPpLongClearHandled && globalPpKeyDownAt > 0
+                && System.currentTimeMillis() - globalPpKeyDownAt < QUEUE_CLEAR_HOLD_MS;
+        // #region agent log
+        try {
+            org.json.JSONObject d = new org.json.JSONObject();
+            d.put("willToggle", willToggle);
+            d.put("contextMenu", themedContextMenu != null && themedContextMenu.isShowing());
+            d.put("queueTier", contextMenuInQueueTier);
+            d.put("queueMoveFrom", contextQueueMoveFrom);
+            DebugAgentLog.log(this, "MainActivity.handlePlayPauseKeyUp",
+                    "pp key up", "H6", d);
+        } catch (Exception ignored) {}
+        // #endregion
+        if (willToggle) {
             playOrPauseMusic();
             clickFeedback();
         }
@@ -16608,6 +16711,23 @@ public class MainActivity extends Activity {
 
     private void playOrPauseMusic() {
         try {
+            // #region agent log
+            boolean mpNull = mediaPlayer == null;
+            boolean musicEmpty = !playback.isPodcastActive() && playback.musicPlaylist().isEmpty();
+            boolean podEmpty = playback.isPodcastActive() && playback.podcastQueue().isEmpty();
+            boolean playing = !mpNull && mediaPlayer.isPlaying();
+            try {
+                org.json.JSONObject d = new org.json.JSONObject();
+                d.put("mpNull", mpNull);
+                d.put("musicEmpty", musicEmpty);
+                d.put("podEmpty", podEmpty);
+                d.put("wasPlaying", playing);
+                d.put("contextMenu", themedContextMenu != null && themedContextMenu.isShowing());
+                d.put("queueTier", contextMenuInQueueTier);
+                DebugAgentLog.log(this, "MainActivity.playOrPauseMusic",
+                        "playOrPauseMusic entry", "H7", d);
+            } catch (Exception ignored) {}
+            // #endregion
             if (mediaPlayer == null) return;
             if (!playback.isPodcastActive() && playback.musicPlaylist().isEmpty()) return;
             if (playback.isPodcastActive() && playback.podcastQueue().isEmpty()) return;
@@ -16974,7 +17094,8 @@ public class MainActivity extends Activity {
     private boolean handleThemedContextMenuKeyDown(int keyCode, KeyEvent event) {
         if (themedContextMenu == null || !themedContextMenu.isShowing()) return false;
         if (keyCode == 21 || keyCode == 22) {
-            if (contextMenuInQueueTier && contextQueueMoveFrom >= 0) {
+            if (contextMenuInQueueTier && contextQueueMoveFrom >= 0
+                    && themedContextMenu.focusZone() == ThemedContextMenu.FocusZone.TIER_CONTENT) {
                 int delta = mapWheelToMenuMove(keyCode);
                 if (delta != 0) {
                     if (!contextQueueMoveWheelFilter.accept()) {
