@@ -24,4 +24,24 @@ final class QueueBrowseWindow {
     static int windowEnd(int start, int count, int visibleRows, int buffer) {
         return Math.min(count, start + windowSize(visibleRows, buffer));
     }
+
+    /** Viewport row for browse scroll — edges anchor top/bottom; center lock when count > 4. */
+    static int browseViewportSlot(int index, int count, int viewportRows) {
+        if (count <= 0 || index < 0 || index >= count) return 0;
+        if (index == 0) return 0;
+        if (index == count - 1) return Math.max(0, viewportRows - 1);
+        if (count <= 4) return Math.min(index, Math.max(0, viewportRows - 1));
+        return 1;
+    }
+
+    /** Top padding when queue content is shorter than the fixed viewport. */
+    static int shortListTopPadding(int focusIdx, int count, int viewportPx, int slotH) {
+        if (slotH <= 0 || count <= 0 || viewportPx <= 0) return 0;
+        int contentH = count * slotH;
+        if (contentH >= viewportPx) return 0;
+        if (focusIdx <= 0) return 0;
+        if (focusIdx >= count - 1) return viewportPx - contentH;
+        if (count <= 4) return (viewportPx - contentH) / 2;
+        return 0;
+    }
 }

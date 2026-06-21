@@ -20,6 +20,8 @@ import android.widget.TextView;
 
 import com.solar.launcher.theme.ThemeManager;
 
+import org.json.JSONObject;
+
 /** Hold-Back context menu — quick bar, vertical list, slider/tier modes. */
 public final class ThemedContextMenu {
     private static final int TAG_LABEL = 0x70ca0001;
@@ -625,9 +627,28 @@ public final class ThemedContextMenu {
         return 1;
     }
 
-    /** Browse mode: keep the focused row in the center viewport line; edges clamp via scroll. */
+    /** Browse mode: anchor first/last; center-lock middle rows only when queue has more than 4 tracks. */
     private int queueBrowseViewportSlot(int index, int count) {
-        return 1;
+        return QueueBrowseWindow.browseViewportSlot(index, count, QUEUE_MOVE_VISIBLE_ROWS);
+    }
+
+    private void applyQueueViewportPadding() {
+        if (itemsHost == null || !queueMode || isQueueMoveActive()) return;
+        int topPad = QueueBrowseWindow.shortListTopPadding(
+                focusIndex, queueRows.length, queueViewportHeight(), queueRowSlotHeight());
+        if (itemsHost.getPaddingTop() != topPad) {
+            itemsHost.setPadding(0, topPad, 0, 0);
+        }
+    }
+
+    private int queueScrollMaxY() {
+        int slotH = queueRowSlotHeight();
+        if (slotH <= 0) return 0;
+        int viewport = itemsScroll != null && itemsScroll.getHeight() > 0
+                ? itemsScroll.getHeight() : queueViewportHeight();
+        int topPad = itemsHost != null ? itemsHost.getPaddingTop() : 0;
+        int contentH = topPad + queueRows.length * slotH;
+        return Math.max(0, contentH - viewport);
     }
 
     private int queueScrollViewportSlot(int index, int count) {
@@ -640,10 +661,11 @@ public final class ThemedContextMenu {
         if (index < 0 || count <= 0 || viewport <= 0) return 0;
         int slotH = queueRowSlotHeight();
         if (slotH <= 0) return 0;
+        applyQueueViewportPadding();
+        int topPad = itemsHost != null ? itemsHost.getPaddingTop() : 0;
         int slot = queueScrollViewportSlot(index, count);
-        int contentH = count * slotH;
-        int maxScroll = Math.max(0, contentH - viewport);
-        return Math.min(Math.max(0, index * slotH - slot * slotH), maxScroll);
+        int maxScroll = queueScrollMaxY();
+        return Math.min(Math.max(0, topPad + index * slotH - slot * slotH), maxScroll);
     }
 
     private void scrollQueueRowToViewportSlotNow(int index) {
@@ -657,6 +679,7 @@ public final class ThemedContextMenu {
         int viewport = itemsScroll.getHeight();
         if (viewport <= 0) return;
         if (queueMode && !isQueueMoveActive()) {
+            applyQueueViewportPadding();
             itemsScroll.scrollTo(0, queueScrollTargetY(index, count, viewport));
             return;
         }
@@ -666,7 +689,7 @@ public final class ThemedContextMenu {
         }
         if (row == null) return;
         int rowTop = row.getTop();
-        int maxScroll = Math.max(0, itemsHost.getHeight() - viewport);
+        int maxScroll = queueScrollMaxY();
         int slot = queueScrollViewportSlot(index, count);
         int slotH = queueRowSlotHeight();
         int target = rowTop - slot * slotH;
@@ -722,6 +745,7 @@ public final class ThemedContextMenu {
         if (itemsHost == null) return;
         queueMoveRibbonActive = true;
         queueMoveRibbonAnimating = false;
+        itemsHost.setPadding(0, 0, 0, 0);
         itemsHost.removeAllViews();
         float density = activity.getResources().getDisplayMetrics().density;
         int rowH = queueRowHeightPx > 0 ? queueRowHeightPx : rowHeightPx;
@@ -752,6 +776,17 @@ public final class ThemedContextMenu {
 
     private void bindQueueMoveRibbon(int wheelDelta) {
         if (!queueMode || itemsHost == null || !isQueueMoveActive()) return;
+        // #region agent log
+        try {
+            JSONObject d = new JSONObject();
+            d.put("wheelDelta", wheelDelta);
+            d.put("ribbonActive", queueMoveRibbonActive);
+            d.put("ribbonAnimating", queueMoveRibbonAnimating);
+            d.put("moveFrom", queueMoveFrom);
+            DebugAgentLog.log(activity, "ThemedContextMenu.bindQueueMoveRibbon",
+                    "bindQueueMoveRibbon entry", "H1-H2", d);
+        } catch (Exception ignored) {}
+        // #endregion
         if (!queueMoveRibbonActive) {
             enterQueueMoveRibbon();
             animateRibbonEnter(queueMoveFrom);
@@ -766,7 +801,7 @@ public final class ThemedContextMenu {
         };
         if (wheelDelta != 0 && !queueMoveRibbonAnimating) {
             animateRibbonStrip(wheelDelta, bind);
-        } else {
+        } else if (!queueMoveRibbonAnimating) {
             bind.run();
         }
     }
@@ -793,6 +828,19 @@ public final class ThemedContextMenu {
         int browseSlot = queueViewportSlotForIndex(moveIdx, queueRows.length);
         int slotH = queueRowSlotHeight();
         float startTy = (browseSlot - QueueMoveWindow.RIBBON_CENTER) * (float) slotH;
+        // #region agent log
+        try {
+            JSONObject d = new JSONObject();
+            d.put("moveIdx", moveIdx);
+            d.put("count", queueRows.length);
+            d.put("browseSlot", browseSlot);
+            d.put("slotH", slotH);
+            d.put("startTy", startTy);
+            d.put("path", Math.abs(startTy) < 0.5f ? "fade" : "slide");
+            DebugAgentLog.log(activity, "ThemedContextMenu.animateRibbonEnter",
+                    "ribbon enter animation", "H3-H5", d);
+        } catch (Exception ignored) {}
+        // #endregion
         if (Math.abs(startTy) < 0.5f) {
             animateRibbonEnterFade();
             return;
@@ -1164,6 +1212,10 @@ public final class ThemedContextMenu {
         optionsListVisible = true;
         ensureContextTitleBar(quickItems.length > 0);
         queueRows = rows != null ? rows : new QueueRowSpec[0];
+        if (moveFrom < 0) {
+            exitQueueMoveRibbon();
+            queueBrowseWindowStart = 0;
+        }
         queueMoveFrom = moveFrom;
         labels = new String[queueRows.length];
         for (int i = 0; i < queueRows.length; i++) labels[i] = queueRows[i].title;
@@ -1302,6 +1354,17 @@ public final class ThemedContextMenu {
 
     public void setQueueMoveFrom(int moveFrom) {
         int prevMove = queueMoveFrom;
+        // #region agent log
+        try {
+            JSONObject d = new JSONObject();
+            d.put("prevMove", prevMove);
+            d.put("moveFrom", moveFrom);
+            d.put("ribbonActive", queueMoveRibbonActive);
+            d.put("ribbonAnimating", queueMoveRibbonAnimating);
+            DebugAgentLog.log(activity, "ThemedContextMenu.setQueueMoveFrom",
+                    "setQueueMoveFrom", "H1", d);
+        } catch (Exception ignored) {}
+        // #endregion
         queueMoveFrom = moveFrom;
         if (moveFrom >= 0) {
             focusIndex = moveFrom;
@@ -1319,6 +1382,7 @@ public final class ThemedContextMenu {
         } else if (prevMove >= 0 && moveFrom < 0) {
             clearQueueConfirm();
             exitQueueMoveRibbon();
+            queueBrowseWindowStart = 0;
             rebuildQueueList();
             updateListHeightToContent();
             scrollQueueViewportForIndex(focusIndex);
@@ -1327,6 +1391,11 @@ public final class ThemedContextMenu {
 
     /** Drop move — restore full list, keep focus, flash checkmark on placed row. */
     public void finishQueueMove(int placedIndex) {
+        flashQueueConfirm(placedIndex);
+    }
+
+    /** Confirm flash after move — list should already be rebuilt in browse mode. */
+    public void flashQueueConfirm(int placedIndex) {
         if (!queueMode || itemsHost == null) {
             queueMoveFrom = -1;
             return;
@@ -1335,10 +1404,6 @@ public final class ThemedContextMenu {
         queueMoveFrom = -1;
         focusIndex = Math.max(0, Math.min(placedIndex, Math.max(0, queueRows.length - 1)));
         focusZone = FocusZone.TIER_CONTENT;
-        exitQueueMoveRibbon();
-        rebuildQueueList();
-        updateListHeightToContent();
-        scrollQueueViewportForIndex(focusIndex);
         queueConfirmAtIndex = focusIndex;
         refreshAll();
         animateQueueConfirmCheckmark(focusIndex);
@@ -1639,6 +1704,9 @@ public final class ThemedContextMenu {
         if (newStart != queueBrowseWindowStart) {
             slideQueueBrowseWindow(newStart);
         }
+        if (findQueueRowByIndex(focusIndex) == null) {
+            rebuildQueueBrowseWindow();
+        }
     }
 
     private void slideQueueBrowseWindow(int newStart) {
@@ -1725,6 +1793,9 @@ public final class ThemedContextMenu {
             }
         }
         queueBrowseWindowStart = newStart;
+        for (int i = queueBrowseWindowStart; i < queueBrowseWindowEnd(); i++) {
+            refreshQueueRowAt(i);
+        }
     }
 
     private void rebuildQueueBrowseWindow() {
@@ -2379,6 +2450,10 @@ public final class ThemedContextMenu {
             focusIndex = next;
             if (queueMode) {
                 ensureQueueBrowseWindowForFocus();
+                if (findQueueRowByIndex(focusIndex) == null) {
+                    rebuildQueueBrowseWindow();
+                }
+                applyQueueViewportPadding();
                 if (prev >= 0 && prev != focusIndex) refreshQueueRowAt(prev);
                 refreshQueueRowAt(focusIndex);
             } else {
@@ -2801,7 +2876,9 @@ public final class ThemedContextMenu {
 
     private void refreshQueueRows() {
         if (isQueueMoveActive() && queueMoveRibbonActive) {
-            bindQueueMoveRibbon(0);
+            if (!queueMoveRibbonAnimating) {
+                bindQueueMoveRibbon(0);
+            }
             return;
         }
         if (useQueueBrowseVirtual()) {
