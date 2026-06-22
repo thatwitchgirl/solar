@@ -16,7 +16,7 @@ public final class HomeMenuConfig {
     public static final String PREF_MORE_ENABLED = "home_more_enabled";
     public static final String PREF_HOME_SCHEMA = "home_menu_schema";
 
-    private static final int HOME_SCHEMA = 2;
+    private static final int HOME_SCHEMA = 3;
 
     public static final String ID_NOW_PLAYING = "now_playing";
     public static final String ID_MUSIC = "music";
@@ -37,15 +37,27 @@ public final class HomeMenuConfig {
 
     private static final String LEGACY_GET_THEMES = "get_themes";
 
-    /** Stock Y1 home order for equivalent items, then Solar-only shortcuts. */
+    /** Stock Y1 row order (theme homePageConfig keys align to these slots). */
+    public static final List<String> STOCK_Y1_HOME_ORDER = Arrays.asList(
+            ID_NOW_PLAYING, ID_MUSIC, ID_VIDEOS, ID_AUDIOBOOKS, ID_PHOTOS, ID_FM, ID_BLUETOOTH,
+            ID_SETTINGS);
+
+    /** Solar-only shortcuts after stock rows, in display order. */
+    private static final List<String> SOLAR_HOME_EXTRAS = Arrays.asList(
+            ID_PC_UPLOAD, ID_PODCASTS, ID_SOULSEEK, ID_THEMES, ID_APPS);
+
+    /** Default enabled home shortcuts (coming-soon opt-in items omitted). */
     private static final String DEFAULT_ORDER = String.join(",",
             ID_NOW_PLAYING, ID_MUSIC, ID_FM, ID_BLUETOOTH, ID_SETTINGS,
             ID_PC_UPLOAD, ID_PODCASTS, ID_SOULSEEK);
 
     /** Fixed home / More menu order — not user-reorderable. */
-    private static final List<String> FIXED_HOME_ORDER = Arrays.asList(
-            ID_NOW_PLAYING, ID_MUSIC, ID_VIDEOS, ID_AUDIOBOOKS, ID_PHOTOS, ID_FM, ID_BLUETOOTH,
-            ID_SETTINGS, ID_PC_UPLOAD, ID_PODCASTS, ID_SOULSEEK, ID_THEMES, ID_APPS);
+    private static final List<String> FIXED_HOME_ORDER;
+    static {
+        List<String> order = new ArrayList<String>(STOCK_Y1_HOME_ORDER);
+        order.addAll(SOLAR_HOME_EXTRAS);
+        FIXED_HOME_ORDER = java.util.Collections.unmodifiableList(order);
+    }
 
     /** Editor: all catalog shortcuts in fixed order (ignores live connectivity). */
     public static List<Entry> loadEditorCatalogEntries() {
@@ -88,14 +100,24 @@ public final class HomeMenuConfig {
         return id != null && COMING_SOON.contains(migrateId(id));
     }
 
-    /** One-time: coming-soon shortcuts default off for existing installs. */
+    /** One-time migrations for home shortcut prefs. */
     public static void migrateHomePrefsIfNeeded(SharedPreferences prefs) {
         if (prefs == null) return;
-        if (prefs.getInt(PREF_HOME_SCHEMA, 1) >= HOME_SCHEMA) return;
-        for (String id : COMING_SOON) {
-            setShortcutEnabled(prefs, id, false);
+        int schema = prefs.getInt(PREF_HOME_SCHEMA, 1);
+        if (schema < 2) {
+            for (String id : COMING_SOON) {
+                setShortcutEnabled(prefs, id, false);
+            }
+            schema = 2;
         }
-        prefs.edit().putInt(PREF_HOME_SCHEMA, HOME_SCHEMA).commit();
+        if (schema < HOME_SCHEMA) {
+            saveOrder(prefs, loadHomeOrderIds(prefs));
+            saveMoreOrder(prefs, loadMoreOrderIds(prefs));
+            schema = HOME_SCHEMA;
+        }
+        if (prefs.getInt(PREF_HOME_SCHEMA, 1) < schema) {
+            prefs.edit().putInt(PREF_HOME_SCHEMA, schema).commit();
+        }
     }
 
     public static final class Entry {

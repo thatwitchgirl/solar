@@ -21,6 +21,20 @@ public class HomeMenuConfigTest {
     }
 
     @Test
+    public void stockHomeOrder_matchesY1Layout() {
+        List<String> stock = HomeMenuConfig.STOCK_Y1_HOME_ORDER;
+        if (stock.size() != 8) throw new AssertionError("stock size " + stock.size());
+        if (!HomeMenuConfig.ID_NOW_PLAYING.equals(stock.get(0))) throw new AssertionError("now playing");
+        if (!HomeMenuConfig.ID_MUSIC.equals(stock.get(1))) throw new AssertionError("music");
+        if (!HomeMenuConfig.ID_VIDEOS.equals(stock.get(2))) throw new AssertionError("videos");
+        if (!HomeMenuConfig.ID_AUDIOBOOKS.equals(stock.get(3))) throw new AssertionError("audiobooks");
+        if (!HomeMenuConfig.ID_PHOTOS.equals(stock.get(4))) throw new AssertionError("photos");
+        if (!HomeMenuConfig.ID_FM.equals(stock.get(5))) throw new AssertionError("fm");
+        if (!HomeMenuConfig.ID_BLUETOOTH.equals(stock.get(6))) throw new AssertionError("bluetooth");
+        if (!HomeMenuConfig.ID_SETTINGS.equals(stock.get(7))) throw new AssertionError("settings");
+    }
+
+    @Test
     public void defaultOrder_matchesY1StockLayout() {
         List<HomeMenuConfig.Entry> visible = HomeMenuConfig.loadVisible(prefs);
         if (visible.size() != 8) throw new AssertionError("default size " + visible.size());
@@ -38,6 +52,23 @@ public class HomeMenuConfigTest {
         }
         if (!HomeMenuConfig.ID_SETTINGS.equals(visible.get(4).id)) {
             throw new AssertionError("settings position");
+        }
+    }
+
+    @Test
+    public void migrateHomePrefs_renormalizesStockOrder() {
+        HomeMenuConfig.saveOrder(prefs, Arrays.asList(
+                HomeMenuConfig.ID_SOULSEEK, HomeMenuConfig.ID_FM, HomeMenuConfig.ID_MUSIC));
+        HomeMenuConfig.migrateHomePrefsIfNeeded(prefs);
+        List<String> home = HomeMenuConfig.loadHomeOrderIds(prefs);
+        if (!HomeMenuConfig.ID_MUSIC.equals(home.get(0))) {
+            throw new AssertionError("music should lead stock block");
+        }
+        if (!HomeMenuConfig.ID_FM.equals(home.get(1))) {
+            throw new AssertionError("fm should follow music when coming-soon off");
+        }
+        if (!HomeMenuConfig.ID_SOULSEEK.equals(home.get(home.size() - 1))) {
+            throw new AssertionError("solar extras trail");
         }
     }
 

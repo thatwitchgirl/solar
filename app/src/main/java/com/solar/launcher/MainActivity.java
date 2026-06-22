@@ -4907,15 +4907,7 @@ public class MainActivity extends Activity {
     private void handleCenterShortClick() {
         if (themedContextMenu != null && themedContextMenu.isShowing()) return;
         if (System.currentTimeMillis() < suppressListClickUntil) return;
-        if (currentScreenState == STATE_PLAYER) {
-            if (playerScrubCursorActive) {
-                commitPlayerScrubCursor();
-            } else {
-                enterPlayerScrubCursorMode();
-            }
-            clickFeedback();
-        }
-        else if (currentScreenState == STATE_WIFI_KEYBOARD) {
+        if (currentScreenState == STATE_WIFI_KEYBOARD) {
             handleKeyboardInput();
         } else if (currentScreenState == STATE_MENU) {
             clickFeedback();
@@ -7143,6 +7135,33 @@ public class MainActivity extends Activity {
         if (heldMs >= CENTER_SLEEP_HOLD_MS && !suppressCenterSleepForReorder(heldMs)) {
             performScreenSleep(false);
             return true;
+        }
+        if (currentScreenState == STATE_PLAYER) {
+            if (isMediaPlayPauseKey(event.getKeyCode())) {
+                boolean wasScrubbing = playerScrubCursorActive;
+                if (wasScrubbing) cancelPlayerScrubCursor();
+                playOrPauseMusic();
+                clickFeedback();
+                // #region agent log
+                try {
+                    org.json.JSONObject d = new org.json.JSONObject();
+                    d.put("keyCode", event.getKeyCode());
+                    d.put("scrubWasActive", wasScrubbing);
+                    DebugAgentLog.log(this, "MainActivity.handleCenterKeyUp",
+                            "player play/pause", "H-PP", d);
+                } catch (Exception ignored) {}
+                // #endregion
+                return true;
+            }
+            if (isCenterKey(event.getKeyCode())) {
+                if (playerScrubCursorActive) {
+                    commitPlayerScrubCursor();
+                } else {
+                    enterPlayerScrubCursorMode();
+                }
+                clickFeedback();
+                return true;
+            }
         }
         try {
             handleCenterShortClick();
