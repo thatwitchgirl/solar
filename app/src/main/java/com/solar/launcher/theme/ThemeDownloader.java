@@ -235,6 +235,20 @@ public class ThemeDownloader {
                 o.put("folder", e.folder);
                 o.put("author", e.author);
                 if (e.screenshot != null) o.put("screenshot", e.screenshot);
+                if (e.hasVariants()) {
+                    JSONArray variantFolders = new JSONArray();
+                    for (ThemeVariant v : e.variants) {
+                        if (v.gallerySubpath.isEmpty()) {
+                            if (!v.label.isEmpty()) o.put("defaultVariantLabel", v.label);
+                        } else {
+                            String sub = v.gallerySubpath;
+                            if (sub.startsWith("Variants/")) sub = sub.substring("Variants/".length());
+                            if (sub.contains("/")) sub = sub.substring(0, sub.indexOf('/'));
+                            variantFolders.put(sub);
+                        }
+                    }
+                    if (variantFolders.length() > 0) o.put("variantFolders", variantFolders);
+                }
                 arr.put(o);
             }
             JSONObject root = new JSONObject().put("themes", arr);
@@ -352,6 +366,14 @@ public class ThemeDownloader {
 
     /** Install folder name for gallery entry + variant (orphan rows use parent theme name). */
     public static String resolvedInstallFolder(CatalogEntry entry, ThemeVariant variant) {
+        if (entry == null) return "";
+        if (variant == null) {
+            if (entry.folder.contains("/Variants/") && !entry.hasVariants()) {
+                ThemeVariant orphan = orphanVariantFromGalleryFolder(entry.folder, entry.name);
+                return orphan.installFolder(parentThemeNameFromGalleryFolder(entry.folder));
+            }
+            return entry.folder;
+        }
         if (entry.folder.contains("/Variants/") && variant.gallerySubpath.isEmpty()) {
             return installFolderName(parentThemeNameFromGalleryFolder(entry.folder), variant.folderSlug);
         }
@@ -1418,6 +1440,10 @@ public class ThemeDownloader {
                 parseCatalog("{\"themes\":[{\"name\":\"Orphan\",\"folder\":\"Parent/Variants/Robin\"}]}").get(0),
                 enrichedOrphan))) {
             throw new AssertionError("resolvedInstallFolder orphan");
+        }
+        if (!"Simple".equals(resolvedInstallFolder(
+                parseCatalog("{\"themes\":[{\"name\":\"Simple\",\"folder\":\"Simple\"}]}").get(0), null))) {
+            throw new AssertionError("resolvedInstallFolder base");
         }
 
         File tmp = File.createTempFile("solar-theme-", "");

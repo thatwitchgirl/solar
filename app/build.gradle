@@ -52,6 +52,7 @@ dependencies {
     androidTestImplementation libs.ext.junit
     androidTestImplementation 'androidx.test:runner:1.5.2'
     androidTestImplementation 'androidx.test:core:1.5.0'
+    androidTestImplementation 'androidx.test:rules:1.5.0'
 }
 // 파일 맨 밑에 추가: 최신 라이브러리 버전 체크 안전장치를 강제로 끄는 코드
 tasks.withType(com.android.build.gradle.internal.tasks.CheckAarMetadataTask).configureEach {

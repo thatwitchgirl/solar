@@ -62,6 +62,7 @@ import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
+import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 import java.io.File;
@@ -158,11 +159,10 @@ public class MainActivity extends Activity {
     private String virtualQueryType = "";
     private String virtualQueryValue = "";
     private String virtualQueryArtist = "";
-    private static final int LIB_SORT_TITLE = 0;
-    private static final int LIB_SORT_ARTIST = 1;
-    private static final int LIB_SORT_ALBUM = 2;
-    private static final int LIB_SORT_DATE = 3;
-    private int librarySortMode = LIB_SORT_TITLE;
+    private String artistOwnAlbumCacheKey = "";
+    private boolean artistOwnAlbumCacheValue;
+    private LibraryBrowsePrefs libraryBrowsePrefs;
+    private int libraryBrowseSettingsMenuFocusIndex;
     private int appsListGen = 0;
     private long suppressListClickUntil = 0;
     private List<PlaylistManager.Entry> libraryPlaylists = new ArrayList<PlaylistManager.Entry>();
@@ -176,20 +176,24 @@ public class MainActivity extends Activity {
         String artist;
         String album;
         String genre;
+        String albumArtist;
 
         public SongItem(File f, String t, String a, String al, String g) {
+            this(f, t, a, al, g, "");
+        }
+
+        public SongItem(File f, String t, String a, String al, String g, String aa) {
             file = f;
             title = t;
             artist = a;
             album = al;
             genre = g != null && g.trim().length() > 0 ? g.trim() : "Unknown Genre";
+            albumArtist = aa != null ? aa.trim() : "";
         }
     }
     // 💡 [초고속 엔진] 수천 곡을 버티기 위한 재활용 리스트뷰와 기존 스크롤뷰
     private android.widget.ListView listVirtualSongs;
-    private android.widget.ListView listMusicQueue;
     private View settingsScrollView;
-    private MusicQueueListAdapter musicQueueListAdapter;
     private android.widget.ListView listThemes;
     private ThemeUnifiedListAdapter themeUnifiedListAdapter;
     private final List<ThemeBrowser.Row> themeBrowserRows = new ArrayList<ThemeBrowser.Row>();
@@ -265,11 +269,15 @@ public class MainActivity extends Activity {
     private int homeScreenEditorMenuFocusIndex = 11;
     private int homeScreenEditorFocusIndex = 1;
     private int homeScreenOrderFocusIndex = 1;
-    private String homeScreenMoveModeId = null;
-    private String homeMoreMoveModeId = null;
-    private int musicQueueEditorFocus = 1;
-    private int musicQueueMoveFrom = -1;
-    private int musicQueueReturnScreen = STATE_PLAYER;
+    private int playlistMoveFrom = -1;
+    private int playlistMovePickIndex = -1;
+    private java.util.List<File> playlistMoveSnapshot = null;
+    private boolean playlistMoveDirty = false;
+    private final QueueMoveWheelFilter playlistMoveWheelFilter = new QueueMoveWheelFilter();
+    private FrameLayout playlistMoveOverlay = null;
+    private ScrollView playlistMoveScroll = null;
+    private MoveStripController playlistMoveStrip = null;
+    private PlaylistManager.Entry playlistViewEntry = null;
     private static final int PODCAST_UI_SEARCH = 0;
     private static final int PODCAST_UI_SHOWS = 1;
     private static final int PODCAST_UI_EPISODES = 2;
@@ -280,6 +288,9 @@ public class MainActivity extends Activity {
     private static final String PREF_PODCAST_STOREFRONT = "podcast_storefront";
     private static final int PODCAST_UI_RESTORE_NONE = -1;
     private int playerReturnScreen = STATE_MENU;
+    /** Screen to return to on Back from Wi‑Fi, PC upload, Bluetooth, brightness, storage, etc. */
+    private int screenBackReturnTo = STATE_MENU;
+    private boolean settingsAboutFullWidth;
     private int playerReturnPodcastUiMode = PODCAST_UI_SEARCH;
     private int soulseekReturnPodcastUiMode = PODCAST_UI_SEARCH;
     /** When >= 0, next {@link #changeScreen} to podcasts restores this sub-screen instead of search root. */
@@ -350,6 +361,7 @@ public class MainActivity extends Activity {
     private Button soulseekFocusedResultRow = null;
     private long soulseekLastProgressUiMs = 0;
     private int soulseekPendingAction = 0;
+    private int soulseekActiveDownloadPercent = 0;
     private SoulseekClient.Result soulseekActiveDownload = null;
     private Button soulseekDownloadStatusRow = null;
     private TextView soulseekDownloadDetailText = null;
@@ -373,7 +385,7 @@ public class MainActivity extends Activity {
     private volatile boolean reachGrowingReprepareInFlight = false;
     private int reachGrowingSeekMs = 0;
     private File reachQueuePartialFile = null;
-    private static final long REACH_GROWING_EXTEND_MS = 1800;
+    private static final long REACH_GROWING_EXTEND_MS = 3500;
     private static final long REACH_GROWING_MIN_GROW_BYTES = 4096;
     private static final long SOULSEEK_ACTION_REFRESH_MS = 7000;
     private final List<String> soulseekActionSuggestionPool = new ArrayList<String>();
@@ -425,7 +437,8 @@ public class MainActivity extends Activity {
     private long podcastDownloadStallCheckBytes = 0;
     private boolean podcastRecoveryInFlight = false;
     private boolean soulseekAutoDownloadPending = false;
-    private boolean soulseekHideFlac = true;
+    private boolean soulseekHideHighBitrate = true;
+    private boolean soulseekSharingEnabled = true;
     private int soulseekListenPort = 0;
     private int keyboardPurpose = KEYBOARD_WIFI;
     private int keyboardReturnState = STATE_WIFI;
@@ -437,6 +450,7 @@ public class MainActivity extends Activity {
     private String pendingSoulseekUser = "";
     private int y1RowWidthPx;
     private int y1RowHeightPx;
+    private int y1LibraryRowHeightPx;
     private int listRowWidthPx;
     private int y1ThemeCoverHeightPx;
     private int y1BatteryIconHeightPx;
@@ -451,6 +465,8 @@ public class MainActivity extends Activity {
     private String browserStatusTitle;
     private String settingsSubScreenKey = null;
     private String settingsSubScreenExtra = null;
+    /** Blocks overlay dismiss / screen churn while replacing /system/app APK. */
+    private volatile boolean otaSystemReplaceInProgress = false;
     private List<ThemeDownloader.CatalogEntry> themeGalleryCatalog;
     private int themeGalleryPreviewGen = 0;
     private int unifiedThemesUiGen = 0;
@@ -462,20 +478,90 @@ public class MainActivity extends Activity {
     private Button btnThemeInterstitialDownload, btnThemeInterstitialBack;
     private FrameLayout settingsMenuHost;
     private View settingsPreviewPane;
-    private boolean centerLongPressHandled = false;
+    private boolean centerMovePickHandled = false;
+    private boolean centerQuickBarTapHandled = false;
     private long centerKeyDownTime = 0;
     private static final long CENTER_SLEEP_HOLD_MS = 300;
-    private final Runnable centerSleepRunnable = new Runnable() {
+    /** Hold center this long (while pressed) before pick-up move mode — must exceed a normal tap. */
+    private static final long CENTER_MOVE_HOLD_MS = 450;
+    private final Runnable centerMovePickRunnable = new Runnable() {
         @Override
         public void run() {
-            if (centerLongPressHandled || centerKeyDownTime == 0) return;
-            centerLongPressHandled = true;
-            performScreenSleep(false);
+            if (centerKeyDownTime == 0 || centerMovePickHandled) return;
+            if (!canScheduleCenterMovePick()) return;
+            centerMovePickHandled = true;
+            performCenterMovePickUp();
+            // #region agent log
+            try {
+                org.json.JSONObject d = new org.json.JSONObject();
+                d.put("playlist", isVirtualPlaylistView());
+                d.put("playlistCtx", isPlaylistBrowseContext());
+                d.put("playlistMove", isPlaylistMoveActive());
+                d.put("queue", contextMenuInQueueTier);
+                DebugAgentLog.log(MainActivity.this, "MainActivity.centerMovePickRunnable",
+                        "move pick fired", "H3", d);
+            } catch (Exception ignored) {}
+            // #endregion
+            clickFeedback();
         }
     };
+    private final Runnable keyboardDelRepeatRunnable = new Runnable() {
+        @Override
+        public void run() {
+            if (currentScreenState != STATE_WIFI_KEYBOARD) return;
+            if (!isKeyboardDelSelected() && !keyboardPrevDelRepeatActive) return;
+            handleKeyboardMediaDel(false);
+            clockHandler.postDelayed(this, 120);
+        }
+    };
+    private final Runnable keyboardPrevDelRepeatRunnable = new Runnable() {
+        @Override
+        public void run() {
+            if (currentScreenState != STATE_WIFI_KEYBOARD || !keyboardPrevDelRepeatActive) return;
+            handleKeyboardMediaDel(false);
+            clockHandler.postDelayed(this, 120);
+        }
+    };
+    private boolean keyboardPrevDelRepeatActive = false;
     private long backKeyDownTime = 0;
     private boolean backLongPressHandled = false;
+    private boolean backKeyHeld = false;
+    private long contextMenuOpenedAtMs = 0;
+    private static final long QUEUE_CLEAR_HOLD_MS = 2000L;
+    private static final int STARTUP_MOUNT_RETRY_MAX = 3;
+    private static final long STARTUP_MOUNT_RETRY_INTERVAL_MS = 3333L;
+    private long globalPpKeyDownAt = 0;
+    private boolean globalPpLongClearHandled = false;
+    private int startupMountRetryAttempt = 0;
+    private final Handler startupMountHandler = new Handler();
+    private final Runnable startupMountRetryRunnable = new Runnable() {
+        @Override
+        public void run() {
+            retryRestorePlaybackQueueAfterMount();
+            startupMountRetryAttempt++;
+            if (startupMountRetryAttempt < STARTUP_MOUNT_RETRY_MAX
+                    && PlayQueueStore.countMissingPaths(getApplicationContext()) > 0) {
+                startupMountHandler.postDelayed(this, STARTUP_MOUNT_RETRY_INTERVAL_MS);
+            }
+        }
+    };
     private static final long BACK_LONG_PRESS_MS = 600;
+    private final Runnable backLongPressRunnable = new Runnable() {
+        @Override
+        public void run() {
+            if (!backKeyHeld) return;
+            backLongPressHandled = true;
+            if (themedContextMenu != null && themedContextMenu.isShowing()) {
+                if (contextMenuVolumeOnly) {
+                    expandVolumeOverlayToFullContext();
+                } else {
+                    dismissThemedContextMenu();
+                }
+                return;
+            }
+            showThemedContextMenu();
+        }
+    };
     private static final long MEDIA_SKIP_LONG_PRESS_MS = 500;
     private static final int MEDIA_SCRUB_STEP_MS = 5000;
     private long mediaPrevKeyDownTime = 0;
@@ -492,6 +578,76 @@ public class MainActivity extends Activity {
     private final java.util.ArrayList<String> contextMenuStateTexts = new java.util.ArrayList<String>();
     private final java.util.ArrayList<Boolean> contextMenuHeaders = new java.util.ArrayList<Boolean>();
     private final java.util.ArrayList<Runnable> contextMenuActions = new java.util.ArrayList<Runnable>();
+    private final java.util.ArrayDeque<String> contextMenuTierStack = new java.util.ArrayDeque<String>();
+    private boolean contextMenuInVolumeSlider = false;
+    private boolean contextMenuVolumeOnly = false;
+    private static final int VOLUME_CONTEXT_DISMISS_MS = 2000;
+    private static final int CONTEXT_QUICK_VOLUME_INDEX = 6;
+    private static final int CONTEXT_QUICK_BRIGHTNESS_INDEX = 5;
+    private static final int CONTEXT_QUICK_QUEUE_INDEX = 4;
+    private static final int CONTEXT_QUICK_POWER_INDEX = 3;
+    private static final String CONTEXT_NAV_ROOT = "root";
+    private String contextMenuVolumeReturnTier;
+    private boolean contextMenuInQueueTier = false;
+    private boolean contextMenuQuickOnly = false;
+    private boolean contextMenuNavPending = false;
+    private boolean contextQueueEditPlaylist = false;
+    private PlaylistManager.Entry playlistEditEntry = null;
+    private final java.util.ArrayList<File> playlistEditTracks = new java.util.ArrayList<File>();
+    private int contextQueueMoveFrom = -1;
+    private boolean contextQueueMoveDirty = false;
+    private int contextQueueMovePickIndex = -1;
+    private java.util.ArrayList<PlayQueue.QueueItem> contextQueueMoveSnapshot;
+    private int contextQueueMoveSnapshotIndex = -1;
+    private java.util.ArrayList<File> contextPlaylistMoveSnapshot;
+    private final QueueMoveWheelFilter contextQueueMoveWheelFilter = new QueueMoveWheelFilter();
+    private static final int QUEUE_SPEC_FULL_METADATA_MAX = 80;
+    private java.util.HashMap<String, SongItem> songPathIndex;
+    private int contextQueueFocusIndex = 0;
+    private boolean nowPlayingHomeMenuVisible = false;
+
+    private static final long NETWORK_RESCAN_INTERVAL_MS = 10_000L;
+    private static final long WIFI_CONTEXT_REFRESH_DEBOUNCE_MS = 2000L;
+    private final Handler wifiContextRefreshHandler = new Handler();
+    private boolean wifiContextRefreshPendingResetFocus = false;
+    private final Runnable wifiContextRefreshRunnable = new Runnable() {
+        @Override
+        public void run() {
+            if (!isContextTierActive("wifi")) {
+                wifiContextRefreshPendingResetFocus = false;
+                return;
+            }
+            refreshContextWifiTierImmediate(wifiContextRefreshPendingResetFocus);
+            wifiContextRefreshPendingResetFocus = false;
+        }
+    };
+    private final Handler networkRescanHandler = new Handler();
+    private final Runnable networkRescanTick = new Runnable() {
+        @Override
+        public void run() {
+            if (!isNetworkRescanActive()) return;
+            if (themedContextMenu != null && themedContextMenu.isShowing()
+                    && isContextTierActive("wifi")) {
+                try {
+                    WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+                    if (wm != null && wm.isWifiEnabled()) wm.startScan();
+                } catch (Exception ignored) {}
+            } else if (currentScreenState == STATE_WIFI) {
+                try {
+                    WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+                    if (wm != null && wm.isWifiEnabled()) wm.startScan();
+                } catch (Exception ignored) {}
+            }
+            if (themedContextMenu != null && themedContextMenu.isShowing()
+                    && isContextTierActive("bt")) {
+                collectBluetoothDevicesForContext();
+                refreshContextBluetoothTier(false);
+            } else if (currentScreenState == STATE_BLUETOOTH) {
+                triggerBluetoothDiscovery(false);
+            }
+            updateNetworkRescanLoop();
+        }
+    };
 
     private Button btnScanBt, btnScanWifi;
 
@@ -539,6 +695,12 @@ public class MainActivity extends Activity {
     private static final String BG_MODE_THEME = "theme_wallpaper";
     private static final String BG_MODE_CUSTOM = "custom";
     private static final String PREF_PLAYER_ALBUM_BLUR = "player_album_blur";
+    private static final String PREF_BG_HOME = "bg_home";
+    private static final String PREF_BG_LIBRARY = "bg_library";
+    private static final String PREF_BG_SETTINGS = "bg_settings";
+    private static final String PREF_BG_NOW_PLAYING = "bg_now_playing";
+    private static final String PREF_UPDATE_NUDGE_TS = "update_nudge_ts";
+    private static final long REACH_ID3_MIN_BYTES = 32 * 1024L;
     private static final String PREF_BG_THEME_WALLPAPER = "bg_theme_wallpaper";
     private boolean playerAlbumBlurEnabled = false;
     private boolean isShuffleMode = false;
@@ -703,6 +865,14 @@ public class MainActivity extends Activity {
             layoutVolumeOverlay.setVisibility(View.GONE);
         }
     };
+    private Runnable hideVolumeContextTask = new Runnable() {
+        @Override
+        public void run() {
+            if (contextMenuVolumeOnly && themedContextMenu != null && themedContextMenu.isShowing()) {
+                dismissThemedContextMenu();
+            }
+        }
+    };
 
     private BroadcastReceiver systemStatusReceiver = new BroadcastReceiver() {
         @Override
@@ -768,14 +938,18 @@ public class MainActivity extends Activity {
             } else if (ConnectivityManager.CONNECTIVITY_ACTION.equals(action)) {
                 onWifiConnectivityChanged();
             } else if (BluetoothDevice.ACTION_FOUND.equals(action)) {
-                if (currentScreenState != STATE_BLUETOOTH) return;
                 BluetoothDevice device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
+                if (device == null) return;
                 String deviceName = device.getName();
                 String deviceAddress = device.getAddress();
                 if (deviceName != null && !foundBtDevices.contains(deviceAddress)) {
                     foundBtDevices.add(deviceAddress);
-                    // 💡 새로 발견된 낯선 기기는 isPaired = false 로 보냅니다.
-                    addBluetoothItemToUI(deviceName, device, false, false);
+                    if (currentScreenState == STATE_BLUETOOTH) {
+                        addBluetoothItemToUI(deviceName, device, false, false);
+                    } else if (themedContextMenu != null && themedContextMenu.isShowing()
+                            && isContextTierActive("bt")) {
+                        refreshContextBluetoothTier(false);
+                    }
                 }
             } else if (BluetoothDevice.ACTION_BOND_STATE_CHANGED.equals(action)) {
                 BluetoothDevice device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
@@ -818,14 +992,17 @@ public class MainActivity extends Activity {
                 }
                 if (currentScreenState == STATE_BLUETOOTH) startBluetoothScan();
             } else if (BluetoothAdapter.ACTION_DISCOVERY_FINISHED.equals(action)) {
-                btnScanBt.setText(getString(R.string.bluetooth_scan_complete));
                 updateStatusBarTitle();
             } else if (WifiManager.SCAN_RESULTS_AVAILABLE_ACTION.equals(action)) {
                 WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
                 if (wm != null) {
                     List<ScanResult> results = wm.getScanResults();
-                    btnScanWifi.setText(getString(R.string.bluetooth_scan_complete));
                     updateWifiUI(results);
+                    if (themedContextMenu != null && themedContextMenu.isShowing()
+                            && isContextTierActive("wifi")) {
+                        collectWifiNetworksFromScan();
+                        scheduleContextWifiRefresh(false);
+                    }
                 }
                 updateStatusBarTitle();
             }
@@ -835,9 +1012,41 @@ public class MainActivity extends Activity {
             } else if (Intent.ACTION_MEDIA_SCANNER_FINISHED.equals(action)) {
                 isMediaScanning = false;
 
+            } else if (Intent.ACTION_MEDIA_MOUNTED.equals(action)) {
+                reloadThemeAfterStorageReady();
             }
         }
     };
+
+    private void reloadThemeAfterStorageReady() {
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                ThemeManager.ensureBundledDefault(MainActivity.this);
+                ThemeManager.loadAllThemes(MainActivity.this);
+                String savedPath = prefs != null ? prefs.getString("app_theme_path", null) : null;
+                if (savedPath != null) {
+                    ThemeManager.setThemeByFolderPath(savedPath);
+                }
+                ThemeManager.ensureActiveThemeOrFallback(MainActivity.this);
+                runOnUiThreadSafe(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (isFinishing()) return;
+                        applyThemeToMainMenu();
+                        rebuildHomeMenuIfVisible();
+                    }
+                });
+            }
+        }, "ThemeStorageReady").start();
+    }
+
+    private void rebuildHomeMenuIfVisible() {
+        if (currentScreenState == STATE_MENU && layoutMainMenu != null
+                && layoutMainMenu.getVisibility() == View.VISIBLE) {
+            buildHomeMenu();
+        }
+    }
 
     @Override
     protected void attachBaseContext(Context newBase) {
@@ -927,6 +1136,7 @@ public class MainActivity extends Activity {
 
         migrateLegacyPrefs();
         prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
+        libraryBrowsePrefs = new LibraryBrowsePrefs(this);
         ensurePrivilegedPermissionsAsync();
 
         ThemeManager.ensureBundledDefault(this);
@@ -938,6 +1148,15 @@ public class MainActivity extends Activity {
             } else {
                 int savedThemeIndex = prefs.getInt("app_theme_index", 0);
                 ThemeManager.setThemeIndex(savedThemeIndex);
+            }
+            ThemeManager.ensureActiveThemeOrFallback(this);
+            ThemeManager.ThemeEntry active = ThemeManager.getCurrentTheme();
+            if (savedPath != null && active.folderPath != null
+                    && !savedPath.equals(active.folderPath)) {
+                prefs.edit()
+                        .putString("app_theme_path", active.folderPath)
+                        .putInt("app_theme_index", ThemeManager.getCurrentThemeIndex())
+                        .apply();
             }
         } catch (Exception e) {}
 
@@ -976,6 +1195,8 @@ public class MainActivity extends Activity {
         try { isAutoFetchEnabled = prefs.getBoolean("auto_fetch", true); } catch (Exception e) {} // 🚀 [추가]
         try { currentTimeoutIndex = prefs.getInt("timeout_idx", 1); } catch (Exception e) {}
 
+        ArtistSeparatorCatalog.ensureLoaded(this);
+
         try {
             currentSystemBrightness = Settings.System.getInt(getContentResolver(), Settings.System.SCREEN_BRIGHTNESS, 255);
         } catch (Exception e) {}
@@ -1010,7 +1231,11 @@ public class MainActivity extends Activity {
                 @Override
                 public void run() {
                     customLibrary.clear();
+                    invalidateSongPathIndex();
+                    libraryScanPaths.clear();
+                    libraryScanMetaKeys.clear();
                     buildCustomLibrary(rootFolder);
+                    normalizeLibraryAlbumTitles();
                     runOnUiThread(new Runnable() {
                         @Override
                         public void run() {
@@ -1090,6 +1315,10 @@ public class MainActivity extends Activity {
         try { isFullWidthMenus = prefs.getBoolean("full_width_menus", false); } catch (Exception e) {}
         try { playerAlbumBlurEnabled = prefs.getBoolean(PREF_PLAYER_ALBUM_BLUR, false); } catch (Exception e) {}
         try { migrateBackgroundPrefs(); } catch (Exception e) {}
+        try { HomeMenuConfig.migrateHomePrefsIfNeeded(prefs); } catch (Exception e) {}
+        try { restorePlaybackQueue(); } catch (Exception e) {}
+        try { scheduleStartupMountRetry(); } catch (Exception e) {}
+        try { scheduleStartupUpdateNudge(); } catch (Exception e) {}
         try {
             String sf = prefs.getString(PREF_PODCAST_STOREFRONT, "US");
             if (sf != null && sf.length() == 2) podcastStorefront = sf.toUpperCase();
@@ -1191,13 +1420,6 @@ public class MainActivity extends Activity {
         layoutSettingsMode = findViewById(R.id.layout_settings_mode);
         containerSettingsItems = findViewById(R.id.container_settings_items);
         settingsScrollView = (View) containerSettingsItems.getParent();
-        listMusicQueue = new android.widget.ListView(this);
-        listMusicQueue.setDivider(null);
-        listMusicQueue.setSelector(new android.graphics.drawable.ColorDrawable(0));
-        listMusicQueue.setItemsCanFocus(true);
-        listMusicQueue.setVisibility(View.GONE);
-        settingsMenuHost.addView(listMusicQueue, new FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
         listThemes = new android.widget.ListView(this);
         listThemes.setDivider(null);
         listThemes.setSelector(new android.graphics.drawable.ColorDrawable(0));
@@ -1213,6 +1435,8 @@ public class MainActivity extends Activity {
         btnScanWifi = findViewById(R.id.btn_scan_wifi);
         btnScanBt.setSoundEffectsEnabled(false);
         btnScanWifi.setSoundEffectsEnabled(false);
+        btnScanBt.setVisibility(View.GONE);
+        btnScanWifi.setVisibility(View.GONE);
         layoutWifiKeyboard = findViewById(R.id.layout_wifi_keyboard);
         tvKeyboardSsid = findViewById(R.id.tv_keyboard_ssid);
         tvKeyboardInput = findViewById(R.id.tv_keyboard_input);
@@ -1285,7 +1509,6 @@ public class MainActivity extends Activity {
         tvBrowserPath = findViewById(R.id.tv_browser_path);
         tvBrowserPath.setTextColor(ThemeManager.getTextColorPrimary());
 
-        loadButtonRadiusOverride();
         applyFullWidthMenusLayout();
         initY1ThemedActionButtons();
         buildHomeMenu();
@@ -1328,7 +1551,16 @@ public class MainActivity extends Activity {
         try { statusBarShowsTitle = prefs.getBoolean("status_bar_title", false); } catch (Exception e) {}
         try { statusBarMatchFont = prefs.getBoolean("status_bar_match_font", true); } catch (Exception e) {}
         ThemeManager.setStatusBarMatchItemText(statusBarMatchFont);
-        try { soulseekHideFlac = prefs.getBoolean(SoulseekAccount.PREF_HIDE_FLAC, true); } catch (Exception e) {}
+        try {
+            if (prefs.contains(SoulseekAccount.PREF_HIDE_HIGH_BITRATE)) {
+                soulseekHideHighBitrate = prefs.getBoolean(SoulseekAccount.PREF_HIDE_HIGH_BITRATE, true);
+            } else {
+                soulseekHideHighBitrate = prefs.getBoolean(SoulseekAccount.PREF_HIDE_FLAC, true);
+            }
+        } catch (Exception e) {}
+        try {
+            soulseekSharingEnabled = prefs.getBoolean(SoulseekAccount.PREF_SHARING_ENABLED, true);
+        } catch (Exception e) {}
         updateStatusBarTitle();
 
         btnScanBt.setOnClickListener(new View.OnClickListener() {
@@ -1366,6 +1598,10 @@ public class MainActivity extends Activity {
         filter.addAction(Intent.ACTION_SCREEN_ON);
         filter.setPriority(IntentFilter.SYSTEM_HIGH_PRIORITY);
         registerReceiver(systemStatusReceiver, filter);
+
+        IntentFilter mediaFilter = new IntentFilter(Intent.ACTION_MEDIA_MOUNTED);
+        mediaFilter.addDataScheme("file");
+        registerReceiver(systemStatusReceiver, mediaFilter);
 
         try {
             if (audioManager.isWiredHeadsetOn()) {
@@ -1405,6 +1641,36 @@ public class MainActivity extends Activity {
             buildThemeSelectorUI(); // 테마 리스트 화면을 바로 띄워줍니다.
         } else {
             requestFirstHomeMenuFocus(); // 평소 앱을 켤 때는 원래대로 메인 메뉴 포커스
+        }
+
+        if (getIntent().getBooleanExtra("solar_adb_open_queue", false)) {
+            getIntent().removeExtra("solar_adb_open_queue");
+            new Handler().postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    if (!playback.hasAnyQueue()) {
+                        SolarAdbTest.fail("no_queue");
+                        return;
+                    }
+                    showThemedContextMenu();
+                    openPlaybackQueueInContextMenu();
+                    SolarAdbTest.pass("queue_opened");
+                }
+            }, 2000);
+        }
+
+        if (getIntent().getBooleanExtra("solar_adb_open_context", false)) {
+            getIntent().removeExtra("solar_adb_open_context");
+            final int screen = getIntent().getIntExtra("solar_adb_context_screen", STATE_MENU);
+            getIntent().removeExtra("solar_adb_context_screen");
+            new Handler().postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    if (screen != currentScreenState) changeScreen(screen);
+                    showThemedContextMenu();
+                    SolarAdbTest.pass("context_opened screen=" + currentScreenState);
+                }
+            }, 1500);
         }
 
         final String soulseekTest = getIntent().getStringExtra("soulseek_test");
@@ -1650,6 +1916,11 @@ public class MainActivity extends Activity {
     private boolean anyHomeWidgetActive() {
         return isWidgetClockOn || isWidgetBatteryOn || isWidgetAlbumOn;
     }
+    private void hideFastScrollLetter() {
+        fastScrollHandler.removeCallbacks(hideFastScrollTask);
+        if (tvFastScrollLetter != null) tvFastScrollLetter.setVisibility(View.GONE);
+    }
+
     // 💡 [추가] 문자열에서 첫 글자를 뽑아내어 화면에 띄워주는 함수
     private void showFastScrollLetter(String rawText) {
         // 브라우저 모드(리스트 화면)가 아니면 띄우지 않습니다.
@@ -1753,7 +2024,11 @@ public class MainActivity extends Activity {
 
     /** [arrowW, arrowH, labelRightMargin] from scaled themed arrow bitmap */
     private int[] y1ArrowLayout(Bitmap arrowBmp) {
-        int marginEnd = (int) getResources().getDimension(R.dimen.y1_arrow_margin_end);
+        return y1ArrowLayout(arrowBmp, 0);
+    }
+
+    private int[] y1ArrowLayout(Bitmap arrowBmp, int extraMarginEndPx) {
+        int marginEnd = (int) getResources().getDimension(R.dimen.y1_arrow_margin_end) + extraMarginEndPx;
         if (arrowBmp == null) {
             int fallback = (int) (12 * getResources().getDisplayMetrics().density);
             return new int[] { fallback, y1RowHeightPx, fallback + marginEnd };
@@ -1787,9 +2062,19 @@ public class MainActivity extends Activity {
     }
 
     private int y1RowTextColorSelected(int rowKind) {
-        if (rowKind == Y1_ROW_HOME) return ThemeManager.getHomeMenuTextColorSelected();
-        if (rowKind == Y1_ROW_MENU) return ThemeManager.getSettingMenuTextColorSelected();
-        return ThemeManager.getItemTextColorSelected();
+        int c;
+        boolean menuRows;
+        if (rowKind == Y1_ROW_HOME) {
+            c = ThemeManager.getHomeMenuTextColorSelected();
+            menuRows = false;
+        } else if (rowKind == Y1_ROW_MENU) {
+            c = ThemeManager.getSettingMenuTextColorSelected();
+            menuRows = true;
+        } else {
+            c = ThemeManager.getItemTextColorSelected();
+            menuRows = false;
+        }
+        return ThemeManager.textOnRowSelection(c, menuRows);
     }
 
     private int y1InlineStateColor(String text, boolean rowFocused) {
@@ -1806,6 +2091,12 @@ public class MainActivity extends Activity {
     private static final String TAG_REARRANGE_LABEL = "rearrange_label";
     private static final String TAG_REARRANGE_GRIP = "rearrange_grip";
     private static final String TAG_REARRANGE_ARROW = "rearrange_arrow";
+    private static final String TAG_LIB_TITLE = "lib_title";
+    private static final String TAG_LIB_SUB = "lib_sub";
+    private static final String TAG_LIB_GRIP = "lib_grip";
+    private static final String TAG_LIB_PP = "lib_pp";
+    private static final String TAG_LIB_CONFIRM = "lib_confirm";
+    private static final String TAG_LIB_DROP = "lib_drop";
 
     private int rearrangeRightSlotWidthPx() {
         int[] arrowLayout = y1ArrowLayout(ThemeManager.getScaledItemRightArrow(y1RowHeightPx));
@@ -1910,47 +2201,6 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void refreshHomeArrangeMoveUi(boolean moreMenu) {
-        String moveId = moreMenu ? homeMoreMoveModeId : homeScreenMoveModeId;
-        for (int i = 0; i < containerSettingsItems.getChildCount(); i++) {
-            View v = containerSettingsItems.getChildAt(i);
-            if (!(v instanceof LinearLayout)) continue;
-            Object tag = v.getTag();
-            if (!(tag instanceof String)) continue;
-            String key = (String) tag;
-            if (!key.startsWith("home.shortcut.")) continue;
-            String id = key.substring("home.shortcut.".length());
-            bindRearrangeRowAdornment((LinearLayout) v, id.equals(moveId), v.hasFocus());
-        }
-    }
-
-    private void reorderHomeArrangeRows(boolean moreMenu) {
-        List<String> ids = moreMenu ? HomeMenuConfig.loadMoreOrderIds(prefs)
-                : HomeMenuConfig.loadHomeOrderIds(prefs);
-        java.util.HashMap<String, View> rowByKey = new java.util.HashMap<String, View>();
-        View moreRow = null;
-        for (int i = 1; i < containerSettingsItems.getChildCount(); i++) {
-            View v = containerSettingsItems.getChildAt(i);
-            Object tag = v.getTag();
-            if (!(tag instanceof String)) continue;
-            String key = (String) tag;
-            if (RowKeys.HOME_MORE.equals(key)) {
-                moreRow = v;
-            } else if (key.startsWith("home.shortcut.")) {
-                rowByKey.put(key, v);
-            }
-        }
-        while (containerSettingsItems.getChildCount() > 1) {
-            containerSettingsItems.removeViewAt(1);
-        }
-        for (String id : ids) {
-            HomeMenuConfig.Entry e = HomeMenuConfig.find(id);
-            if (e == null) continue;
-            View row = rowByKey.get(RowKeys.homeShortcut(id));
-            if (row != null) containerSettingsItems.addView(row);
-        }
-        if (!moreMenu && moreRow != null) containerSettingsItems.addView(moreRow);
-    }
 
     private int keyboardRowKind() {
         if (keyboardPurpose == KEYBOARD_WIFI || keyboardReturnState == STATE_SETTINGS) {
@@ -2071,7 +2321,13 @@ public class MainActivity extends Activity {
             int statusTextColor = ThemeManager.getStatusBarTextColor();
 
             applyAllHomeMenuRowStyles();
-            if (currentScreenState == STATE_SETTINGS) applyAllSettingsRowStyles();
+            if (currentScreenState == STATE_SETTINGS) {
+                if (SettingsScreens.ABOUT.equals(settingsSubScreenKey)) {
+                    buildAboutUI();
+                } else {
+                    applyAllSettingsRowStyles();
+                }
+            }
             refreshY1ThemedActionButtons();
             applyKeyboardTheme();
             applyOverlayScreenTextThemes();
@@ -2730,7 +2986,7 @@ public class MainActivity extends Activity {
         if (row.kind == ThemeBrowser.KIND_INSTALLED
                 && row.themeIndex >= 0 && row.themeIndex < ThemeManager.availableThemes.size()) {
             final ThemeManager.ThemeEntry theme = ThemeManager.availableThemes.get(row.themeIndex);
-            if (!row.active) {
+            if (!row.active || ThemeManager.isBuiltInDefault(theme)) {
                 addContextAction(getString(R.string.theme_context_apply), new Runnable() {
                     @Override
                     public void run() {
@@ -2835,6 +3091,20 @@ public class MainActivity extends Activity {
         return SettingsScreens.THEME_VARIANT.equals(settingsSubScreenKey);
     }
 
+    private boolean handleAboutSettingsBack() {
+        if (SettingsScreens.SYSTEM_UPDATE.equals(settingsSubScreenKey)) {
+            buildAboutUI();
+            return true;
+        }
+        if (SettingsScreens.ABOUT.equals(settingsSubScreenKey)) {
+            setSettingsAboutFullWidth(false);
+            restoreSettingsPreviewPane();
+            buildSettingsUI();
+            return true;
+        }
+        return false;
+    }
+
     private boolean handleSoulseekSettingsBack() {
         if (!SettingsScreens.isSoulseek(settingsSubScreenKey)) {
             return false;
@@ -2856,38 +3126,12 @@ public class MainActivity extends Activity {
         if (!SettingsScreens.isHome(settingsSubScreenKey)) {
             return false;
         }
-        if (SettingsScreens.HOME_ARRANGE.equals(settingsSubScreenKey)) {
-            if (homeScreenMoveModeId != null) {
-                homeScreenMoveModeId = null;
-                refreshHomeArrangeMoveUi(false);
-                return true;
-            }
-            buildHomeScreenEditorUI();
-            return true;
-        }
-        if (SettingsScreens.HOME_MORE_ARRANGE.equals(settingsSubScreenKey)) {
-            if (homeMoreMoveModeId != null) {
-                homeMoreMoveModeId = null;
-                refreshHomeArrangeMoveUi(true);
-                return true;
-            }
-            buildHomeScreenArrangeUI();
-            return true;
-        }
         if (SettingsScreens.HOME.equals(settingsSubScreenKey)) {
             lastSettingsFocusIndex = homeScreenEditorMenuFocusIndex;
             returnToSettingsParent();
             return true;
         }
         return false;
-    }
-
-    private boolean isHomeScreenArrangeScreen() {
-        return SettingsScreens.HOME_ARRANGE.equals(settingsSubScreenKey);
-    }
-
-    private boolean isHomeMoreArrangeScreen() {
-        return SettingsScreens.HOME_MORE_ARRANGE.equals(settingsSubScreenKey);
     }
 
     // ponytail: Y1 wheel key→move mapping may change if driver remaps axes
@@ -2901,18 +3145,20 @@ public class MainActivity extends Activity {
         containerSettingsItems.postDelayed(new Runnable() {
             @Override
             public void run() {
-                int idx = Math.max(1, targetFocusIndex);
+                int idx = Math.max(0, targetFocusIndex);
                 View target = null;
                 for (int i = idx; i < containerSettingsItems.getChildCount(); i++) {
                     View v = containerSettingsItems.getChildAt(i);
-                    if (v != null && v.isFocusable()) {
+                    if (v == null || !v.isFocusable()) continue;
+                    Object tag = v.getTag();
+                    if (tag instanceof String && ((String) tag).startsWith("home.shortcut.")) {
                         target = v;
                         idx = i;
                         break;
                     }
                 }
                 if (target == null) {
-                    for (int i = 1; i < containerSettingsItems.getChildCount(); i++) {
+                    for (int i = 0; i < containerSettingsItems.getChildCount(); i++) {
                         View v = containerSettingsItems.getChildAt(i);
                         if (v != null && v.isFocusable()) {
                             target = v;
@@ -2961,7 +3207,7 @@ public class MainActivity extends Activity {
                 }
             }
         }
-        return homeScreenMoveModeId;
+        return null;
     }
 
     private void restoreSoulseekSettingsScreen(String subKey) {
@@ -3059,6 +3305,15 @@ public class MainActivity extends Activity {
         }
         if (SettingsScreens.THEME_PICKER.equals(settingsSubScreenKey)) {
             returnToSettingsParent();
+            return true;
+        }
+        return false;
+    }
+
+    private boolean handleLibraryBrowseSettingsBack() {
+        if (SettingsScreens.LIBRARY_BROWSE.equals(settingsSubScreenKey)) {
+            lastSettingsFocusIndex = libraryBrowseSettingsMenuFocusIndex;
+            buildSettingsUI();
             return true;
         }
         return false;
@@ -3424,8 +3679,17 @@ public class MainActivity extends Activity {
         new Thread(new Runnable() {
             @Override
             public void run() {
+                int resolvedIndex = index;
+                ThemeManager.ThemeEntry resolvedTheme = theme;
                 try {
-                    if (!ThemeManager.isBuiltInDefault(theme) && hasInternetConnection()) {
+                    if (ThemeManager.isBuiltInDefault(theme)) {
+                        ThemeManager.ensureBundledDefault(MainActivity.this);
+                        ThemeManager.loadAllThemes(MainActivity.this);
+                        resolvedIndex = ThemeManager.findBuiltInDefaultIndex();
+                        if (resolvedIndex >= 0 && resolvedIndex < ThemeManager.availableThemes.size()) {
+                            resolvedTheme = ThemeManager.availableThemes.get(resolvedIndex);
+                        }
+                    } else if (hasInternetConnection()) {
                         java.util.Set<String> missing = ThemeDownloader.missingAssets(theme.folderName);
                         if (!missing.isEmpty()) {
                             ThemeDownloader.repairThemeFolderIfInCatalog(theme.folderName, null);
@@ -3435,25 +3699,33 @@ public class MainActivity extends Activity {
                     ThemeDownloader.dlLogError("integrity repair " + theme.folderName, e);
                     android.util.Log.w("ThemeDownloader", "integrity repair: " + e.getMessage());
                 }
+                final int applyIndex = resolvedIndex;
+                final ThemeManager.ThemeEntry applyTheme = resolvedTheme;
+                final String appliedName = toastName != null ? toastName
+                        : (applyTheme != null ? applyTheme.name : null);
+                final String persistPath = ThemeManager.persistPathForTheme(applyTheme);
                 runOnUiThreadSafe(new Runnable() {
                     @Override
                     public void run() {
                         if (isFinishing()) return;
                         if (layoutLoadingOverlay != null) layoutLoadingOverlay.setVisibility(View.GONE);
-                        ThemeManager.setThemeIndex(index);
+                        if (applyIndex < 0 || applyTheme == null) return;
+                        ThemeManager.setThemeIndex(applyIndex);
                         try {
                             SharedPreferences.Editor ed = prefs.edit()
-                                    .putInt("app_theme_index", index)
-                                    .putString("app_theme_path", theme.folderPath)
+                                    .putInt("app_theme_index", applyIndex)
+                                    .putString("app_theme_path", persistPath)
                                     .putBoolean("reboot_to_theme", true)
                                     .putBoolean("status_bar_match_font", true);
-                            if (ThemeManager.hasThemeWallpaper(theme)) {
+                            if (ThemeManager.hasThemeWallpaper(applyTheme)) {
                                 ed.putString("background_mode", BG_MODE_THEME);
                             }
                             ed.commit();
                         } catch (Exception ignored) {}
-                        if (toastName != null) {
-                            Toast.makeText(MainActivity.this, getString(R.string.toast_theme_applied, toastName), Toast.LENGTH_SHORT).show();
+                        if (appliedName != null) {
+                            Toast.makeText(MainActivity.this,
+                                    getString(R.string.toast_theme_applied, appliedName),
+                                    Toast.LENGTH_SHORT).show();
                         }
                         recreate();
                     }
@@ -3588,6 +3860,18 @@ public class MainActivity extends Activity {
     }
 
     private Bitmap loadThemeWallpaperForScreen(int screenState) {
+        String prefKey = null;
+        if (screenState == STATE_MENU) prefKey = PREF_BG_HOME;
+        else if (screenState == STATE_BROWSER) prefKey = PREF_BG_LIBRARY;
+        else if (screenState == STATE_SETTINGS) prefKey = PREF_BG_SETTINGS;
+        else if (screenState == STATE_PLAYER) prefKey = PREF_BG_NOW_PLAYING;
+        if (prefKey != null) {
+            String pick = prefs.getString(prefKey, null);
+            if (pick != null) {
+                Bitmap b = ThemeManager.loadWallpaperPick(pick);
+                if (b != null) return b;
+            }
+        }
         Bitmap wall;
         if (screenState == STATE_MENU) {
             wall = ThemeManager.getWallpaper(true);
@@ -3705,27 +3989,7 @@ public class MainActivity extends Activity {
         }
     }
 
-    private String radiusOverrideKey() {
-        return "radius_override_" + ThemeManager.getCurrentTheme().folderPath.hashCode();
-    }
 
-    private void loadButtonRadiusOverride() {
-        if (prefs.contains(radiusOverrideKey())) {
-            ThemeManager.setButtonRadiusOverride(prefs.getInt(radiusOverrideKey(), 10));
-        } else {
-            ThemeManager.clearButtonRadiusOverride();
-        }
-    }
-
-    private void saveButtonRadiusOverride(int dp) {
-        prefs.edit().putInt(radiusOverrideKey(), dp).commit();
-        ThemeManager.setButtonRadiusOverride(dp);
-    }
-
-    private void clearButtonRadiusOverride() {
-        prefs.edit().remove(radiusOverrideKey()).commit();
-        ThemeManager.clearButtonRadiusOverride();
-    }
     // 💡 [추가] 테마 색상과 '둥글기(Radius)'를 혼합해서 버튼의 배경 디자인을 찍어내는 도구
     private android.graphics.drawable.GradientDrawable createButtonBackground(int color) {
         android.graphics.drawable.GradientDrawable shape = new android.graphics.drawable.GradientDrawable();
@@ -3741,6 +4005,7 @@ public class MainActivity extends Activity {
         float density = getResources().getDisplayMetrics().density;
         y1RowWidthPx = (int) (getResources().getDimension(R.dimen.y1_menu_width));
         y1RowHeightPx = (int) (getResources().getDimension(R.dimen.y1_menu_item_height));
+        y1LibraryRowHeightPx = (int) (getResources().getDimension(R.dimen.y1_library_row_height));
         listRowWidthPx = (int) (getResources().getDimension(R.dimen.y1_screen_width) - 20 * density);
         y1ThemeCoverHeightPx = (int) (getResources().getDimension(R.dimen.y1_theme_cover_height));
         y1BatteryIconHeightPx = (int) (getResources().getDimension(R.dimen.y1_battery_icon_height));
@@ -3882,7 +4147,7 @@ public class MainActivity extends Activity {
             return ThemeManager.getHomeIcon(this, e.stockIconKey, e.defaultResId);
         }
         if (e.solarAppName != null) {
-            return ThemeManager.getSolarAppIcon(e.solarAppName);
+            return ThemeManager.getSolarAppHomeIcon(this, e.solarAppName, e.defaultResId);
         }
         return ThemeManager.getCustomIcon("icon_default_album.png", this, e.defaultResId);
     }
@@ -3957,6 +4222,26 @@ public class MainActivity extends Activity {
         final boolean online = ConnectivityHelper.isOnline(this);
         final boolean onLan = ConnectivityHelper.hasLocalNetwork(this);
         homeMenuEntries = HomeMenuConfig.loadVisibleForDisplay(prefs, online, onLan);
+        final boolean showNowPlaying = shouldShowNowPlayingHome();
+        if (showNowPlaying) {
+            boolean hasNowPlaying = false;
+            for (HomeMenuConfig.Entry e : homeMenuEntries) {
+                if (HomeMenuConfig.ID_NOW_PLAYING.equals(e.id)) {
+                    hasNowPlaying = true;
+                    break;
+                }
+            }
+            if (!hasNowPlaying) {
+                HomeMenuConfig.Entry np = HomeMenuConfig.find(HomeMenuConfig.ID_NOW_PLAYING);
+                if (np != null) homeMenuEntries.add(0, np);
+            }
+        }
+        java.util.Iterator<HomeMenuConfig.Entry> homeIt = homeMenuEntries.iterator();
+        while (homeIt.hasNext()) {
+            if (HomeMenuConfig.ID_NOW_PLAYING.equals(homeIt.next().id) && !showNowPlaying) {
+                homeIt.remove();
+            }
+        }
         final boolean showMore = HomeMenuConfig.shouldShowMoreTile(prefs, online, onLan);
         int totalRows = homeMenuEntries.size() + (showMore ? 1 : 0);
         if (focusedHomeMenuIndex >= totalRows) {
@@ -3973,22 +4258,23 @@ public class MainActivity extends Activity {
         applyMenuPanelBackground(menuListHost, y1RowWidthPx, panelH,
                 (int) getResources().getDimension(R.dimen.y1_menu_height));
         scrollHomeMenuToIndex(focusedHomeMenuIndex);
+        nowPlayingHomeMenuVisible = shouldShowNowPlayingHome();
     }
 
     private void addHomeMenuRow(final HomeMenuConfig.Entry entry, final int idx) {
-        FrameLayout row = createHomeMenuRowShell();
+        FrameLayout row = createHomeMenuRowShell(y1HomeArrowExtraInsetPx());
         TextView label = (TextView) row.getTag(HOME_MENU_TAG_LABEL);
         ImageView arrow = (ImageView) row.getTag(HOME_MENU_TAG_ARROW);
         label.setText(getString(entry.labelResId));
         row.setOnFocusChangeListener(new View.OnFocusChangeListener() {
             @Override
             public void onFocusChange(View v, boolean hasFocus) {
-                applyY1ListRowStyle(v, hasFocus, label, null, arrow, Y1_ROW_HOME);
                 if (hasFocus) {
                     focusedHomeMenuIndex = idx;
                     updateStatusBarTitle();
                     updateHomeMenuPreview(idx);
                 }
+                refreshHomeMenuRowStyles();
             }
         });
         row.setOnClickListener(new View.OnClickListener() {
@@ -4007,7 +4293,7 @@ public class MainActivity extends Activity {
     }
 
     private void addHomeMoreTileRow(final int idx) {
-        FrameLayout row = createHomeMenuRowShell();
+        FrameLayout row = createHomeMenuRowShell(y1HomeArrowExtraInsetPx());
         TextView label = (TextView) row.getTag(HOME_MENU_TAG_LABEL);
         ImageView arrow = (ImageView) row.getTag(HOME_MENU_TAG_ARROW);
         label.setText(getString(R.string.home_menu_more));
@@ -4015,7 +4301,6 @@ public class MainActivity extends Activity {
         row.setOnFocusChangeListener(new View.OnFocusChangeListener() {
             @Override
             public void onFocusChange(View v, boolean hasFocus) {
-                applyY1ListRowStyle(v, hasFocus, label, null, arrow, Y1_ROW_HOME);
                 if (hasFocus) {
                     focusedHomeMenuIndex = idx;
                     updateStatusBarTitle();
@@ -4023,6 +4308,7 @@ public class MainActivity extends Activity {
                     if (tvMenuPreviewTitle != null) tvMenuPreviewTitle.setVisibility(View.GONE);
                     if (tvMenuPreviewArtist != null) tvMenuPreviewArtist.setVisibility(View.GONE);
                 }
+                refreshHomeMenuRowStyles();
             }
         });
         row.setOnClickListener(new View.OnClickListener() {
@@ -4040,12 +4326,23 @@ public class MainActivity extends Activity {
         containerHomeMenuItems.addView(row, lp);
     }
 
+    /** Home list host has no outer padding — nudge selection arrows left so they are not clipped. */
+    private int y1HomeArrowExtraInsetPx() {
+        return (int) getResources().getDimension(R.dimen.y1_home_arrow_extra_inset);
+    }
+
     /** ponytail: ListView recycles rows — tag label/arrow on shell for getView */
     private FrameLayout createHomeMenuRowShell() {
+        return createHomeMenuRowShell(0);
+    }
+
+    private FrameLayout createHomeMenuRowShell(int extraArrowInsetEndPx) {
         int textPadLeft = (int) getResources().getDimension(R.dimen.y1_menu_text_pad_left);
         float menuTextPx = getResources().getDimension(R.dimen.y1_menu_text_size);
         Bitmap arrowBmp = ThemeManager.getScaledItemRightArrow(y1RowHeightPx);
-        int[] arrowLayout = y1ArrowLayout(arrowBmp);
+        int[] arrowLayout = y1ArrowLayout(arrowBmp, extraArrowInsetEndPx);
+        int arrowMarginEnd = (int) getResources().getDimension(R.dimen.y1_arrow_margin_end)
+                + extraArrowInsetEndPx;
 
         FrameLayout row = new FrameLayout(this);
         row.setFocusable(true);
@@ -4076,7 +4373,7 @@ public class MainActivity extends Activity {
         arrow.setVisibility(View.GONE);
         FrameLayout.LayoutParams arrowLp = new FrameLayout.LayoutParams(arrowLayout[0], arrowLayout[1]);
         arrowLp.gravity = android.view.Gravity.CENTER_VERTICAL | android.view.Gravity.END;
-        arrowLp.rightMargin = (int) getResources().getDimension(R.dimen.y1_arrow_margin_end);
+        arrowLp.rightMargin = arrowMarginEnd;
         row.addView(arrow, arrowLp);
 
         row.setTag(HOME_MENU_TAG_LABEL, label);
@@ -4106,6 +4403,16 @@ public class MainActivity extends Activity {
         });
     }
 
+    private boolean shouldShowNowPlayingPreviewArt() {
+        if (!playback.hasAnyQueue()) return false;
+        if (currentScreenState == STATE_PLAYER) return true;
+        try {
+            return mediaPlayer != null && mediaPlayer.getDuration() > 0;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     private void updateHomeMenuPreview(int index) {
         if (isFullWidthMenus || index < 0 || index >= homeMenuEntries.size()) return;
         boolean anyWidgetActive = isWidgetClockOn || isWidgetBatteryOn || isWidgetAlbumOn;
@@ -4113,19 +4420,7 @@ public class MainActivity extends Activity {
 
         String id = homeMenuEntries.get(index).id;
         if (HomeMenuConfig.ID_NOW_PLAYING.equals(id)) {
-            if (!playback.hasAnyQueue()) {
-                Bitmap previewIcon = resolveHomeMenuPreviewIconForId(id);
-                if (previewIcon != null) {
-                    ivMenuPreview.setImageBitmap(previewIcon);
-                    ivMenuPreview.setVisibility(View.VISIBLE);
-                } else {
-                    ivMenuPreview.setVisibility(View.GONE);
-                }
-                if (tvMenuPreviewTitle != null && tvMenuPreviewArtist != null) {
-                    tvMenuPreviewTitle.setVisibility(View.GONE);
-                    tvMenuPreviewArtist.setVisibility(View.GONE);
-                }
-            } else {
+            if (shouldShowNowPlayingPreviewArt()) {
                 if (lastAlbumArtBytes != null && lastAlbumArtBytes.length > 0) {
                     try {
                         BitmapFactory.Options opts = new BitmapFactory.Options();
@@ -4146,6 +4441,18 @@ public class MainActivity extends Activity {
                     tvMenuPreviewTitle.setText(tvPlayerTitle.getText());
                     tvMenuPreviewArtist.setText(tvPlayerArtist != null ? tvPlayerArtist.getText() : "");
                 }
+            } else {
+                Bitmap previewIcon = resolveHomeMenuPreviewIconForId(id);
+                if (previewIcon != null) {
+                    ivMenuPreview.setImageBitmap(previewIcon);
+                    ivMenuPreview.setVisibility(View.VISIBLE);
+                } else {
+                    ivMenuPreview.setVisibility(View.GONE);
+                }
+                if (tvMenuPreviewTitle != null && tvMenuPreviewArtist != null) {
+                    tvMenuPreviewTitle.setVisibility(View.GONE);
+                    tvMenuPreviewArtist.setVisibility(View.GONE);
+                }
             }
         } else {
             Bitmap previewIcon = resolveHomeMenuPreviewIconForId(id);
@@ -4162,6 +4469,51 @@ public class MainActivity extends Activity {
         }
     }
 
+    private boolean shouldShowNowPlayingHome() {
+        boolean show = playback.hasAnyQueue()
+                || playback.isMusicActive() || playback.isPodcastActive();
+        if (!show) {
+            try {
+                show = mediaPlayer != null && mediaPlayer.isPlaying();
+            } catch (Exception ignored) {}
+        }
+        // #region agent log
+        try {
+            org.json.JSONObject d = new org.json.JSONObject();
+            d.put("show", show);
+            d.put("queueSize", playback.unifiedQueue().size());
+            d.put("musicActive", playback.isMusicActive());
+            d.put("podcastActive", playback.isPodcastActive());
+            d.put("screen", currentScreenState);
+            d.put("npVisible", nowPlayingHomeMenuVisible);
+            DebugAgentLog.log(this, "MainActivity.shouldShowNowPlayingHome", "gate", "H1-H3", d);
+        } catch (Exception ignored) {}
+        // #endregion
+        return show;
+    }
+
+    private void syncNowPlayingHomeVisibility() {
+        boolean show = shouldShowNowPlayingHome();
+        if (show == nowPlayingHomeMenuVisible) return;
+        nowPlayingHomeMenuVisible = show;
+        if (!show) {
+            lastAlbumArtBytes = null;
+        }
+        if (currentScreenState == STATE_MENU && containerHomeMenuItems != null) {
+            buildHomeMenu();
+        }
+        refreshContextQuickBarIfShowing();
+    }
+
+    private void refreshContextQuickBarIfShowing() {
+        if (themedContextMenu == null || !themedContextMenu.isShowing()
+                || themedContextMenu.isVolumeOnlyMode()) return;
+        themedContextMenu.replaceQuickBar(buildContextQuickBar());
+        themedContextMenu.setPrimaryEndQuickIndex(CONTEXT_QUICK_QUEUE_INDEX);
+        themedContextMenu.setMediaSliderQuickIndices(CONTEXT_QUICK_VOLUME_INDEX,
+                CONTEXT_QUICK_BRIGHTNESS_INDEX);
+    }
+
     private void onHomeMenuActivate(String id) {
         if (HomeMenuConfig.ID_NOW_PLAYING.equals(id)) {
             if (playback.hasAnyQueue()) {
@@ -4174,7 +4526,7 @@ public class MainActivity extends Activity {
             currentBrowserMode = BROWSER_ROOT;
             changeScreen(STATE_BROWSER);
         } else if (HomeMenuConfig.ID_BLUETOOTH.equals(id)) {
-            changeScreen(STATE_BLUETOOTH);
+            openScreenWithReturn(STATE_BLUETOOTH);
         } else if (HomeMenuConfig.ID_SETTINGS.equals(id)) {
             changeScreen(STATE_SETTINGS);
         } else if (HomeMenuConfig.ID_FM.equals(id)) {
@@ -4191,7 +4543,7 @@ public class MainActivity extends Activity {
                 Toast.makeText(this, getString(R.string.toast_requires_wifi), Toast.LENGTH_SHORT).show();
                 return;
             }
-            changeScreen(STATE_WEBSERVER);
+            openScreenWithReturn(STATE_WEBSERVER);
         } else if (HomeMenuConfig.ID_PODCASTS.equals(id)) {
             if (ConnectivityHelper.isOnline(this)) {
                 changeScreen(STATE_PODCASTS);
@@ -4212,6 +4564,8 @@ public class MainActivity extends Activity {
             Toast.makeText(this, getString(R.string.home_videos_coming_soon), Toast.LENGTH_LONG).show();
         } else if (HomeMenuConfig.ID_PHOTOS.equals(id)) {
             Toast.makeText(this, getString(R.string.home_photos_coming_soon), Toast.LENGTH_LONG).show();
+        } else if (HomeMenuConfig.ID_AUDIOBOOKS.equals(id)) {
+            Toast.makeText(this, getString(R.string.home_audiobooks_coming_soon), Toast.LENGTH_LONG).show();
         } else if (HomeMenuConfig.ID_APPS.equals(id)) {
             changeScreen(STATE_APPS);
         }
@@ -4290,7 +4644,7 @@ public class MainActivity extends Activity {
             return;
         }
         Bitmap icon = ThemeManager.getStatusIcon(playing ? "playing" : "pause");
-        int fallbackRes = playing ? android.R.drawable.ic_media_play : android.R.drawable.ic_media_pause;
+        int fallbackRes = playing ? R.drawable.ic_play : R.drawable.ic_pause;
         if (icon == null && !playing) {
             // ponytail: old themes may define stop but not pause.
             icon = ThemeManager.getStatusIcon("stop");
@@ -4303,10 +4657,24 @@ public class MainActivity extends Activity {
             ivStatusPlayback.setColorFilter(ThemeManager.getTextColorPrimary());
         }
         ivStatusPlayback.setVisibility(View.VISIBLE);
+        refreshContextQueueTierIfOpen();
+    }
+
+    private void openScreenWithReturn(int state) {
+        if (state != currentScreenState) {
+            screenBackReturnTo = currentScreenState;
+        }
+        changeScreen(state);
+    }
+
+    private void returnFromAuxScreen() {
+        changeScreen(screenBackReturnTo);
     }
 
     private void changeScreen(int state) {
+        if (otaSystemReplaceInProgress) return;
         dismissThemedContextMenu();
+        hideFastScrollLetter();
         if (currentScreenState == STATE_SOULSEEK && state != STATE_SOULSEEK && shouldConfirmReachDownloadLeave(state)) {
             if (soulseekBailWithoutConfirm()) {
                 cancelSoulseekDownloadSilent();
@@ -4335,8 +4703,7 @@ public class MainActivity extends Activity {
             flushPodcastResumeIfNeeded();
             pausePodcastBackgroundDownload();
             clearPlayerScrubCursorMode(false);
-            if (!playback.isMusicActive() || state != STATE_SETTINGS
-                    || !SettingsScreens.MUSIC_QUEUE.equals(settingsSubScreenKey)) {
+            if (!playback.isMusicActive() || state != STATE_SETTINGS) {
                 purgeStreamTempFiles();
             }
         }
@@ -4376,8 +4743,8 @@ public class MainActivity extends Activity {
         applyStatusBarTheme();
         if (state == STATE_MENU) {
             isPickingBackground = false;
-            View c = getCurrentFocus();
-            if (c == null) requestFirstHomeMenuFocus();
+            buildHomeMenu();
+            requestFirstHomeMenuFocus();
             updateHomeMenuPreview(focusedHomeMenuIndex);
         }
         updateStatusBarTitle();
@@ -4410,7 +4777,11 @@ public class MainActivity extends Activity {
                 buildPodcastSearchUI();
             }
         } else if (state == STATE_SOULSEEK) {
-            buildSoulseekSearchUI();
+            if (soulseekSearchInProgress || soulseekUiMode == SOULSEEK_UI_RESULTS) {
+                buildSoulseekResultsUI();
+            } else {
+                buildSoulseekSearchUI();
+            }
         } else if (state == STATE_APPS) {
             buildAppsLauncherUI();
         } else if (state == STATE_MORE) {
@@ -4423,12 +4794,14 @@ public class MainActivity extends Activity {
         if (state == STATE_SETTINGS) {
             applyFullWidthMenusLayout();
             lastSettingsFocusIndex = safeFocusIndex;
-            if (SettingsScreens.MUSIC_QUEUE.equals(settingsSubScreenKey)) {
-                buildMusicQueueEditorUI();
-            } else if (SettingsScreens.THEMES.equals(settingsSubScreenKey)) {
+            if (SettingsScreens.THEMES.equals(settingsSubScreenKey)) {
                 buildUnifiedThemesUI();
             } else if (SettingsScreens.THEME_VARIANT.equals(settingsSubScreenKey) && themeVariantEntry != null) {
                 openThemeVariantBrowser(themeVariantEntry);
+            } else if (SettingsScreens.ABOUT.equals(settingsSubScreenKey)) {
+                buildAboutUI();
+            } else if (SettingsScreens.SYSTEM_UPDATE.equals(settingsSubScreenKey)) {
+                buildUpdateSettingsUI();
             } else {
                 buildSettingsUI();
             }
@@ -4448,6 +4821,7 @@ public class MainActivity extends Activity {
             refreshY1ThemedActionButtons();
             btnServerToggle.requestFocus();
         }
+        updateNetworkRescanLoop();
     }
 
     private void loadBrightnessUI() {
@@ -4463,9 +4837,9 @@ public class MainActivity extends Activity {
 
     private void updateBrightness(int newBrightness) {
         currentSystemBrightness = newBrightness;
-        pbBrightness.setProgress(currentSystemBrightness);
+        if (pbBrightness != null) pbBrightness.setProgress(currentSystemBrightness);
         int percent = (int) (((float) currentSystemBrightness / 255.0f) * 100);
-        tvBrightnessVal.setText(percent + "%");
+        if (tvBrightnessVal != null) tvBrightnessVal.setText(percent + "%");
 
         try {
             Settings.System.putInt(getContentResolver(), Settings.System.SCREEN_BRIGHTNESS_MODE,
@@ -4475,6 +4849,16 @@ public class MainActivity extends Activity {
             layoutParams.screenBrightness = currentSystemBrightness / 255.0f;
             getWindow().setAttributes(layoutParams);
         } catch (Exception e) {
+        }
+    }
+
+    private void adjustContextBrightness(boolean up) {
+        currentSystemBrightness = up
+                ? Math.min(255, currentSystemBrightness + 15)
+                : Math.max(10, currentSystemBrightness - 15);
+        updateBrightness(currentSystemBrightness);
+        if (themedContextMenu != null && contextMenuInVolumeSlider) {
+            themedContextMenu.updateBrightnessSlider(currentSystemBrightness, 255);
         }
     }
 
@@ -4529,15 +4913,7 @@ public class MainActivity extends Activity {
     private void handleCenterShortClick() {
         if (themedContextMenu != null && themedContextMenu.isShowing()) return;
         if (System.currentTimeMillis() < suppressListClickUntil) return;
-        if (currentScreenState == STATE_PLAYER) {
-            if (playerScrubCursorActive) {
-                commitPlayerScrubCursor();
-            } else {
-                enterPlayerScrubCursorMode();
-            }
-            clickFeedback();
-        }
-        else if (currentScreenState == STATE_WIFI_KEYBOARD) {
+        if (currentScreenState == STATE_WIFI_KEYBOARD) {
             handleKeyboardInput();
         } else if (currentScreenState == STATE_MENU) {
             clickFeedback();
@@ -4546,39 +4922,11 @@ public class MainActivity extends Activity {
             }
         } else if (currentScreenState != STATE_BRIGHTNESS && currentScreenState != STATE_STORAGE
                 && currentScreenState != STATE_PLAYER) {
-            if (currentScreenState == STATE_SETTINGS && isHomeMoreArrangeScreen()) {
-                clickFeedback();
-                if (homeMoreMoveModeId == null) {
-                    String id = homeScreenOrderFocusedId();
-                    if (id != null) {
-                        View focused = getCurrentFocus();
-                        if (focused != null) {
-                            homeScreenOrderFocusIndex = containerSettingsItems.indexOfChild(focused);
-                        }
-                        homeMoreMoveModeId = id;
-                        refreshHomeArrangeMoveUi(true);
-                    }
-                } else {
-                    homeMoreMoveModeId = null;
-                    refreshHomeArrangeMoveUi(true);
-                }
-                return;
-            }
-            if (currentScreenState == STATE_SETTINGS && isHomeScreenArrangeScreen()) {
-                clickFeedback();
-                if (homeScreenMoveModeId == null) {
-                    String id = homeScreenOrderFocusedId();
-                    if (id != null) {
-                        View focused = getCurrentFocus();
-                        if (focused != null) {
-                            homeScreenOrderFocusIndex = containerSettingsItems.indexOfChild(focused);
-                        }
-                        homeScreenMoveModeId = id;
-                        refreshHomeArrangeMoveUi(false);
-                    }
-                } else {
-                    homeScreenMoveModeId = null;
-                    refreshHomeArrangeMoveUi(false);
+            if (currentScreenState == STATE_SETTINGS && SettingsScreens.HOME.equals(settingsSubScreenKey)) {
+                View c = getCurrentFocus();
+                if (c != null) {
+                    if (System.currentTimeMillis() < suppressListClickUntil) return;
+                    c.performClick();
                 }
                 return;
             }
@@ -4586,37 +4934,6 @@ public class MainActivity extends Activity {
                 clickFeedback();
                 ThemeBrowser.Row row = themeBrowserFocusedRow();
                 if (row != null) onThemeBrowserRowClick(row);
-                return;
-            }
-            if (currentScreenState == STATE_SETTINGS && isMusicQueueEditorScreen()) {
-                clickFeedback();
-                int listPos = musicQueueListPosition();
-                if (listPos <= 0) {
-                    if (musicQueueMoveFrom >= 0) {
-                        musicQueueMoveFrom = -1;
-                        refreshMusicQueueList();
-                    } else {
-                        setMusicQueueListVisible(false);
-                        changeScreen(musicQueueReturnScreen);
-                    }
-                    return;
-                }
-                musicQueueEditorFocus = listPos;
-                int idx = listPos - 1;
-                if (musicQueueMoveFrom < 0) {
-                    if (canPickMusicQueueMoveFrom(idx)) {
-                        musicQueueMoveFrom = idx;
-                        refreshMusicQueueList();
-                    }
-                } else {
-                    if (idx == musicQueueMoveFrom) {
-                        musicQueueMoveFrom = -1;
-                        refreshMusicQueueList();
-                    } else if (canDropMusicQueueMoveAt(idx)) {
-                        applyMusicQueueMove(musicQueueMoveFrom, idx);
-                        musicQueueMoveFrom = -1;
-                    }
-                }
                 return;
             }
             View c = getCurrentFocus();
@@ -4629,16 +4946,29 @@ public class MainActivity extends Activity {
 
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
-        // ponytail: intercept center before focused rows/ListView eat it (com.innioasis.y1 BaseActivity)
+        // ponytail: Y1 wheel OK is often KEYCODE_MEDIA_PLAY_PAUSE — treat as center while context menu is open
+        if (themedContextMenu != null && themedContextMenu.isShowing()
+                && isCenterKey(event.getKeyCode())) {
+            if (isWakingKeyEvent(event)) return true;
+            if (event.getAction() == KeyEvent.ACTION_DOWN) return trackCenterKeyDown(event, true);
+            if (event.getAction() == KeyEvent.ACTION_UP) return handleCenterKeyUp(event, true);
+            return true;
+        }
+        // Center/OK activates focus; Play/Pause is transport (except keyboard — charset/OK there).
         if (isCenterKey(event.getKeyCode())) {
             if (isWakingKeyEvent(event)) return true;
-            if (themedContextMenu != null && themedContextMenu.isShowing()) {
-                if (event.getAction() == KeyEvent.ACTION_DOWN) return trackCenterKeyDown(event, true);
-                if (event.getAction() == KeyEvent.ACTION_UP) return handleCenterKeyUp(event, true);
-                return true;
+            boolean fromMenu = themedContextMenu != null && themedContextMenu.isShowing();
+            if (event.getAction() == KeyEvent.ACTION_DOWN) return trackCenterKeyDown(event, fromMenu);
+            if (event.getAction() == KeyEvent.ACTION_UP) return handleCenterKeyUp(event, fromMenu);
+            return true;
+        }
+        if (currentScreenState == STATE_WIFI_KEYBOARD && isMediaPlayPauseKey(event.getKeyCode())) {
+            if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                return onKeyDown(event.getKeyCode(), event);
             }
-            if (event.getAction() == KeyEvent.ACTION_DOWN) return trackCenterKeyDown(event, false);
-            if (event.getAction() == KeyEvent.ACTION_UP) return handleCenterKeyUp(event, false);
+            if (event.getAction() == KeyEvent.ACTION_UP) {
+                return onKeyUp(event.getKeyCode(), event);
+            }
             return true;
         }
         if (themedContextMenu != null && themedContextMenu.isShowing()) {
@@ -4755,6 +5085,28 @@ public class MainActivity extends Activity {
         keyboardReturnState = STATE_SOULSEEK;
         keyboardPrefill = initialQuery != null ? initialQuery : "";
         changeScreen(STATE_WIFI_KEYBOARD);
+    }
+
+    /**
+     * Launch Reach from a search suggestion. When {@code openKeyboard} is true the on-screen
+     * keyboard opens pre-filled so the user can edit before searching.
+     */
+    private void launchReachSearchFromSuggestion(String query, boolean openKeyboard) {
+        if (query == null || query.trim().isEmpty()) return;
+        if (!requireInternet(R.string.soulseek_wifi_required)) return;
+        if (!ConnectivityHelper.shouldShowHomeShortcut(this, HomeMenuConfig.ID_SOULSEEK)) {
+            Toast.makeText(this, getString(R.string.soulseek_wifi_required), Toast.LENGTH_SHORT).show();
+            return;
+        }
+        contextMenuNavPending = true;
+        soulseekReturnScreen = currentScreenState;
+        if (openKeyboard) {
+            openSoulseekScreen(true);
+            openSoulseekSearchKeyboard(query.trim());
+        } else {
+            fetchSoulseekResults(query.trim());
+            openSoulseekScreen(true);
+        }
     }
 
     private void openSoulseekScreen() {
@@ -4887,7 +5239,11 @@ public class MainActivity extends Activity {
     }
 
     private void handleKeyboardMediaDel() {
-        clickFeedback();
+        handleKeyboardMediaDel(true);
+    }
+
+    private void handleKeyboardMediaDel(boolean vibrate) {
+        if (vibrate) clickFeedback();
         if (typedPassword.length() > 0) {
             typedPassword = typedPassword.substring(0, typedPassword.length() - 1);
         }
@@ -4917,6 +5273,15 @@ public class MainActivity extends Activity {
     }
 
     private void handleKeyboardPlayPauseLongPress() {
+        // #region agent log
+        try {
+            org.json.JSONObject d = new org.json.JSONObject();
+            d.put("indexBefore", keyboardIndex);
+            d.put("ppLongDoCase", keyboardPpLongDoCase);
+            DebugAgentLog.log(this, "MainActivity.handleKeyboardPlayPauseLongPress",
+                    "charset switch long press", "H2", d);
+        } catch (Exception ignored) {}
+        // #endregion
         clickFeedback();
         if (keyboardPpLongDoCase) {
             int flipped = keyboardFlipCaseIndex(keyboardIndex);
@@ -4929,26 +5294,82 @@ public class MainActivity extends Activity {
     }
 
     private void connectToWifi() {
-        Toast.makeText(this, getString(R.string.toast_wifi_connecting, targetWifiSsid), Toast.LENGTH_SHORT).show();
-        WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
-        if (wm != null) {
-            WifiConfiguration conf = new WifiConfiguration();
-            conf.SSID = "\"" + targetWifiSsid + "\"";
-            if (isTargetWifiOpen)
-                conf.allowedKeyManagement.set(WifiConfiguration.KeyMgmt.NONE);
-            else
-                conf.preSharedKey = "\"" + typedPassword + "\"";
-            int netId = wm.addNetwork(conf);
-            wm.disconnect();
-            wm.enableNetwork(netId, true);
-            wm.reconnect();
-            wm.saveConfiguration();
-        }
+        performWifiConnection(targetWifiSsid, typedPassword, isTargetWifiOpen);
         changeScreen(STATE_WIFI);
+    }
+
+    private void performWifiConnection(String ssid, String password, boolean open) {
+        Toast.makeText(this, getString(R.string.toast_wifi_connecting, ssid), Toast.LENGTH_SHORT).show();
+        WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+        if (wm == null) return;
+        WifiConfiguration conf = new WifiConfiguration();
+        conf.SSID = "\"" + ssid + "\"";
+        if (open) {
+            conf.allowedKeyManagement.set(WifiConfiguration.KeyMgmt.NONE);
+        } else {
+            conf.preSharedKey = "\"" + password + "\"";
+        }
+        int netId = wm.addNetwork(conf);
+        wm.disconnect();
+        wm.enableNetwork(netId, true);
+        wm.reconnect();
+        wm.saveConfiguration();
+    }
+
+    private boolean isWifiNetworkOpen(String capabilities) {
+        if (capabilities == null || capabilities.isEmpty()) return true;
+        String caps = capabilities.toUpperCase(Locale.US);
+        return !caps.contains("WPA") && !caps.contains("WEP") && !caps.contains("PSK")
+                && !caps.contains("EAP");
+    }
+
+    private boolean isWifiSsidConnected(String ssid) {
+        if (ssid == null || ssid.isEmpty()) return false;
+        try {
+            WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+            WifiInfo info = wm != null ? wm.getConnectionInfo() : null;
+            String connected = info != null && info.getSSID() != null ? info.getSSID().replace("\"", "") : "";
+            return ssid.equals(connected);
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    @android.annotation.SuppressLint("MissingPermission")
+    private int wifiRssiForSsid(String ssid) {
+        if (ssid == null || ssid.isEmpty()) return -100;
+        try {
+            WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+            if (wm == null) return -100;
+            java.util.List<ScanResult> results = wm.getScanResults();
+            if (results != null) {
+                for (ScanResult result : results) {
+                    if (ssid.equals(result.SSID)) return result.level;
+                }
+            }
+            if (isWifiSsidConnected(ssid)) {
+                WifiInfo info = wm.getConnectionInfo();
+                if (info != null) return info.getRssi();
+            }
+        } catch (Exception ignored) {}
+        return -100;
+    }
+
+    private String wifiContextIconKeyForSsid(String ssid) {
+        String caps = wifiCapabilitiesForSsid(ssid);
+        if (!isWifiNetworkOpen(caps) && !isWifiSsidConnected(ssid)) {
+            return "wifi.lock";
+        }
+        return "wifi.sig." + ThemeManager.wifiSignalIndex(wifiRssiForSsid(ssid));
     }
 
     @android.annotation.SuppressLint("MissingPermission")
     private void startBluetoothScan() {
+        startBluetoothScan(true);
+    }
+
+    @android.annotation.SuppressLint("MissingPermission")
+    private void startBluetoothScan(boolean requestFocus) {
         updateStatusBarTitle();
         final BluetoothAdapter ba = BluetoothAdapter.getDefaultAdapter();
         boolean isOn = false;
@@ -4989,11 +5410,6 @@ public class MainActivity extends Activity {
                 }
             });
             containerBtItems.addView(btnToggle, 0);
-
-            if (btnScanBt.getParent() != null) {
-                ((android.view.ViewGroup) btnScanBt.getParent()).removeView(btnScanBt);
-            }
-            containerBtItems.addView(btnScanBt);
         } else {
             LinearLayout btnToggle = (LinearLayout) existingToggle;
             TextView tvRight = (TextView) btnToggle.getChildAt(1);
@@ -5001,24 +5417,20 @@ public class MainActivity extends Activity {
             if (!btnToggle.hasFocus())
                 ThemeManager.applyThemedTextStyle(tvRight, y1InlineStateColor(statusText, false));
             for (int i = containerBtItems.getChildCount() - 1; i > 0; i--) {
-                View v = containerBtItems.getChildAt(i);
-                if (v != btnScanBt) {
-                    containerBtItems.removeViewAt(i);
-                }
+                containerBtItems.removeViewAt(i);
             }
         }
 
         if (!isOn) {
-            btnScanBt.setText(getString(R.string.bluetooth_off));
-            if (getCurrentFocus() == null && containerBtItems.getChildCount() > 0)
+            if (requestFocus && containerBtItems.getChildCount() > 0) {
                 containerBtItems.getChildAt(0).requestFocus();
+            }
+            updateNetworkRescanLoop();
             return;
         }
 
-        btnScanBt.setText(getString(R.string.bluetooth_scanning));
         foundBtDevices.clear();
 
-        // 🚀 1순위: 기기에 이미 페어링(저장)된 블루투스 기기들을 최상단에 먼저 깔아줍니다!
         try {
             java.util.Set<BluetoothDevice> pairedDevices = ba.getBondedDevices();
             if (pairedDevices != null && pairedDevices.size() > 0) {
@@ -5030,12 +5442,24 @@ public class MainActivity extends Activity {
         } catch (Exception e) {
         }
 
-        if (getCurrentFocus() == null && containerBtItems.getChildCount() > 0)
+        if (requestFocus && containerBtItems.getChildCount() > 0) {
             containerBtItems.getChildAt(0).requestFocus();
+        }
 
-        if (ba.isDiscovering())
-            ba.cancelDiscovery();
+        triggerBluetoothDiscovery(false);
+        updateNetworkRescanLoop();
+    }
+
+    @android.annotation.SuppressLint("MissingPermission")
+    private void triggerBluetoothDiscovery(boolean requestFocus) {
+        final BluetoothAdapter ba = BluetoothAdapter.getDefaultAdapter();
+        if (ba == null || !ba.isEnabled()) return;
+        if (ba.isDiscovering()) ba.cancelDiscovery();
         ba.startDiscovery();
+        if (requestFocus && currentScreenState == STATE_BLUETOOTH
+                && containerBtItems != null && containerBtItems.getChildCount() > 0) {
+            containerBtItems.getChildAt(0).requestFocus();
+        }
     }
 
     // 💡 페어링 상태(isPaired)를 파라미터로 받아서 색상과 아이콘을 바꾸는 함수
@@ -5065,7 +5489,7 @@ public class MainActivity extends Activity {
         try {
             if (device.getBondState() == BluetoothDevice.BOND_BONDED) {
                 if (isBluetoothAudioConnected(device)) {
-                    Toast.makeText(this, getString(R.string.toast_already_connected, device.getName()), Toast.LENGTH_SHORT).show();
+                    disconnectBluetoothAudio(device);
                 } else {
                     connectBluetoothAudio(device);
                 }
@@ -5160,6 +5584,33 @@ public class MainActivity extends Activity {
     }
 
     @android.annotation.SuppressLint("MissingPermission")
+    private void disconnectBluetoothAudio(BluetoothDevice device) {
+        if (device == null) return;
+        ensureA2dpProfile();
+        if (bluetoothA2dp == null) {
+            Toast.makeText(this, getString(R.string.toast_audio_connect_failed), Toast.LENGTH_SHORT).show();
+            return;
+        }
+        try {
+            Method disconnect = bluetoothA2dp.getClass().getMethod("disconnect", BluetoothDevice.class);
+            Object ok = disconnect.invoke(bluetoothA2dp, device);
+            // #region agent log
+            try {
+                org.json.JSONObject d = new org.json.JSONObject();
+                d.put("addr", device.getAddress());
+                d.put("ok", ok);
+                DebugAgentLog.log(this, "MainActivity.disconnectBluetoothAudio", "a2dp disconnect", "H4", d);
+            } catch (Exception ignored) {}
+            // #endregion
+            if (ok instanceof Boolean && !(Boolean) ok) {
+                Toast.makeText(this, getString(R.string.toast_audio_connect_failed), Toast.LENGTH_SHORT).show();
+            }
+        } catch (Exception e) {
+            Toast.makeText(this, getString(R.string.toast_audio_connect_failed), Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    @android.annotation.SuppressLint("MissingPermission")
     private void connectA2dpNow(BluetoothDevice device) {
         try {
             // ponytail: prefer privileged write via su in rooted env; fallback to app write if allowed.
@@ -5189,24 +5640,26 @@ public class MainActivity extends Activity {
     }
 
     private boolean runSuCommandSilently(String command) {
-        java.io.DataOutputStream os = null;
-        Process process = null;
-        try {
-            process = Runtime.getRuntime().exec("su");
-            os = new java.io.DataOutputStream(process.getOutputStream());
-            os.writeBytes(command + "\n");
-            os.writeBytes("exit\n");
-            os.flush();
-            int exit = process.waitFor();
-            return exit == 0;
-        } catch (Throwable ignored) {
-            return false;
-        } finally {
-            if (os != null) {
-                try { os.close(); } catch (Exception ignored) {}
+        for (String su : new String[] {"/system/xbin/su", "su"}) {
+            java.io.DataOutputStream os = null;
+            Process process = null;
+            try {
+                process = Runtime.getRuntime().exec(su);
+                os = new java.io.DataOutputStream(process.getOutputStream());
+                os.writeBytes(command + "\n");
+                os.writeBytes("exit\n");
+                os.flush();
+                int exit = process.waitFor();
+                if (exit == 0) return true;
+            } catch (Throwable ignored) {
+            } finally {
+                if (os != null) {
+                    try { os.close(); } catch (Exception ignored) {}
+                }
+                if (process != null) process.destroy();
             }
-            if (process != null) process.destroy();
         }
+        return false;
     }
 
     private static String shQuote(String s) {
@@ -5250,19 +5703,14 @@ public class MainActivity extends Activity {
         boolean isOn = wm != null && wm.isWifiEnabled();
         updateWifiUI(null);
 
-        if (isOn) {
-            btnScanWifi.setText(getString(R.string.bluetooth_scanning));
+        if (isOn && wm != null) {
             foundWifiNetworks.clear();
-            // 💡 무조건 최상단 전원 버튼으로 포커스 강제 이동!
-            if (containerWifiItems.getChildCount() > 0)
-                containerWifiItems.getChildAt(0).requestFocus();
             wm.startScan();
-        } else {
-            btnScanWifi.setText(getString(R.string.wifi_off));
-            // 💡 무조건 최상단 전원 버튼으로 포커스 강제 이동!
-            if (containerWifiItems.getChildCount() > 0)
-                containerWifiItems.getChildAt(0).requestFocus();
         }
+        if (containerWifiItems.getChildCount() > 0) {
+            containerWifiItems.getChildAt(0).requestFocus();
+        }
+        updateNetworkRescanLoop();
     }
 
     private void updateWifiUI(List<ScanResult> results) {
@@ -5305,11 +5753,6 @@ public class MainActivity extends Activity {
                 }
             });
             containerWifiItems.addView(btnToggle, 0);
-
-            if (btnScanWifi.getParent() != null) {
-                ((android.view.ViewGroup) btnScanWifi.getParent()).removeView(btnScanWifi);
-            }
-            containerWifiItems.addView(btnScanWifi);
         } else {
             LinearLayout btnToggle = (LinearLayout) existingToggle;
             TextView tvRight = (TextView) btnToggle.getChildAt(1);
@@ -5317,10 +5760,7 @@ public class MainActivity extends Activity {
             if (!btnToggle.hasFocus())
                 ThemeManager.applyThemedTextStyle(tvRight, y1InlineStateColor(statusText, false));
             for (int i = containerWifiItems.getChildCount() - 1; i > 0; i--) {
-                View v = containerWifiItems.getChildAt(i);
-                if (v != btnScanWifi) {
-                    containerWifiItems.removeViewAt(i);
-                }
+                containerWifiItems.removeViewAt(i);
             }
         }
 
@@ -5407,8 +5847,10 @@ public class MainActivity extends Activity {
                     manager.disconnect();
                     manager.enableNetwork(savedNetId, true);
                     manager.reconnect();
+                } else if (isOpen) {
+                    performWifiConnection(ssid, "", true);
                 } else {
-                    isTargetWifiOpen = isOpen;
+                    isTargetWifiOpen = false;
                     openWifiKeyboard(ssid);
                 }
             }
@@ -5453,6 +5895,15 @@ public class MainActivity extends Activity {
     }
 
     private String rowLabel(String rowKey) {
+        if (rowKey != null && rowKey.startsWith("home.shortcut.")
+                && SettingsScreens.HOME.equals(settingsSubScreenKey)) {
+            String id = rowKey.substring("home.shortcut.".length());
+            HomeMenuConfig.Entry e = HomeMenuConfig.find(id);
+            if (e != null) return homeShortcutEditorLabel(e);
+        }
+        if (RowKeys.HOME_MORE.equals(rowKey) && SettingsScreens.HOME.equals(settingsSubScreenKey)) {
+            return homeEditorToggleLabel(R.string.home_screen_more, HomeMenuConfig.isMoreEnabled(prefs));
+        }
         int res = RowKeys.labelResId(rowKey);
         return res != 0 ? getString(res) : rowKey;
     }
@@ -5465,12 +5916,16 @@ public class MainActivity extends Activity {
 
     /** Y1 settings list: title only on row; state/icon live in the right preview pane. */
     private LinearLayout createSettingsRow(String rowKey, int labelResId, boolean submenu) {
-        final String title = getString(labelResId);
+        return createSettingsRow(rowKey, getString(labelResId), submenu, true);
+    }
+
+    private LinearLayout createSettingsRow(String rowKey, CharSequence title, boolean submenu,
+            boolean showInlineState) {
         final LinearLayout layout = new LinearLayout(this);
         layout.setTag(rowKey);
         layout.setSoundEffectsEnabled(false);
         layout.setOrientation(LinearLayout.HORIZONTAL);
-        layout.setFocusable(true);
+        applySettingsRowFocusability(layout);
         layout.setGravity(android.view.Gravity.CENTER_VERTICAL);
         int hPad = (int) (10 * getResources().getDisplayMetrics().density);
         layout.setPadding(hPad, 0, hPad, 0);
@@ -5478,6 +5933,7 @@ public class MainActivity extends Activity {
         layout.setBackground(getY1RowBackground(false, rowW, Y1_ROW_MENU));
 
         TextView tvLeft = new TextView(this);
+        tvLeft.setFocusable(false);
         tvLeft.setTypeface(ThemeManager.getCustomFont(), android.graphics.Typeface.BOLD);
         tvLeft.setText(title);
         ThemeManager.applyThemedTextStyle(tvLeft, ThemeManager.getSettingMenuTextColorNormal());
@@ -5489,7 +5945,8 @@ public class MainActivity extends Activity {
         layout.addView(tvLeft);
 
         final TextView tvRight = new TextView(this);
-        if (isFullWidthMenus && !submenu) {
+        tvRight.setFocusable(false);
+        if (isFullWidthMenus && !submenu && showInlineState) {
             tvRight.setTag("inline_state");
             tvRight.setTypeface(ThemeManager.getCustomFont(), android.graphics.Typeface.BOLD);
             tvRight.setText(resolveSettingStateText(rowKey));
@@ -5616,22 +6073,26 @@ public class MainActivity extends Activity {
         }
         if (settingsMenuHost != null) {
             FrameLayout.LayoutParams slp = (FrameLayout.LayoutParams) settingsMenuHost.getLayoutParams();
-            slp.width = isFullWidthMenus
+            boolean settingsWide = isFullWidthMenus || settingsAboutFullWidth;
+            slp.width = settingsWide
                     ? FrameLayout.LayoutParams.MATCH_PARENT : settingsMenuWidthPx;
             slp.height = isFullWidthMenus ? fullMenuH : defaultSettingsH;
-            slp.leftMargin = isFullWidthMenus ? 0 : menuLeft;
+            slp.leftMargin = settingsWide ? 0 : menuLeft;
             settingsMenuHost.setLayoutParams(slp);
         }
         if (settingsPreviewPane != null) {
-            settingsPreviewPane.setVisibility(isFullWidthMenus ? View.GONE : View.VISIBLE);
+            boolean hidePreview = isFullWidthMenus || settingsAboutFullWidth;
+            settingsPreviewPane.setVisibility(hidePreview ? View.GONE : View.VISIBLE);
         }
         updateHomeMenuPreviewVisibility();
-        int settingsPanelH = isFullWidthMenus && screenHeightPx > 0
+        int settingsPanelH = (isFullWidthMenus || settingsAboutFullWidth) && screenHeightPx > 0
                 ? screenHeightPx - (int) getResources().getDimension(R.dimen.y1_status_bar_height)
                 : (int) getResources().getDimension(R.dimen.y1_settings_menu_height);
         applyMenuPanelBackground(menuListHost, y1RowWidthPx, menuListHeightPx,
                 (int) getResources().getDimension(R.dimen.y1_menu_height));
-        applyMenuPanelBackground(settingsMenuHost, settingsMenuWidthPx, settingsPanelH,
+        applyMenuPanelBackground(settingsMenuHost,
+                (isFullWidthMenus || settingsAboutFullWidth) && screenWidthPx > 0 ? screenWidthPx : settingsMenuWidthPx,
+                settingsPanelH,
                 (int) getResources().getDimension(R.dimen.y1_settings_menu_height));
         updateScreenBackground(currentScreenState);
         applyPodcastBrowserLayout();
@@ -5639,7 +6100,7 @@ public class MainActivity extends Activity {
     }
 
     private void applySettingsListLayout() {
-        if (listThemes == null && listMusicQueue == null) return;
+        if (listThemes == null) return;
         int w = isFullWidthMenus && screenWidthPx > 0
                 ? screenWidthPx : settingsMenuWidthPx;
         int statusH = (int) getResources().getDimension(R.dimen.y1_status_bar_height);
@@ -5647,9 +6108,7 @@ public class MainActivity extends Activity {
                 ? screenHeightPx - statusH
                 : (int) getResources().getDimension(R.dimen.y1_settings_menu_height);
         FrameLayout.LayoutParams themesLp = new FrameLayout.LayoutParams(w, h);
-        FrameLayout.LayoutParams queueLp = new FrameLayout.LayoutParams(w, h);
-        if (listThemes != null) listThemes.setLayoutParams(themesLp);
-        if (listMusicQueue != null) listMusicQueue.setLayoutParams(queueLp);
+        listThemes.setLayoutParams(themesLp);
     }
 
     private boolean podcastDualPaneActive() {
@@ -6231,6 +6690,9 @@ public class MainActivity extends Activity {
         if (RowKeys.SCREEN_TIMEOUT.equals(rowKey)) return screenTimeoutStateText();
         if (RowKeys.FULL_WIDTH.equals(rowKey)) return stateOnOff(isFullWidthMenus);
         if (RowKeys.AUTO_FETCH.equals(rowKey)) return stateOnOff(isAutoFetchEnabled);
+        if (RowKeys.ABOUT.equals(rowKey)) {
+            return AppVersion.displayLabel(this);
+        }
         if (RowKeys.NOW_PLAYING_ALBUM_BLUR.equals(rowKey)) return stateOnOff(playerAlbumBlurEnabled);
         if (RowKeys.WIDGET_CLOCK.equals(rowKey)) return stateOnOff(isWidgetClockOn);
         if (RowKeys.WIDGET_BATTERY.equals(rowKey)) return stateOnOff(isWidgetBatteryOn);
@@ -6240,42 +6702,26 @@ public class MainActivity extends Activity {
         }
         if (rowKey != null && rowKey.startsWith("home.shortcut.")) {
             String id = rowKey.substring("home.shortcut.".length());
-            if (isHomeScreenArrangeScreen() || isHomeMoreArrangeScreen()) {
-                List<String> orderIds = isHomeMoreArrangeScreen()
-                        ? HomeMenuConfig.loadMoreOrderIds(prefs)
-                        : HomeMenuConfig.loadHomeOrderIds(prefs);
-                int idx = orderIds.indexOf(id);
-                if (idx >= 0) {
-                    return getString(R.string.common_position_format, idx + 1, orderIds.size());
-                }
-                if (homeScreenMoveModeId != null && id.equals(homeScreenMoveModeId)) {
-                    return getString(R.string.home_screen_move_mode);
-                }
-                if (homeMoreMoveModeId != null && id.equals(homeMoreMoveModeId)) {
-                    return getString(R.string.home_screen_move_mode);
-                }
-            }
             HomeMenuConfig.Entry e = HomeMenuConfig.find(id);
             if (e == null) return "";
-            if (e.required) return getString(R.string.home_screen_move);
-            if (SettingsScreens.HOME.equals(settingsSubScreenKey) && !isHomeScreenArrangeScreen()) {
-                return stateOnOff(HomeMenuConfig.isShortcutEnabled(prefs, id));
+            if (SettingsScreens.HOME.equals(settingsSubScreenKey)) {
+                return "";
             }
             if (HomeMenuConfig.ID_GET_THEMES.equals(id) || HomeMenuConfig.ID_THEMES.equals(id)) {
                 return getString(R.string.home_screen_preview_themes);
             }
             if (HomeMenuConfig.ID_VIDEOS.equals(id)) return getString(R.string.home_screen_preview_videos);
             if (HomeMenuConfig.ID_PHOTOS.equals(id)) return getString(R.string.home_screen_preview_photos);
+            if (HomeMenuConfig.ID_AUDIOBOOKS.equals(id)) {
+                return getString(R.string.home_audiobooks_coming_soon);
+            }
             return stateOnOff(HomeMenuConfig.isShortcutEnabled(prefs, id));
         }
-        if (RowKeys.HOME_MORE.equals(rowKey)) return stateOnOff(HomeMenuConfig.isMoreEnabled(prefs));
-        if (RowKeys.HOME_ARRANGE.equals(rowKey)) return "";
-        if (SettingsScreens.isHome(settingsSubScreenKey)) {
-            if (isHomeScreenArrangeScreen() && homeScreenMoveModeId != null
-                    && RowKeys.homeShortcut(homeScreenMoveModeId).equals(rowKey)) {
-                return getString(R.string.home_screen_move_mode);
-            }
+        if (RowKeys.HOME_MORE.equals(rowKey)) {
+            if (SettingsScreens.HOME.equals(settingsSubScreenKey)) return "";
+            return stateOnOff(HomeMenuConfig.isMoreEnabled(prefs));
         }
+        if (RowKeys.HOME_MANAGE_MORE.equals(rowKey)) return "";
         if (SettingsScreens.SOULSEEK.equals(settingsSubScreenKey)) {
             if (RowKeys.SOULSEEK_ACCOUNT.equals(rowKey)) {
                 return SoulseekAccount.displayLabel(SoulseekAccount.load(prefs));
@@ -6284,7 +6730,8 @@ public class MainActivity extends Activity {
             if (RowKeys.SOULSEEK_CONNECTION.equals(rowKey)) return soulseekSharingStatusLabel();
             if (RowKeys.SOULSEEK_ABOUT.equals(rowKey)) return getString(R.string.soulseek_preview_about);
             if (RowKeys.SOULSEEK_REGENERATE.equals(rowKey)) return getString(R.string.soulseek_preview_regenerate);
-            if (RowKeys.SOULSEEK_HIDE_FLAC.equals(rowKey)) return stateOnOff(soulseekHideFlac);
+            if (RowKeys.SOULSEEK_HIDE_HIGH_BITRATE.equals(rowKey)) return stateOnOff(soulseekHideHighBitrate);
+            if (RowKeys.SOULSEEK_SHARING.equals(rowKey)) return stateOnOff(soulseekSharingEnabled);
         }
         if (RowKeys.SOULSEEK_ACCOUNT.equals(rowKey) && SettingsScreens.isSoulseek(settingsSubScreenKey)) {
             return SoulseekAccount.displayLabel(SoulseekAccount.load(prefs));
@@ -6297,6 +6744,24 @@ public class MainActivity extends Activity {
         if (RowKeys.LANG_SYSTEM.equals(rowKey)) return "";
         if (RowKeys.LANG_EN.equals(rowKey) || RowKeys.LANG_KO.equals(rowKey)) return "";
         if (RowKeys.STATUS_BAR_MATCH_FONT.equals(rowKey)) return stateOnOff(statusBarMatchFont);
+        if (SettingsScreens.LIBRARY_BROWSE.equals(settingsSubScreenKey)) {
+            if (RowKeys.LIB_SPLIT_CREDITS.equals(rowKey)) return stateOnOff(libraryBrowsePrefs.splitCredits());
+            if (RowKeys.LIB_NORM_ALBUM.equals(rowKey)) return stateOnOff(libraryBrowsePrefs.normalizeAlbumCase());
+            if (RowKeys.LIB_GUEST_MODE.equals(rowKey)) {
+                return getString(LibraryBrowsePrefs.guestBrowseModeLabelRes(libraryBrowsePrefs.guestBrowseMode()));
+            }
+            if (RowKeys.LIB_ARTIST_FILTER.equals(rowKey)) {
+                return getString(LibraryBrowsePrefs.artistFilterLabelRes(libraryBrowsePrefs.artistFilter()));
+            }
+            if (RowKeys.LIB_ARTIST_SORT.equals(rowKey)) {
+                return getString(LibraryBrowsePrefs.artistSortLabelRes(libraryBrowsePrefs.artistSort()));
+            }
+            if (RowKeys.LIB_SONG_SORT.equals(rowKey)) {
+                return getString(LibraryBrowsePrefs.songSortLabelRes(libraryBrowsePrefs.songSort()));
+            }
+            if (RowKeys.LIB_ALBUM_SUB.equals(rowKey)) return stateOnOff(libraryBrowsePrefs.albumOwnerSubtitles());
+            if (RowKeys.LIB_GUEST_SUB.equals(rowKey)) return stateOnOff(libraryBrowsePrefs.guestSongSubtitles());
+        }
         // ponytail: Reach blurb only in Reach settings sub-panes — home preview uses appReach icon
         if (RowKeys.SOULSEEK.equals(rowKey)) return "";
         return "";
@@ -6349,7 +6814,7 @@ public class MainActivity extends Activity {
         layout.setTag(rowKey != null ? rowKey : iconKey);
         layout.setSoundEffectsEnabled(false);
         layout.setOrientation(LinearLayout.HORIZONTAL);
-        layout.setFocusable(true);
+        applySettingsRowFocusability(layout);
         layout.setGravity(android.view.Gravity.CENTER_VERTICAL);
         int hPad = (int) (10 * getResources().getDisplayMetrics().density);
         layout.setPadding(hPad, 0, hPad, 0);
@@ -6357,6 +6822,7 @@ public class MainActivity extends Activity {
         layout.setBackground(getY1RowBackground(false, rowW, Y1_ROW_MENU));
 
         TextView tvLeft = new TextView(this);
+        tvLeft.setFocusable(false);
         tvLeft.setTypeface(ThemeManager.getCustomFont(), android.graphics.Typeface.BOLD);
         tvLeft.setText(getString(labelResId));
         ThemeManager.applyThemedTextStyle(tvLeft, ThemeManager.getSettingMenuTextColorNormal());
@@ -6376,6 +6842,7 @@ public class MainActivity extends Activity {
 
         LinearLayout labelCol = new LinearLayout(this);
         labelCol.setOrientation(LinearLayout.VERTICAL);
+        labelCol.setFocusable(false);
         labelCol.setLayoutParams(new LinearLayout.LayoutParams(
                 0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f));
         labelCol.addView(tvLeft);
@@ -6383,6 +6850,7 @@ public class MainActivity extends Activity {
         layout.addView(labelCol);
 
         TextView tvRight = new TextView(this);
+        tvRight.setFocusable(false);
         tvRight.setTypeface(ThemeManager.getCustomFont(), android.graphics.Typeface.BOLD);
         final boolean showArrow = "〉 ".contentEquals(rightText) || ">".equals(String.valueOf(rightText).trim());
         if (!showArrow) {
@@ -6479,7 +6947,12 @@ public class MainActivity extends Activity {
 
         String solarKey = resolveSoulseekSolarConfigKey(rowKey);
         Bitmap icon = null;
-        if (isAppearancePreviewRow(rowKey)) {
+        if (RowKeys.ABOUT.equals(rowKey)) {
+            if (ThemeManager.hasThemeSolarConfigKey("appAbout")) {
+                icon = ThemeManager.getSolarConfigIcon("appAbout");
+            }
+        }
+        if (icon == null && isAppearancePreviewRow(rowKey)) {
             icon = ThemeManager.getSettingIcon("theme");
         }
         if (icon == null) {
@@ -6515,14 +6988,16 @@ public class MainActivity extends Activity {
             String hint = homeShortcutConnectivityHint(id);
             if (hint != null) {
                 stateText = hint;
-            } else if (SettingsScreens.HOME.equals(settingsSubScreenKey) && !isHomeScreenArrangeScreen()) {
-                if (HomeMenuConfig.ID_THEMES.equals(id) || HomeMenuConfig.ID_GET_THEMES.equals(id)) {
-                    stateText = getString(R.string.home_screen_preview_themes);
-                } else if (HomeMenuConfig.ID_VIDEOS.equals(id)) {
-                    stateText = getString(R.string.home_screen_preview_videos);
-                } else if (HomeMenuConfig.ID_PHOTOS.equals(id)) {
-                    stateText = getString(R.string.home_screen_preview_photos);
-                }
+            }
+        }
+        if (SettingsScreens.LIBRARY_BROWSE.equals(settingsSubScreenKey)) {
+            int previewRes = LibraryBrowsePrefs.previewTextRes(rowKey);
+            if (previewRes != 0) {
+                String current = resolveSettingStateText(rowKey);
+                String desc = getString(previewRes);
+                stateText = current != null && !current.isEmpty()
+                        ? desc + "\n\n" + getString(R.string.lib_preview_current, current)
+                        : desc;
             }
         }
         if (tvSettingsPreviewState != null) {
@@ -6544,33 +7019,51 @@ public class MainActivity extends Activity {
         return String.format(Locale.US, "%.0f MB", bytes / (1024.0 * 1024.0));
     }
 
-    private void showButtonRadiusMenu() {
-        final String[] labels = {getString(R.string.dialog_radius_theme), getString(R.string.dialog_radius_square), getString(R.string.dialog_radius_dp, 10), getString(R.string.dialog_radius_dp, 20), getString(R.string.dialog_radius_dp, 30), getString(R.string.dialog_radius_dp, 40)};
-        final int[] values = {-1, 0, 10, 20, 30, 40};
-        AlertDialog.Builder builder = new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert);
-        builder.setTitle(getString(R.string.dialog_button_radius_title));
-        builder.setItems(labels, new DialogInterface.OnClickListener() {
-            @Override
-            public void onClick(DialogInterface dialog, int which) {
-                clickFeedback();
-                if (values[which] < 0) {
-                    clearButtonRadiusOverride();
-                } else {
-                    saveButtonRadiusOverride(values[which]);
-                }
-                recreate();
-            }
-        });
-        AlertDialog dlg = builder.create();
-        dlg.show();
-        try {
-            int tc = ThemeManager.getDialogOptionTextColorNormal();
-            dlg.getListView().setCacheColorHint(ThemeManager.getDialogOptionTextColorSelected());
-            for (int i = 0; i < dlg.getListView().getChildCount(); i++) {
-                View child = dlg.getListView().getChildAt(i);
-                if (child instanceof TextView) ((TextView) child).setTextColor(tc);
-            }
-        } catch (Exception e) {}
+    private boolean suppressCenterSleepForReorder(long heldMs) {
+        if (themedContextMenu != null && themedContextMenu.isShowing()) {
+            if (contextMenuInQueueTier) return true;
+            if (contextQueueMoveFrom >= 0) return true;
+            if (themedContextMenu.isSubmenuTierOpen()) return true;
+        }
+        if (isPlaylistMoveActive()) return true;
+        if (isPlaylistBrowseContext()) return true;
+        if (canScheduleCenterMovePick() && heldMs < CENTER_MOVE_HOLD_MS + 80) return true;
+        return false;
+    }
+
+    private boolean isPlaylistBrowseContext() {
+        return currentScreenState == STATE_BROWSER
+                && currentBrowserMode == BROWSER_VIRTUAL_SONGS
+                && "PLAYLIST".equals(virtualQueryType);
+    }
+
+    private boolean isPlaylistMoveActive() {
+        return playlistMoveFrom >= 0 && isPlaylistBrowseContext();
+    }
+
+    private boolean isVirtualPlaylistView() {
+        return isPlaylistBrowseContext()
+                && listVirtualSongs != null && listVirtualSongs.getVisibility() == View.VISIBLE;
+    }
+
+    private boolean canScheduleCenterMovePick() {
+        if (themedContextMenu != null && themedContextMenu.isShowing() && contextMenuInQueueTier) {
+            return contextQueueMoveFrom < 0 && isContextQueueListFocused();
+        }
+        if (isVirtualPlaylistView()) return playlistMoveFrom < 0;
+        if (isPlaylistBrowseContext()) return playlistMoveFrom < 0;
+        return false;
+    }
+
+    private void performCenterMovePickUp() {
+        if (themedContextMenu != null && themedContextMenu.isShowing() && contextMenuInQueueTier
+                && isContextQueueListFocused()) {
+            handleContextQueueCenterActivate(true);
+            return;
+        }
+        if (isPlaylistBrowseContext()) {
+            handlePlaylistListCenterActivate(true);
+        }
     }
 
     /** Center/OK hold ~0.3s — sleep while pressed or on release after threshold. */
@@ -6579,31 +7072,123 @@ public class MainActivity extends Activity {
             suppressListClickUntil = System.currentTimeMillis() + CONTEXT_MENU_CLICK_SUPPRESS_MS;
         }
         if (event.getRepeatCount() == 0) {
-            centerLongPressHandled = false;
+            centerMovePickHandled = false;
+            centerQuickBarTapHandled = false;
             centerKeyDownTime = System.currentTimeMillis();
-            clockHandler.removeCallbacks(centerSleepRunnable);
-            clockHandler.postDelayed(centerSleepRunnable, CENTER_SLEEP_HOLD_MS);
+            clockHandler.removeCallbacks(centerMovePickRunnable);
+            clockHandler.removeCallbacks(keyboardDelRepeatRunnable);
+            if (isKeyboardDelSelected()) {
+                clockHandler.postDelayed(keyboardDelRepeatRunnable, 80);
+            } else if (canScheduleCenterMovePick()) {
+                clockHandler.postDelayed(centerMovePickRunnable, CENTER_MOVE_HOLD_MS);
+            } else if (fromContextMenu && themedContextMenu != null
+                    && themedContextMenu.focusZone() == ThemedContextMenu.FocusZone.QUICK_BAR) {
+                centerQuickBarTapHandled = true;
+                themedContextMenu.activateFocused();
+                clickFeedback();
+            }
         }
         return true;
     }
 
+    private boolean isKeyboardDelSelected() {
+        return currentScreenState == STATE_WIFI_KEYBOARD
+                && keyboardIndex >= 0 && keyboardIndex < KEYBOARD_CHARS.length
+                && "[DEL]".equals(KEYBOARD_CHARS[keyboardIndex]);
+    }
+
+    /** Queue list rows — not quick bar / title / slider while queue tier is open. */
+    private boolean isContextQueueListFocused() {
+        if (themedContextMenu == null) return false;
+        return themedContextMenu.focusZone() == ThemedContextMenu.FocusZone.TIER_CONTENT;
+    }
+
     private boolean handleCenterKeyUp(KeyEvent event, boolean fromContextMenu) {
         long heldMs = centerKeyDownTime > 0 ? System.currentTimeMillis() - centerKeyDownTime : 0;
-        clockHandler.removeCallbacks(centerSleepRunnable);
+        clockHandler.removeCallbacks(centerMovePickRunnable);
+        clockHandler.removeCallbacks(keyboardDelRepeatRunnable);
         centerKeyDownTime = 0;
-        if (centerLongPressHandled) {
-            centerLongPressHandled = false;
-            return true;
-        }
-        if (heldMs >= CENTER_SLEEP_HOLD_MS) {
-            performScreenSleep(false);
-            return true;
-        }
         if (fromContextMenu) {
             suppressListClickUntil = System.currentTimeMillis() + CONTEXT_MENU_CLICK_SUPPRESS_MS;
+            if (centerQuickBarTapHandled) {
+                centerQuickBarTapHandled = false;
+                centerKeyDownTime = 0;
+                return true;
+            }
+            if (contextMenuInQueueTier && isContextQueueListFocused()) {
+                if (!centerMovePickHandled) {
+                    handleContextQueueCenterActivate(false);
+                    clickFeedback();
+                }
+                centerMovePickHandled = false;
+                return true;
+            }
+            centerMovePickHandled = false;
+            // #region agent log
+            try {
+                org.json.JSONObject d = new org.json.JSONObject();
+                d.put("heldMs", heldMs);
+                d.put("suppressSleep", suppressCenterSleepForReorder(heldMs));
+                d.put("zone", themedContextMenu != null ? themedContextMenu.focusZone().name() : "null");
+                d.put("submenuOpen", themedContextMenu != null && themedContextMenu.isSubmenuTierOpen());
+                DebugAgentLog.log(this, "MainActivity.handleCenterKeyUp", "context center", "H1-H2", d);
+            } catch (Exception ignored) {}
+            // #endregion
+            if (heldMs >= CENTER_SLEEP_HOLD_MS && !suppressCenterSleepForReorder(heldMs)) {
+                performScreenSleep(false);
+                return true;
+            }
             themedContextMenu.activateFocused();
             clickFeedback();
             return true;
+        }
+        if (isPlaylistMoveActive() || isVirtualPlaylistView()) {
+            if (!centerMovePickHandled) {
+                handlePlaylistListCenterActivate(false);
+                clickFeedback();
+            }
+            centerMovePickHandled = false;
+            return true;
+        }
+        centerMovePickHandled = false;
+        // #region agent log
+        try {
+            org.json.JSONObject d = new org.json.JSONObject();
+            d.put("heldMs", heldMs);
+            d.put("suppressSleep", suppressCenterSleepForReorder(heldMs));
+            d.put("playlist", isVirtualPlaylistView());
+            d.put("playlistCtx", isPlaylistBrowseContext());
+            d.put("playlistMove", isPlaylistMoveActive());
+            d.put("moveFrom", playlistMoveFrom);
+            d.put("canPick", canScheduleCenterMovePick());
+            DebugAgentLog.log(this, "MainActivity.handleCenterKeyUp", "global center", "H1-H3", d);
+        } catch (Exception ignored) {}
+        // #endregion
+        if (heldMs >= CENTER_SLEEP_HOLD_MS && !suppressCenterSleepForReorder(heldMs)) {
+            // #region agent log
+            try {
+                org.json.JSONObject d = new org.json.JSONObject();
+                d.put("heldMs", heldMs);
+                d.put("screen", currentScreenState);
+                d.put("keyCode", event.getKeyCode());
+                d.put("wifiKeyboard", currentScreenState == STATE_WIFI_KEYBOARD);
+                DebugAgentLog.log(this, "MainActivity.handleCenterKeyUp",
+                        "center hold triggered screen sleep", "H1", d);
+            } catch (Exception ignored) {}
+            // #endregion
+            performScreenSleep(false);
+            return true;
+        }
+        if (currentScreenState == STATE_PLAYER) {
+            if (isCenterKey(event.getKeyCode())) {
+                if (playerScrubCursorActive) {
+                    commitPlayerScrubCursor();
+                } else {
+                    enterPlayerScrubCursorMode();
+                }
+                clickFeedback();
+                return true;
+            }
         }
         try {
             handleCenterShortClick();
@@ -6612,14 +7197,2375 @@ public class MainActivity extends Activity {
     }
 
     private void dismissThemedContextMenu() {
+        if (otaSystemReplaceInProgress) return;
+        flushContextQueueMoveIfDirty();
+        cancelPendingContextWifiRefresh();
+        contextMenuTierStack.clear();
+        contextMenuInVolumeSlider = false;
+        contextMenuVolumeOnly = false;
+        contextMenuInQueueTier = false;
+        contextMenuQuickOnly = false;
+        contextQueueEditPlaylist = false;
+        playlistEditEntry = null;
+        playlistEditTracks.clear();
+        clearContextQueueMoveSession();
+        contextMenuVolumeReturnTier = null;
+        contextMenuVolumeOnly = false;
+        contextMenuOpenedAtMs = 0;
+        volumeHandler.removeCallbacks(hideVolumeContextTask);
+        updateNetworkRescanLoop();
         if (themedContextMenu != null) themedContextMenu.dismiss();
+        restoreFocusAfterContextMenuDismiss();
+    }
+
+    private boolean isNetworkRescanActive() {
+        if (currentScreenState == STATE_WIFI || currentScreenState == STATE_BLUETOOTH) return true;
+        boolean ctxWifi = isContextTierActive("wifi");
+        boolean ctxBt = isContextTierActive("bt");
+        boolean active = ctxWifi || ctxBt;
+        // #region agent log
+        if (themedContextMenu != null && themedContextMenu.isShowing()) {
+            try {
+                org.json.JSONObject d = new org.json.JSONObject();
+                d.put("ctxWifi", ctxWifi);
+                d.put("ctxBt", ctxBt);
+                d.put("tierTop", contextMenuTopTier());
+                d.put("submenuOpen", themedContextMenu.isSubmenuTierOpen());
+                d.put("volSlider", contextMenuInVolumeSlider);
+                d.put("active", active);
+                DebugAgentLog.log(this, "MainActivity.isNetworkRescanActive", "rescan gate", "H2", d);
+            } catch (Exception ignored) {}
+        }
+        // #endregion
+        return active;
+    }
+
+    private void updateNetworkRescanLoop() {
+        networkRescanHandler.removeCallbacks(networkRescanTick);
+        if (isNetworkRescanActive()) {
+            networkRescanHandler.postDelayed(networkRescanTick, NETWORK_RESCAN_INTERVAL_MS);
+        }
+    }
+
+    private void applySettingsRowFocusability(LinearLayout layout) {
+        if (layout == null) return;
+        layout.setFocusable(true);
+        layout.setClickable(true);
+        layout.setFocusableInTouchMode(true);
+        layout.setDescendantFocusability(android.view.ViewGroup.FOCUS_BLOCK_DESCENDANTS);
+    }
+
+    private boolean isViewDescendantOf(View view, View ancestor) {
+        if (view == null || ancestor == null) return false;
+        View p = view;
+        while (p != null) {
+            if (p == ancestor) return true;
+            if (!(p.getParent() instanceof View)) return false;
+            p = (View) p.getParent();
+        }
+        return false;
+    }
+
+    /** Wheel up/down in settings lists — walks {@link #containerSettingsItems} rows directly. */
+    private boolean moveSettingsListFocus(int delta) {
+        if (containerSettingsItems == null || delta == 0) return false;
+        View focused = getCurrentFocus();
+        int currentIdx = -1;
+        for (int i = 0; i < containerSettingsItems.getChildCount(); i++) {
+            View row = containerSettingsItems.getChildAt(i);
+            if (row == focused || isViewDescendantOf(focused, row)) {
+                currentIdx = i;
+                break;
+            }
+        }
+        if (currentIdx < 0) return false;
+        int step = delta < 0 ? -1 : 1;
+        for (int i = currentIdx + step; i >= 0 && i < containerSettingsItems.getChildCount(); i += step) {
+            View next = containerSettingsItems.getChildAt(i);
+            if (next == null || next.getVisibility() != View.VISIBLE || !next.isEnabled()
+                    || !next.isFocusable()) {
+                continue;
+            }
+            if (!next.requestFocus()) continue;
+            if (containerSettingsItems.getParent() instanceof android.widget.ScrollView) {
+                ((android.widget.ScrollView) containerSettingsItems.getParent())
+                        .requestChildFocus(containerSettingsItems, next);
+            }
+            if (SettingsScreens.HOME.equals(settingsSubScreenKey)) {
+                homeScreenEditorFocusIndex = i;
+            }
+            lastSettingsFocusIndex = i;
+            // #region agent log
+            try {
+                org.json.JSONObject d = new org.json.JSONObject();
+                d.put("from", currentIdx);
+                d.put("to", i);
+                d.put("delta", delta);
+                d.put("rowKey", next.getTag() != null ? next.getTag().toString() : "");
+                DebugAgentLog.log(this, "MainActivity.moveSettingsListFocus", "settings wheel", "H1", d);
+            } catch (Exception ignored) {}
+            // #endregion
+            return true;
+        }
+        return false;
+    }
+
+    /** True when wheel/OK input should work on the current list without re-seeding focus. */
+    private boolean isFocusValidForCurrentScreen() {
+        View focused = getCurrentFocus();
+        if (focused == null || !focused.isShown() || !focused.isFocusable()) return false;
+        switch (currentScreenState) {
+            case STATE_MENU:
+                return layoutMainMenu != null && layoutMainMenu.getVisibility() == View.VISIBLE
+                        && isViewDescendantOf(focused, layoutMainMenu);
+            case STATE_BROWSER:
+            case STATE_PODCASTS:
+            case STATE_SOULSEEK:
+            case STATE_APPS:
+            case STATE_MORE:
+                if (layoutBrowserMode == null || layoutBrowserMode.getVisibility() != View.VISIBLE) {
+                    return false;
+                }
+                if (listVirtualSongs != null && listVirtualSongs.getVisibility() == View.VISIBLE) {
+                    if (listVirtualSongs.hasFocus()) return true;
+                    if (focused != null && isViewDescendantOf(focused, listVirtualSongs)) return true;
+                    int sel = listVirtualSongs.getSelectedItemPosition();
+                    return sel >= 0 && listVirtualSongs.getAdapter() != null
+                            && sel < listVirtualSongs.getCount();
+                }
+                return isViewDescendantOf(focused, layoutBrowserMode);
+            default:
+                return true;
+        }
+    }
+
+    private void ensureBrowserListFocus() {
+        if (listVirtualSongs != null && listVirtualSongs.getVisibility() == View.VISIBLE
+                && listVirtualSongs.getAdapter() != null && listVirtualSongs.getCount() > 0) {
+            int pos = virtualSongListPosition();
+            if (pos < 0) pos = listVirtualSongs.getSelectedItemPosition();
+            if (pos < 0) pos = 0;
+            if (pos >= listVirtualSongs.getCount()) pos = listVirtualSongs.getCount() - 1;
+            final int target = pos;
+            listVirtualSongs.setSelection(target);
+            listVirtualSongs.requestFocus();
+            listVirtualSongs.post(new Runnable() {
+                @Override
+                public void run() {
+                    if (listVirtualSongs == null) return;
+                    int childIdx = target - listVirtualSongs.getFirstVisiblePosition();
+                    if (childIdx >= 0 && childIdx < listVirtualSongs.getChildCount()) {
+                        View v = listVirtualSongs.getChildAt(childIdx);
+                        if (v != null && v.isFocusable()) v.requestFocus();
+                    }
+                }
+            });
+            return;
+        }
+        if (containerBrowserItems == null) return;
+        for (int i = 0; i < containerBrowserItems.getChildCount(); i++) {
+            View row = containerBrowserItems.getChildAt(i);
+            if (row != null && row.getVisibility() == View.VISIBLE && row.isFocusable() && row.isEnabled()) {
+                row.requestFocus();
+                return;
+            }
+        }
+    }
+
+    private void restoreFocusAfterContextMenuDismiss() {
+        new Handler().post(new Runnable() {
+            @Override
+            public void run() {
+                if (contextMenuNavPending) {
+                    contextMenuNavPending = false;
+                    return;
+                }
+                if (isFocusValidForCurrentScreen()) return;
+                switch (currentScreenState) {
+                    case STATE_MENU:
+                        requestFirstHomeMenuFocus();
+                        break;
+                    case STATE_SETTINGS:
+                        if (containerSettingsItems != null && containerSettingsItems.getChildCount() > 0) {
+                            containerSettingsItems.getChildAt(0).requestFocus();
+                        }
+                        break;
+                    case STATE_BROWSER:
+                    case STATE_PODCASTS:
+                    case STATE_SOULSEEK:
+                    case STATE_APPS:
+                    case STATE_MORE:
+                        ensureBrowserListFocus();
+                        break;
+                    case STATE_WIFI:
+                        if (containerWifiItems != null && containerWifiItems.getChildCount() > 0) {
+                            containerWifiItems.getChildAt(0).requestFocus();
+                        }
+                        break;
+                    case STATE_BLUETOOTH:
+                        if (containerBtItems != null && containerBtItems.getChildCount() > 0) {
+                            containerBtItems.getChildAt(0).requestFocus();
+                        }
+                        break;
+                    case STATE_PLAYER:
+                        if (layoutPlayerMode != null && layoutPlayerMode.getVisibility() == View.VISIBLE) {
+                            layoutPlayerMode.requestFocus();
+                        } else if (playerProgressTrack != null) {
+                            playerProgressTrack.requestFocus();
+                        }
+                        break;
+                    default:
+                        break;
+                }
+            }
+        });
+    }
+
+    private ThemedContextMenu.QuickItem[] buildContextQuickBar() {
+        boolean hasQueue = contextQuickBarShowsQueue();
+        int queueSize = hasQueue ? playback.unifiedQueue().size() : 0;
+        boolean singleTrack = hasQueue && queueSize == 1;
+        int endIcon = !hasQueue ? R.drawable.ic_music
+                : (singleTrack ? R.drawable.ic_music : R.drawable.ic_queue);
+        String endLabel = !hasQueue ? getString(R.string.home_menu_music)
+                : (singleTrack ? getString(R.string.home_menu_now_playing)
+                : getString(R.string.context_quick_queue));
+        // #region agent log
+        try {
+            JSONObject d = new JSONObject();
+            d.put("hasQueue", hasQueue);
+            d.put("queueSize", queueSize);
+            d.put("singleTrack", singleTrack);
+            d.put("endLabel", endLabel);
+            QueueDebugLog.log("MainActivity.buildContextQuickBar", "quick bar built", "H6", d);
+        } catch (Exception ignored) {}
+        // #endregion
+        int volMax = audioManager != null
+                ? audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC) : 15;
+        int volCur = audioManager != null
+                ? audioManager.getStreamVolume(AudioManager.STREAM_MUSIC) : 0;
+        int volIcon = ThemedContextMenu.volumeIconResForLevel(volCur, volMax);
+        int brightIcon = ThemedContextMenu.brightnessIconResForLevel(currentSystemBrightness, 255);
+        return new ThemedContextMenu.QuickItem[] {
+            new ThemedContextMenu.QuickItem(null, R.drawable.ic_lock, getString(R.string.context_action_lock_screen), true),
+            new ThemedContextMenu.QuickItem(null, R.drawable.ic_wifi, getString(R.string.context_tier_wifi), true),
+            new ThemedContextMenu.QuickItem(null, R.drawable.ic_bluetooth, getString(R.string.home_menu_bluetooth), true),
+            new ThemedContextMenu.QuickItem(null, R.drawable.ic_power, getString(R.string.context_quick_power), true),
+            new ThemedContextMenu.QuickItem(null, endIcon, endLabel, true),
+            new ThemedContextMenu.QuickItem(null, brightIcon, getString(R.string.context_quick_brightness), true),
+            new ThemedContextMenu.QuickItem(null, volIcon, getString(R.string.context_quick_volume), true)
+        };
+    }
+
+    /** Queue chip only when there is a persisted playback queue (matches Now Playing home tile). */
+    private boolean contextQuickBarShowsQueue() {
+        return shouldShowNowPlayingHome();
+    }
+
+    private void openMusicLibraryFromContextQuickBar() {
+        suppressListClickUntil = System.currentTimeMillis() + CONTEXT_MENU_CLICK_SUPPRESS_MS;
+        dismissThemedContextMenu();
+        currentBrowserMode = BROWSER_ROOT;
+        changeScreen(STATE_BROWSER);
+    }
+
+    private void handleContextQuickBar(int index) {
+        // #region agent log
+        try {
+            org.json.JSONObject d = new org.json.JSONObject();
+            d.put("index", index);
+            d.put("screen", currentScreenState);
+            d.put("tierTop", contextMenuTopTier());
+            d.put("tierDepth", contextMenuTierStack.size());
+            d.put("inQueue", contextMenuInQueueTier);
+            d.put("inVolSlider", contextMenuInVolumeSlider);
+            d.put("quickOnly", contextMenuQuickOnly);
+            d.put("hasListener", themedContextMenu != null);
+            DebugAgentLog.log(this, "MainActivity.handleContextQuickBar", "quick selected", "H1-H2", d);
+        } catch (Exception ignored) {}
+        // #endregion
+        if (contextMenuInQueueTier && contextQueueMoveFrom >= 0) {
+            cancelContextQueueMove(false);
+        }
+        if (index != CONTEXT_QUICK_VOLUME_INDEX && index != CONTEXT_QUICK_BRIGHTNESS_INDEX) {
+            dismissContextVolumeSliderUi();
+        }
+        switch (index) {
+            case 0:
+                suppressListClickUntil = System.currentTimeMillis() + CONTEXT_MENU_CLICK_SUPPRESS_MS;
+                dismissThemedContextMenu();
+                performScreenSleep(true);
+                break;
+            case 1:
+                openContextNetworkTab("wifi", 1);
+                break;
+            case 2:
+                openContextNetworkTab("bt", 2);
+                break;
+            case CONTEXT_QUICK_POWER_INDEX:
+                suppressListClickUntil = System.currentTimeMillis() + CONTEXT_MENU_CLICK_SUPPRESS_MS;
+                dismissThemedContextMenu();
+                showShutdownConfirm();
+                break;
+            case CONTEXT_QUICK_QUEUE_INDEX:
+                if (!contextQuickBarShowsQueue()) {
+                    openMusicLibraryFromContextQuickBar();
+                } else if (playback.unifiedQueue().size() == 1) {
+                    suppressListClickUntil = System.currentTimeMillis() + CONTEXT_MENU_CLICK_SUPPRESS_MS;
+                    dismissThemedContextMenu();
+                    changeScreen(STATE_PLAYER);
+                } else {
+                    openPlaybackQueueInContextMenu();
+                }
+                break;
+            case CONTEXT_QUICK_BRIGHTNESS_INDEX:
+                themedContextMenu.setQuickReturnIndex(CONTEXT_QUICK_BRIGHTNESS_INDEX);
+                showContextMediaSliders(CONTEXT_QUICK_BRIGHTNESS_INDEX);
+                contextMenuInVolumeSlider = true;
+                break;
+            case CONTEXT_QUICK_VOLUME_INDEX:
+                themedContextMenu.setQuickReturnIndex(CONTEXT_QUICK_VOLUME_INDEX);
+                showContextMediaSliders(CONTEXT_QUICK_VOLUME_INDEX);
+                contextMenuInVolumeSlider = true;
+                break;
+            default:
+                break;
+        }
+    }
+
+    /** Center on Wi-Fi / Bluetooth quick chip — push tier, swap list, enter submenu in one step. */
+    private void openContextNetworkTab(String tier, int quickIndex) {
+        if (themedContextMenu == null) return;
+        themedContextMenu.setQuickReturnIndex(quickIndex);
+        if ("wifi".equals(tier) && !isWifiPowerOn()) applyWifiPowerState(true);
+        setContextNetworkTier(tier);
+        if ("wifi".equals(tier)) {
+            refreshContextWifiTierImmediate(true, true);
+        } else {
+            refreshContextBluetoothTier(true, true);
+        }
+        themedContextMenu.focusSubmenuList();
+        themedContextMenu.requestOverlayFocus();
+        // #region agent log
+        try {
+            org.json.JSONObject d = new org.json.JSONObject();
+            d.put("tier", tier);
+            d.put("quickIndex", quickIndex);
+            d.put("tierTop", contextMenuTopTier());
+            d.put("tierDepth", contextMenuTierStack.size());
+            d.put("zone", themedContextMenu.focusZone().name());
+            d.put("submenuOpen", themedContextMenu.isSubmenuTierOpen());
+            DebugAgentLog.log(this, "MainActivity.openContextNetworkTab", "tab entered", "H6", d);
+        } catch (Exception ignored) {}
+        // #endregion
+    }
+
+    private void showShutdownConfirm() {
+        showThemedConfirm(getString(R.string.context_shutdown_title),
+                getString(R.string.context_shutdown_message),
+                getString(R.string.context_shutdown_confirm),
+                getString(R.string.common_cancel),
+                new Runnable() {
+                    @Override
+                    public void run() {
+                        try {
+                            Runtime.getRuntime().exec(new String[] {"su", "-c", "reboot -p"});
+                        } catch (Exception ignored) {}
+                    }
+                });
+    }
+
+    private void showContextMediaSliders(int quickIndex) {
+        // #region agent log
+        try {
+            org.json.JSONObject d = new org.json.JSONObject();
+            d.put("quickIndex", quickIndex);
+            d.put("hasMenu", themedContextMenu != null);
+            d.put("hasAudio", audioManager != null);
+            d.put("screen", currentScreenState);
+            d.put("tierTop", contextMenuTopTier());
+            DebugAgentLog.log(this, "MainActivity.showContextMediaSliders", "open sliders", "H4", d);
+        } catch (Exception ignored) {}
+        // #endregion
+        if (themedContextMenu == null || audioManager == null) return;
+        deactivateContextNetworkTier();
+        contextMenuVolumeReturnTier = contextMenuTopTier();
+        if (contextMenuVolumeReturnTier == null) contextMenuVolumeReturnTier = CONTEXT_NAV_ROOT;
+        contextMenuInVolumeSlider = true;
+        contextMenuVolumeOnly = false;
+        volumeHandler.removeCallbacks(hideVolumeContextTask);
+        int volMax = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
+        int volCur = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC);
+        try {
+            currentSystemBrightness = Settings.System.getInt(getContentResolver(),
+                    Settings.System.SCREEN_BRIGHTNESS, currentSystemBrightness);
+        } catch (Exception ignored) {}
+        themedContextMenu.showMediaSlidersWithQuickBarFocus(quickIndex,
+                getString(R.string.context_quick_volume), volMax, volCur,
+                getString(R.string.context_quick_brightness), 255, currentSystemBrightness);
+    }
+
+    private void showContextVolumeSlider() {
+        showContextMediaSliders(CONTEXT_QUICK_VOLUME_INDEX);
+    }
+
+    private void showPlayerVolumeContextOverlay() {
+        if (audioManager == null || themedContextMenu == null) return;
+        if (backKeyHeld) return;
+        if (layoutVolumeOverlay != null) layoutVolumeOverlay.setVisibility(View.GONE);
+        int max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
+        int cur = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC);
+        contextMenuInVolumeSlider = true;
+        contextMenuVolumeOnly = true;
+        volumeHandler.removeCallbacks(hideVolumeContextTask);
+        if (themedContextMenu.isShowing() && themedContextMenu.isVolumeOnlyMode()) {
+            themedContextMenu.updateVolumeSlider(cur, max);
+        } else {
+            ViewGroup root = (ViewGroup) findViewById(android.R.id.content);
+            int margin = (int) (10 * getResources().getDisplayMetrics().density);
+            int panelW = screenWidthPx > margin * 2 ? screenWidthPx - margin * 2 : y1ActiveRowWidthPx();
+            themedContextMenu.showVolumeOnly(root, getString(R.string.context_hold_back_hint),
+                    getString(R.string.context_quick_volume), max, cur, y1RowHeightPx, panelW);
+        }
+        scheduleVolumeContextDismiss();
+    }
+
+    private void scheduleVolumeContextDismiss() {
+        volumeHandler.removeCallbacks(hideVolumeContextTask);
+        volumeHandler.postDelayed(hideVolumeContextTask, VOLUME_CONTEXT_DISMISS_MS);
+    }
+
+    private void refreshContextVolumeSliderUi() {
+        refreshContextMediaSlidersUi();
+    }
+
+    private void refreshContextMediaSlidersUi() {
+        if (themedContextMenu == null || audioManager == null || !contextMenuInVolumeSlider) return;
+        int max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
+        int cur = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC);
+        themedContextMenu.updateVolumeSlider(cur, max);
+        themedContextMenu.updateBrightnessSlider(currentSystemBrightness, 255);
+        if (contextMenuVolumeOnly) {
+            scheduleVolumeContextDismiss();
+        }
+    }
+
+    /** Volume quick chip focused with slider strip visible — wheel adjusts level, not focus. */
+    private boolean isContextVolumeQuickBarFocused() {
+        return themedContextMenu != null && themedContextMenu.isShowing()
+                && contextMenuInVolumeSlider && !contextMenuVolumeOnly
+                && themedContextMenu.isMediaSliderStripVisible()
+                && themedContextMenu.focusZone() == ThemedContextMenu.FocusZone.QUICK_BAR
+                && themedContextMenu.quickFocusIndex() == CONTEXT_QUICK_VOLUME_INDEX;
+    }
+
+    private boolean isContextBrightnessQuickBarFocused() {
+        return themedContextMenu != null && themedContextMenu.isShowing()
+                && contextMenuInVolumeSlider && !contextMenuVolumeOnly
+                && themedContextMenu.isMediaSliderStripVisible()
+                && themedContextMenu.focusZone() == ThemedContextMenu.FocusZone.QUICK_BAR
+                && themedContextMenu.quickFocusIndex() == CONTEXT_QUICK_BRIGHTNESS_INDEX;
+    }
+
+    private void dismissContextVolumeSliderUi() {
+        if (contextMenuVolumeOnly) return;
+        if (!contextMenuInVolumeSlider && (themedContextMenu == null
+                || !themedContextMenu.isMediaSliderStripVisible())) return;
+        contextMenuInVolumeSlider = false;
+        if (themedContextMenu != null) themedContextMenu.exitMediaSliderTab();
+    }
+
+    /** Back from volume/brightness sliders — restore the tier the user came from (queue, root, …). */
+    private void restoreAfterContextVolumeSlider() {
+        String ret = contextMenuVolumeReturnTier;
+        contextMenuVolumeReturnTier = null;
+        if ("queue".equals(ret)) {
+            contextMenuInQueueTier = true;
+            rebuildContextQueueTier(true);
+            return;
+        }
+        contextMenuInQueueTier = false;
+        restoreContextMenuRootOptions(false);
+        if (themedContextMenu != null) themedContextMenu.focusQuickBarAtReturn();
+    }
+
+    private void syncContextVolumeSliderWithFocus() {
+        syncContextMediaSlidersWithFocus();
+    }
+
+    private void syncContextMediaSlidersWithFocus() {
+        if (!contextMenuInVolumeSlider || contextMenuVolumeOnly || themedContextMenu == null) return;
+        if (themedContextMenu.focusZone() == ThemedContextMenu.FocusZone.OPTIONS_TITLE) return;
+        int idx = themedContextMenu.quickFocusIndex();
+        if (idx != CONTEXT_QUICK_VOLUME_INDEX && idx != CONTEXT_QUICK_BRIGHTNESS_INDEX) {
+            dismissContextVolumeSliderUi();
+        }
+    }
+
+    private void expandVolumeOverlayToFullContext() {
+        if (!contextMenuVolumeOnly || themedContextMenu == null || audioManager == null) return;
+        volumeHandler.removeCallbacks(hideVolumeContextTask);
+        contextMenuVolumeOnly = false;
+        flushContextQueueMoveIfDirty();
+        contextMenuInVolumeSlider = false;
+        contextMenuTierStack.clear();
+        contextMenuInQueueTier = false;
+        contextQueueEditPlaylist = false;
+        playlistEditEntry = null;
+        playlistEditTracks.clear();
+        clearContextQueueMoveSession();
+        populateContextMenu();
+        boolean menuRows = currentScreenState == STATE_MENU || currentScreenState == STATE_SETTINGS;
+        String[] labels = contextMenuLabels.toArray(new String[contextMenuLabels.size()]);
+        String[] iconKeys = contextMenuIconKeys.toArray(new String[contextMenuIconKeys.size()]);
+        String[] stateTexts = contextMenuStateTexts.toArray(new String[contextMenuStateTexts.size()]);
+        boolean[] headers = new boolean[contextMenuHeaders.size()];
+        for (int i = 0; i < headers.length; i++) headers[i] = contextMenuHeaders.get(i);
+        themedContextMenu.expandFromVolumeOnly(null, labels, iconKeys, stateTexts, headers,
+                createContextMenuListListener(), buildContextQuickBar(), createContextQuickBarListener(),
+                menuRows, CONTEXT_QUICK_VOLUME_INDEX);
+        themedContextMenu.setMediaSliderQuickIndices(CONTEXT_QUICK_VOLUME_INDEX,
+                CONTEXT_QUICK_BRIGHTNESS_INDEX);
+        themedContextMenu.hideSlider();
+        if (!contextMenuLabels.isEmpty()) {
+            themedContextMenu.focusOptionsList();
+        }
+        contextMenuOpenedAtMs = System.currentTimeMillis();
+        backLongPressHandled = true;
+        themedContextMenu.requestOverlayFocus();
+        clickFeedback();
+    }
+
+    private ThemedContextMenu.Listener createContextMenuListListener() {
+        return new ThemedContextMenu.Listener() {
+            @Override
+            public void onSelected(final int index) {
+                suppressListClickUntil = System.currentTimeMillis() + CONTEXT_MENU_CLICK_SUPPRESS_MS;
+                dismissThemedContextMenu();
+                final Runnable action = (index >= 0 && index < contextMenuActions.size())
+                        ? contextMenuActions.get(index) : null;
+                if (action == null) return;
+                new Handler().post(new Runnable() {
+                    @Override
+                    public void run() {
+                        suppressListClickUntil = System.currentTimeMillis() + CONTEXT_MENU_CLICK_SUPPRESS_MS;
+                        action.run();
+                    }
+                });
+            }
+        };
+    }
+
+    private ThemedContextMenu.QuickBarListener createContextQuickBarListener() {
+        return new ThemedContextMenu.QuickBarListener() {
+            @Override
+            public void onQuickSelected(int index) {
+                handleContextQuickBar(index);
+            }
+
+            @Override
+            public void onFocusBackChip() {
+                focusContextMenuBackChip();
+            }
+
+            @Override
+            public void onBackActivated() {
+                activateContextMenuBack();
+            }
+        };
+    }
+
+    private void focusContextMenuBackChip() {
+        if (themedContextMenu == null || !themedContextMenu.isShowing()) return;
+        themedContextMenu.focusBackChip();
+        themedContextMenu.requestOverlayFocus();
+    }
+
+    /** Center on Back — dismiss at root, or step back through sub-tiers logically. */
+    private void activateContextMenuBack() {
+        navigateContextMenuBack(true);
+    }
+
+    /**
+     * Back through context modal in fixed layers — never unwind every tab visited:
+     * tier list → quick bar chip → root actions → dismiss (quick-only skips root).
+     */
+    private void navigateContextMenuBack(boolean feedback) {
+        if (themedContextMenu == null || !themedContextMenu.isShowing()) return;
+        if (themedContextMenu.isQueueMoveRibbonAnimating()) return;
+        if (feedback) clickFeedback();
+
+        if (contextMenuInVolumeSlider || themedContextMenu.isMediaSliderStripVisible()) {
+            dismissContextVolumeSliderUi();
+            themedContextMenu.focusQuickBarAtReturn();
+            themedContextMenu.requestOverlayFocus();
+            return;
+        }
+
+        if (contextMenuInQueueTier && contextQueueMoveFrom >= 0) {
+            cancelContextQueueMove(true);
+            return;
+        }
+
+        if (themedContextMenu.isBackChipFocused() && hasContextActiveTier()) {
+            // #region agent log
+            try {
+                org.json.JSONObject d = new org.json.JSONObject();
+                d.put("layer", "backChip→dismiss");
+                d.put("tierTop", contextMenuTopTier());
+                DebugAgentLog.log(this, "MainActivity.navigateContextMenuBack", "back layer", "H5", d);
+            } catch (Exception ignored) {}
+            // #endregion
+            dismissThemedContextMenu();
+            return;
+        }
+
+        if (isContextSubmenuListFocused()) {
+            exitContextSubmenuToQuickBar();
+            // #region agent log
+            try {
+                org.json.JSONObject d = new org.json.JSONObject();
+                d.put("layer", "submenu→quickBar");
+                d.put("tierTop", contextMenuTopTier());
+                DebugAgentLog.log(this, "MainActivity.navigateContextMenuBack", "back layer", "H9", d);
+            } catch (Exception ignored) {}
+            // #endregion
+            return;
+        }
+
+        if (themedContextMenu.focusZone() == ThemedContextMenu.FocusZone.QUICK_BAR) {
+            if (hasContextActiveTier()) {
+                if (contextMenuQuickOnly) {
+                    // #region agent log
+                    try {
+                        org.json.JSONObject d = new org.json.JSONObject();
+                        d.put("layer", "quickBar→dismiss");
+                        d.put("quickOnly", true);
+                        DebugAgentLog.log(this, "MainActivity.navigateContextMenuBack", "back layer", "H9", d);
+                    } catch (Exception ignored) {}
+                    // #endregion
+                    dismissThemedContextMenu();
+                } else {
+                    // #region agent log
+                    try {
+                        org.json.JSONObject d = new org.json.JSONObject();
+                        d.put("layer", "quickBar→root");
+                        DebugAgentLog.log(this, "MainActivity.navigateContextMenuBack", "back layer", "H9", d);
+                    } catch (Exception ignored) {}
+                    // #endregion
+                    returnToContextRootFromTier();
+                }
+                return;
+            }
+            if (contextMenuQuickOnly) {
+                dismissThemedContextMenu();
+                return;
+            }
+            returnToContextRootFromTier();
+            return;
+        }
+
+        if (themedContextMenu.focusZone() == ThemedContextMenu.FocusZone.OPTIONS_TITLE
+                && hasContextActiveTier()) {
+            if (contextMenuQuickOnly) {
+                dismissThemedContextMenu();
+            } else {
+                returnToContextRootFromTier();
+            }
+            return;
+        }
+
+        dismissThemedContextMenu();
+    }
+
+    /** Browsing rows inside a quick-bar tab (Wi-Fi, BT, queue, …), or Back chip while tier list is open. */
+    private boolean isContextSubmenuListFocused() {
+        if (themedContextMenu == null) return false;
+        ThemedContextMenu.FocusZone zone = themedContextMenu.focusZone();
+        if (contextMenuInQueueTier) {
+            return zone == ThemedContextMenu.FocusZone.TIER_CONTENT
+                    || (zone == ThemedContextMenu.FocusZone.OPTIONS_TITLE
+                    && themedContextMenu.isSubmenuTierOpen());
+        }
+        if (!themedContextMenu.isSubmenuTierOpen()) return false;
+        return zone == ThemedContextMenu.FocusZone.TIER_CONTENT
+                || zone == ThemedContextMenu.FocusZone.OPTIONS_TITLE;
+    }
+
+    /** A tab tier is open (wifi / bt / queue) — not the root action list. */
+    private boolean hasContextActiveTier() {
+        if (contextMenuInQueueTier) return true;
+        String top = contextMenuTopTier();
+        return top != null && !CONTEXT_NAV_ROOT.equals(top);
+    }
+
+    /** Back from tier list to the quick chip that opened it. */
+    private void exitContextSubmenuToQuickBar() {
+        if (themedContextMenu == null) return;
+        if (contextMenuInQueueTier) {
+            leaveContextQueueListFocus();
+        } else {
+            deactivateContextNetworkTier();
+            themedContextMenu.focusQuickBarAtReturn();
+        }
+        themedContextMenu.requestOverlayFocus();
+        // #region agent log
+        try {
+            org.json.JSONObject d = new org.json.JSONObject();
+            d.put("tierTop", contextMenuTopTier());
+            d.put("submenuOpen", themedContextMenu.isSubmenuTierOpen());
+            DebugAgentLog.log(this, "MainActivity.exitContextSubmenuToQuickBar", "left network tier", "H1", d);
+        } catch (Exception ignored) {}
+        // #endregion
+    }
+
+    /** Back from quick bar to the screen-specific root context list (collapse all tiers). */
+    private void returnToContextRootFromTier() {
+        contextMenuInVolumeSlider = false;
+        contextQueueEditPlaylist = false;
+        playlistEditEntry = null;
+        playlistEditTracks.clear();
+        flushContextQueueMoveIfDirty();
+        clearContextQueueMoveSession();
+        cancelPendingContextWifiRefresh();
+        contextMenuTierStack.clear();
+        contextMenuTierStack.push(CONTEXT_NAV_ROOT);
+        contextMenuInQueueTier = false;
+        updateNetworkRescanLoop();
+        if (themedContextMenu != null) {
+            themedContextMenu.exitMediaSliderTab();
+            themedContextMenu.setSubmenuTierOpen(false);
+        }
+        restoreContextMenuRootOptions(true);
+    }
+
+    /** Rebuild UI for the tier at the top of {@link #contextMenuTierStack}. */
+    private void restoreContextMenuTierState(boolean focusList) {
+        String tier = contextMenuTopTier();
+        if (tier == null || CONTEXT_NAV_ROOT.equals(tier)) {
+            contextMenuInQueueTier = false;
+            restoreContextMenuRootOptions(focusList);
+            return;
+        }
+        if ("queue".equals(tier)) {
+            contextMenuInQueueTier = true;
+            rebuildContextQueueTier(focusList);
+            return;
+        }
+        contextMenuInQueueTier = false;
+        if ("wifi".equals(tier)) {
+            refreshContextWifiTierImmediate(focusList);
+            return;
+        }
+        if ("bt".equals(tier)) {
+            refreshContextBluetoothTier(focusList);
+            return;
+        }
+        restoreContextMenuRootOptions(focusList);
+    }
+
+    /**
+     * Rebuild the screen-specific context action list (Now Playing shuffle/repeat, Back to library, …).
+     * Quick-bar-only when the current screen has no contextual rows.
+     */
+    private void restoreContextMenuRootOptions(boolean focusList) {
+        if (themedContextMenu == null || !themedContextMenu.isShowing()) return;
+        populateContextMenu();
+        themedContextMenu.hideSlider();
+        themedContextMenu.setSubmenuTierOpen(false);
+        contextMenuQuickOnly = contextMenuLabels.isEmpty();
+        if (contextMenuLabels.isEmpty()) {
+            themedContextMenu.showQuickBarOnly(themedContextMenu.quickBarReturnIndexForNavigation());
+            themedContextMenu.requestOverlayFocus();
+            return;
+        }
+        String[] labels = contextMenuLabels.toArray(new String[contextMenuLabels.size()]);
+        String[] iconKeys = contextMenuIconKeys.toArray(new String[contextMenuIconKeys.size()]);
+        String[] stateTexts = contextMenuStateTexts.toArray(new String[contextMenuStateTexts.size()]);
+        boolean[] headers = new boolean[contextMenuHeaders.size()];
+        for (int i = 0; i < headers.length; i++) headers[i] = contextMenuHeaders.get(i);
+        themedContextMenu.replaceListContent(null, labels, iconKeys, stateTexts, headers,
+                createContextMenuListListener(), true);
+        if (focusList) {
+            themedContextMenu.focusOptionsList();
+        } else {
+            themedContextMenu.focusQuickBarAtReturn();
+        }
+        themedContextMenu.requestOverlayFocus();
+    }
+
+    private void returnContextMenuToRootOptions() {
+        activateContextMenuBack();
+    }
+
+    private void cancelPendingContextWifiRefresh() {
+        wifiContextRefreshPendingResetFocus = false;
+        wifiContextRefreshHandler.removeCallbacks(wifiContextRefreshRunnable);
+    }
+
+    private String contextMenuTopTier() {
+        return contextMenuTierStack.isEmpty() ? null : contextMenuTierStack.peekLast();
+    }
+
+    /** True when {@code tier} is the active context sub-menu and its list is on screen. */
+    private boolean isContextTierActive(String tier) {
+        if (tier == null || !tier.equals(contextMenuTopTier())) return false;
+        if (contextMenuInVolumeSlider) return false;
+        if (themedContextMenu == null || !themedContextMenu.isShowing()) return false;
+        if ("wifi".equals(tier) || "bt".equals(tier)) {
+            return themedContextMenu.isSubmenuTierOpen() && !contextMenuInQueueTier;
+        }
+        if ("queue".equals(tier)) return contextMenuInQueueTier;
+        return true;
+    }
+
+    private void deactivateContextNetworkTier() {
+        String top = contextMenuTopTier();
+        if (!"wifi".equals(top) && !"bt".equals(top)) return;
+        cancelPendingContextWifiRefresh();
+        if (contextMenuTierStack.size() > 1) {
+            contextMenuTierStack.removeLast();
+        }
+        if (themedContextMenu != null) {
+            themedContextMenu.setSubmenuTierOpen(false);
+        }
+        updateNetworkRescanLoop();
+    }
+
+    /** Push a sub-tier onto the navigation stack (root → queue → wifi/bt …). */
+    private void pushContextMenuTier(String tier) {
+        cancelPendingContextWifiRefresh();
+        if (tier != null && tier.length() > 0 && !tier.equals(contextMenuTopTier())) {
+            contextMenuTierStack.push(tier);
+        }
+        contextMenuInQueueTier = "queue".equals(contextMenuTopTier());
+        updateNetworkRescanLoop();
+    }
+
+    private void pushContextNetworkTier(String tier) {
+        setContextNetworkTier(tier);
+    }
+
+    /** Replace any piled wifi/bt tiers with a single network tab (root → wifi|bt). */
+    private void setContextNetworkTier(String tier) {
+        cancelPendingContextWifiRefresh();
+        contextMenuInQueueTier = false;
+        while (contextMenuTierStack.size() > 1) {
+            contextMenuTierStack.removeLast();
+        }
+        if (contextMenuTierStack.isEmpty()) {
+            contextMenuTierStack.push(CONTEXT_NAV_ROOT);
+        }
+        if (!tier.equals(contextMenuTopTier())) {
+            contextMenuTierStack.push(tier);
+        }
+        updateNetworkRescanLoop();
+    }
+
+    private void scheduleContextWifiRefresh(boolean resetFocus) {
+        if (!isContextTierActive("wifi")) {
+            cancelPendingContextWifiRefresh();
+            return;
+        }
+        if (resetFocus) {
+            cancelPendingContextWifiRefresh();
+            refreshContextWifiTierImmediate(true);
+            return;
+        }
+        wifiContextRefreshPendingResetFocus = false;
+        cancelPendingContextWifiRefresh();
+        wifiContextRefreshHandler.postDelayed(wifiContextRefreshRunnable, WIFI_CONTEXT_REFRESH_DEBOUNCE_MS);
+    }
+
+    private void refreshContextWifiTier() {
+        refreshContextWifiTier(true);
+    }
+
+    private void refreshContextWifiTier(boolean resetFocus) {
+        if (resetFocus) {
+            scheduleContextWifiRefresh(true);
+        } else {
+            scheduleContextWifiRefresh(false);
+        }
+    }
+
+    private void refreshContextWifiTierImmediate(boolean resetFocus) {
+        refreshContextWifiTierImmediate(resetFocus, false);
+    }
+
+    private void refreshContextWifiTierImmediate(boolean resetFocus, boolean force) {
+        if (!force && !isContextTierActive("wifi")) {
+            // #region agent log
+            try {
+                org.json.JSONObject d = new org.json.JSONObject();
+                d.put("tierTop", contextMenuTopTier());
+                d.put("tierDepth", contextMenuTierStack.size());
+                d.put("resetFocus", resetFocus);
+                d.put("force", force);
+                DebugAgentLog.log(this, "MainActivity.refreshContextWifiTierImmediate",
+                        "wifi tier inactive — bail", "H2", d);
+            } catch (Exception ignored) {}
+            // #endregion
+            return;
+        }
+        String focusLabel = !resetFocus && themedContextMenu != null
+                ? themedContextMenu.focusItemLabel() : null;
+        java.util.ArrayList<String> connected = new java.util.ArrayList<String>();
+        java.util.ArrayList<String> scanned = new java.util.ArrayList<String>();
+        collectWifiNetworksForContext(connected, scanned);
+        java.util.ArrayList<String> labels = new java.util.ArrayList<String>();
+        java.util.ArrayList<String> states = new java.util.ArrayList<String>();
+        java.util.ArrayList<String> iconKeys = new java.util.ArrayList<String>();
+        java.util.ArrayList<Runnable> actions = new java.util.ArrayList<Runnable>();
+        java.util.ArrayList<Boolean> headers = new java.util.ArrayList<Boolean>();
+
+        headers.add(Boolean.FALSE);
+        labels.add(wifiContextToggleLabel());
+        states.add(null);
+        iconKeys.add(null);
+        actions.add(new Runnable() {
+            @Override public void run() {
+                toggleWifiFromContextMenu();
+                refreshContextWifiTier(false);
+            }
+        });
+
+        final String focusedSsid = wifiContextSsidFromLabel(focusLabel);
+        if (focusedSsid != null && isWifiNetworkSaved(focusedSsid)) {
+            headers.add(Boolean.FALSE);
+            labels.add(getString(R.string.context_action_forget_wifi));
+            states.add(focusedSsid);
+            iconKeys.add(null);
+            actions.add(new Runnable() {
+                @Override public void run() {
+                    forgetWifiNetwork(focusedSsid);
+                    refreshContextWifiTier(false);
+                }
+            });
+        }
+
+        if (!connected.isEmpty()) {
+            headers.add(Boolean.TRUE);
+            labels.add(getString(R.string.context_wifi_connected));
+            states.add(null);
+            iconKeys.add(null);
+            actions.add(null);
+            for (final String ssid : connected) {
+                if (ssid == null || ssid.trim().isEmpty()) continue;
+                headers.add(Boolean.FALSE);
+                labels.add(ssid);
+                states.add(wifiStateTextForSsid(ssid, wifiCapabilitiesForSsid(ssid)));
+                iconKeys.add(wifiContextIconKeyForSsid(ssid));
+                actions.add(new Runnable() {
+                    @Override public void run() {
+                        connectWifiFromContextMenu(ssid);
+                    }
+                });
+            }
+        }
+
+        if (!scanned.isEmpty()) {
+            headers.add(Boolean.TRUE);
+            labels.add(getString(R.string.status_wifi_networks));
+            states.add(null);
+            iconKeys.add(null);
+            actions.add(null);
+            for (final String ssid : scanned) {
+                if (ssid == null || ssid.trim().isEmpty()) continue;
+                headers.add(Boolean.FALSE);
+                labels.add(ssid);
+                String capabilities = wifiCapabilitiesForSsid(ssid);
+                states.add(wifiStateTextForSsid(ssid, capabilities));
+                iconKeys.add(wifiContextIconKeyForSsid(ssid));
+                actions.add(new Runnable() {
+                    @Override public void run() {
+                        connectWifiFromContextMenu(ssid);
+                    }
+                });
+            }
+        }
+        // #region agent log
+        try {
+            org.json.JSONObject d = new org.json.JSONObject();
+            d.put("rowCount", labels.size());
+            d.put("tierTop", contextMenuTopTier());
+            d.put("submenuOpen", themedContextMenu != null && themedContextMenu.isSubmenuTierOpen());
+            DebugAgentLog.log(this, "MainActivity.refreshContextWifiTierImmediate", "show wifi tier", "H3", d);
+        } catch (Exception ignored) {}
+        // #endregion
+        showContextMenuTierInPlace(getString(R.string.context_tier_wifi), labels, states, iconKeys, headers, actions,
+                resetFocus);
+        try {
+            WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+            if (wm != null && wm.isWifiEnabled()) wm.startScan();
+        } catch (Exception ignored) {}
+        updateNetworkRescanLoop();
+    }
+
+    /** SSID from a context-menu row label, excluding fixed action/header rows. */
+    private String wifiContextSsidFromLabel(String label) {
+        if (label == null || label.isEmpty()) return null;
+        if (isWifiContextToggleLabel(label)) return null;
+        if (label.equals(getString(R.string.status_wifi_networks))) return null;
+        if (label.equals(getString(R.string.context_wifi_connected))) return null;
+        if (label.equals(getString(R.string.context_action_forget_wifi))) return null;
+        return label;
+    }
+
+    private void connectWifiFromContextMenu(final String ssid) {
+        try {
+            WifiManager manager = (WifiManager) getApplicationContext()
+                    .getSystemService(Context.WIFI_SERVICE);
+            if (manager == null) return;
+            boolean isSaved = false;
+            int savedNetId = -1;
+            java.util.List<WifiConfiguration> configured = manager.getConfiguredNetworks();
+            if (configured != null) {
+                for (WifiConfiguration conf : configured) {
+                    if (conf.SSID != null && conf.SSID.equals("\"" + ssid + "\"")) {
+                        isSaved = true;
+                        savedNetId = conf.networkId;
+                        break;
+                    }
+                }
+            }
+            if (isSaved && savedNetId != -1) {
+                Toast.makeText(MainActivity.this,
+                        getString(R.string.toast_wifi_saved_connecting),
+                        Toast.LENGTH_SHORT).show();
+                manager.disconnect();
+                manager.enableNetwork(savedNetId, true);
+                manager.reconnect();
+                collectWifiNetworksFromScan();
+                refreshContextWifiTier(false);
+            } else {
+                String caps = wifiCapabilitiesForSsid(ssid);
+                if (isWifiNetworkOpen(caps)) {
+                    performWifiConnection(ssid, "", true);
+                    collectWifiNetworksFromScan();
+                    refreshContextWifiTier(false);
+                } else {
+                    dismissThemedContextMenu();
+                    isTargetWifiOpen = false;
+                    keyboardReturnState = currentScreenState;
+                    openWifiKeyboard(ssid);
+                }
+            }
+        } catch (Exception ignored) {}
+    }
+
+    @android.annotation.SuppressLint("MissingPermission")
+    private void collectWifiNetworksForContext(java.util.List<String> connected,
+            java.util.List<String> scanned) {
+        connected.clear();
+        scanned.clear();
+        foundWifiNetworks.clear();
+        try {
+            WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+            if (wm == null || !wm.isWifiEnabled()) return;
+            List<ScanResult> results = wm.getScanResults();
+            if (results == null) return;
+            WifiInfo wifiInfo = wm.getConnectionInfo();
+            String connectedSSID = "";
+            if (wifiInfo != null && wifiInfo.getSSID() != null) {
+                connectedSSID = wifiInfo.getSSID().replace("\"", "");
+            }
+            java.util.TreeSet<String> connectedSet = new java.util.TreeSet<String>(
+                    String.CASE_INSENSITIVE_ORDER);
+            java.util.TreeSet<String> scannedSet = new java.util.TreeSet<String>(
+                    String.CASE_INSENSITIVE_ORDER);
+            for (ScanResult result : results) {
+                if (result.SSID == null || result.SSID.isEmpty()
+                        || WifiScanFilter.isHiddenSsid(result.SSID)) continue;
+                if (!connectedSSID.isEmpty() && result.SSID.equals(connectedSSID)) {
+                    connectedSet.add(result.SSID);
+                } else {
+                    scannedSet.add(result.SSID);
+                }
+            }
+            if (!connectedSSID.isEmpty() && connectedSet.isEmpty()) {
+                connectedSet.add(connectedSSID);
+            }
+            connected.addAll(connectedSet);
+            scanned.addAll(scannedSet);
+            foundWifiNetworks.addAll(connected);
+            foundWifiNetworks.addAll(scanned);
+        } catch (Exception ignored) {}
+    }
+
+    @android.annotation.SuppressLint("MissingPermission")
+    private void collectWifiNetworksFromScan() {
+        java.util.ArrayList<String> connected = new java.util.ArrayList<String>();
+        java.util.ArrayList<String> scanned = new java.util.ArrayList<String>();
+        collectWifiNetworksForContext(connected, scanned);
+    }
+
+    private void refreshContextBluetoothTier() {
+        refreshContextBluetoothTier(true);
+    }
+
+    private void refreshContextBluetoothTier(boolean resetFocus) {
+        refreshContextBluetoothTier(resetFocus, false);
+    }
+
+    private void refreshContextBluetoothTier(boolean resetFocus, boolean force) {
+        if (!force && !isContextTierActive("bt")) {
+            return;
+        }
+        collectBluetoothDevicesForContext();
+        java.util.ArrayList<String> labels = new java.util.ArrayList<String>();
+        java.util.ArrayList<String> states = new java.util.ArrayList<String>();
+        java.util.ArrayList<Runnable> actions = new java.util.ArrayList<Runnable>();
+        java.util.ArrayList<Boolean> headers = new java.util.ArrayList<Boolean>();
+
+        headers.add(Boolean.FALSE);
+        labels.add(getString(R.string.wifi_off_confirm));
+        states.add(bluetoothPowerStateText());
+        actions.add(new Runnable() {
+            @Override public void run() {
+                toggleBluetoothFromContextMenu();
+                refreshContextBluetoothTier(false);
+            }
+        });
+
+        final BluetoothDevice focused = bluetoothFocusedDevice();
+        if (focused != null && focused.getBondState() == BluetoothDevice.BOND_BONDED) {
+            headers.add(Boolean.FALSE);
+            labels.add(getString(R.string.context_action_forget_bluetooth));
+            states.add(focused.getName());
+            actions.add(new Runnable() {
+                @Override public void run() {
+                    forgetBluetoothDevice(focused);
+                    collectBluetoothDevicesForContext();
+                    refreshContextBluetoothTier(false);
+                }
+            });
+        }
+
+        if (!foundBtDevices.isEmpty()) {
+            headers.add(Boolean.TRUE);
+            labels.add(getString(R.string.status_bluetooth_scan));
+            states.add(null);
+            actions.add(null);
+            for (String addr : foundBtDevices) {
+                final BluetoothDevice bt = bluetoothDeviceByAddress(addr);
+                if (bt == null) continue;
+                final String label = bt.getName() != null ? bt.getName() : bt.getAddress();
+                headers.add(Boolean.FALSE);
+                labels.add(label);
+                states.add(bluetoothStateText(bt));
+                actions.add(new Runnable() {
+                    @Override public void run() {
+                        pairBluetoothDevice(bt);
+                        collectBluetoothDevicesForContext();
+                        refreshContextBluetoothTier(false);
+                    }
+                });
+            }
+        }
+        showContextMenuTierInPlace(getString(R.string.context_tier_bluetooth), labels, states, headers, actions,
+                resetFocus);
+        triggerBluetoothDiscovery(false);
+        updateNetworkRescanLoop();
+    }
+
+    private void toggleBluetoothFromContextMenu() {
+        try {
+            BluetoothAdapter ba = BluetoothAdapter.getDefaultAdapter();
+            if (ba == null) return;
+            if (ba.isEnabled()) {
+                Toast.makeText(this, getString(R.string.toast_bt_turning_off), Toast.LENGTH_SHORT).show();
+                ba.disable();
+            } else {
+                Toast.makeText(this, getString(R.string.toast_bt_turning_on), Toast.LENGTH_SHORT).show();
+                ba.enable();
+            }
+        } catch (Exception ignored) {}
+    }
+
+    @android.annotation.SuppressLint("MissingPermission")
+    private void collectBluetoothDevicesForContext() {
+        foundBtDevices.clear();
+        try {
+            BluetoothAdapter ba = BluetoothAdapter.getDefaultAdapter();
+            if (ba == null || !ba.isEnabled()) return;
+            java.util.Set<BluetoothDevice> paired = ba.getBondedDevices();
+            if (paired != null) {
+                for (BluetoothDevice d : paired) {
+                    if (d != null && d.getAddress() != null) foundBtDevices.add(d.getAddress());
+                }
+            }
+            if (!ba.isDiscovering()) ba.startDiscovery();
+        } catch (Exception ignored) {}
+    }
+
+    private String bluetoothPowerStateText() {
+        try {
+            BluetoothAdapter ba = BluetoothAdapter.getDefaultAdapter();
+            if (ba != null && ba.isEnabled()) return "ON";
+        } catch (Exception ignored) {}
+        return "OFF";
+    }
+
+    private void openPlaybackQueueInContextMenu() {
+        // #region agent log
+        try {
+            JSONObject d = new JSONObject();
+            d.put("memSize", playback.unifiedQueue().size());
+            d.put("persisted", PlayQueueStore.persistedItemCount(getApplicationContext()));
+            d.put("missingPaths", PlayQueueStore.countMissingPaths(getApplicationContext()));
+            d.put("scanning", isCustomScanning);
+            QueueDebugLog.log("MainActivity.openPlaybackQueueInContextMenu", "open requested", "H1-H2", d);
+        } catch (Exception ignored) {}
+        // #endregion
+        ensurePlaybackQueueSyncedFromStore();
+        if (!playback.hasAnyQueue()) {
+            Toast.makeText(this, getString(R.string.library_queue_empty), Toast.LENGTH_SHORT).show();
+            return;
+        }
+        dismissContextVolumeSliderUi();
+        contextMenuInVolumeSlider = false;
+        if (themedContextMenu == null || !themedContextMenu.isShowing()) {
+            showThemedContextMenu();
+        }
+        PlayQueue q = playback.unifiedQueue();
+        q.clampIndex();
+        contextQueueFocusIndex = q.index();
+        clearContextQueueMoveSession();
+        pushContextQueueTier();
+    }
+
+    /** Reload persisted queue when memory is empty or disk has more items (SD mount after restart). */
+    private void ensurePlaybackQueueSyncedFromStore() {
+        PlayQueue fromDisk = new PlayQueue();
+        if (!PlayQueueStore.restore(getApplicationContext(), fromDisk) || fromDisk.isEmpty()) return;
+        int memSize = playback.unifiedQueue().size();
+        if (!playback.hasAnyQueue() || fromDisk.size() > memSize) {
+            playback.restoreQueueState(fromDisk.items(), fromDisk.index());
+            syncNowPlayingHomeVisibility();
+            // #region agent log
+            try {
+                JSONObject d = new JSONObject();
+                d.put("fromDisk", fromDisk.size());
+                d.put("wasMem", memSize);
+                QueueDebugLog.log("MainActivity.ensurePlaybackQueueSyncedFromStore", "restored from store", "H1", d);
+            } catch (Exception ignored) {}
+            // #endregion
+        }
+    }
+
+    private void pushContextQueueTier() {
+        contextQueueEditPlaylist = false;
+        playlistEditEntry = null;
+        playlistEditTracks.clear();
+        if (themedContextMenu != null) themedContextMenu.setQuickReturnIndex(CONTEXT_QUICK_QUEUE_INDEX);
+        while (contextMenuTierStack.size() > 1) {
+            contextMenuTierStack.removeLast();
+        }
+        if (contextMenuTierStack.isEmpty()) {
+            contextMenuTierStack.push(CONTEXT_NAV_ROOT);
+        }
+        pushContextMenuTier("queue");
+        contextMenuInQueueTier = true;
+        rebuildContextQueueTier(true);
+    }
+
+    private void rebuildContextQueueTier(boolean focusList) {
+        PlayQueue q = playback.unifiedQueue();
+        q.clampIndex();
+        if (contextQueueFocusIndex < 0 || contextQueueFocusIndex >= q.size()) {
+            contextQueueFocusIndex = q.index();
+        }
+        if (themedContextMenu == null) return;
+        ThemedContextMenu.QueueRowSpec[] specs;
+        try {
+            specs = buildContextQueueRowSpecs();
+        } catch (Exception e) {
+            specs = buildQueueRowSpecsFast(q);
+            // #region agent log
+            try {
+                JSONObject d = new JSONObject();
+                d.put("queueSize", q.size());
+                d.put("error", e.getClass().getSimpleName());
+                QueueDebugLog.log("MainActivity.rebuildContextQueueTier", "spec build failed, fast fallback", "H3", d);
+            } catch (Exception ignored) {}
+            // #endregion
+        }
+        themedContextMenu.replaceQueueContent(getString(R.string.context_quick_queue),
+                specs, contextQueueFocusIndex, contextQueueMoveFrom);
+        themedContextMenu.ensureQueueListVisible();
+        if (!focusList) {
+            themedContextMenu.focusQuickBarLeavingQueueList(CONTEXT_QUICK_QUEUE_INDEX);
+        }
+        // #region agent log
+        try {
+            JSONObject d = new JSONObject();
+            d.put("queueSize", q.size());
+            d.put("specCount", specs != null ? specs.length : 0);
+            d.put("childCount", themedContextMenu.queueListChildCount());
+            d.put("scrollH", themedContextMenu.queueListScrollHeight());
+            if (specs != null && specs.length > 0) {
+                d.put("firstTitle", specs[0].title);
+                d.put("firstLine", specs[0].displayLine());
+            }
+            QueueDebugLog.log("MainActivity.rebuildContextQueueTier", "rebuilt", "H2-H4-H5", d);
+        } catch (Exception ignored) {}
+        // #endregion
+        SolarAdbTest.queueOpen(q.size(), true, themedContextMenu.queueListScrollHeight(),
+                themedContextMenu.queueListChildCount());
+    }
+
+    private void pushContextPlaylistEditTier() {
+        pushContextMenuTier("queue");
+        contextMenuInQueueTier = true;
+        if (contextQueueFocusIndex < 0 || contextQueueFocusIndex >= playlistEditTracks.size()) {
+            contextQueueFocusIndex = 0;
+        }
+        String title = playlistEditEntry != null ? playlistEditEntry.name : getString(R.string.browser_playlists);
+        themedContextMenu.replaceQueueContent(title, buildContextQueueRowSpecs(),
+                contextQueueFocusIndex, contextQueueMoveFrom);
+    }
+
+    private PlaylistManager.Entry findPlaylistEntryByName(String name) {
+        if (name == null) return null;
+        if (libraryPlaylists != null) {
+            for (PlaylistManager.Entry e : libraryPlaylists) {
+                if (name.equals(e.name)) return e;
+            }
+        }
+        for (PlaylistManager.Entry e : PlaylistManager.scan(rootFolder)) {
+            if (name.equals(e.name)) return e;
+        }
+        return null;
+    }
+
+    private String queueItemTitle(PlayQueue.QueueItem item) {
+        if (item == null) return "";
+        String base;
+        if (item.kind == PlayQueue.ItemKind.MUSIC_FILE && item.file != null) {
+            SongItem si = findSongItem(item.file);
+            if (si != null) base = si.title;
+            else {
+                String n = item.file.getName();
+                int dot = n.lastIndexOf('.');
+                base = dot > 0 ? n.substring(0, dot) : n;
+            }
+        } else if (item.kind == PlayQueue.ItemKind.REACH_STREAM) {
+            base = item.reachMeta != null ? item.reachMeta : getString(R.string.status_soulseek);
+        } else if (item.kind == PlayQueue.ItemKind.PODCAST_EPISODE && item.episode != null) {
+            base = item.episode.title;
+        } else {
+            base = "";
+        }
+        return maybePrefixReachDownloadProgress(item, base);
+    }
+
+    private String maybePrefixReachDownloadProgress(PlayQueue.QueueItem item, String base) {
+        if (item == null || item.file == null || base == null) return base != null ? base : "";
+        if (item.kind != PlayQueue.ItemKind.REACH_STREAM && !isReachTempFile(item.file)) return base;
+        int pct = reachDownloadPercentForFile(item.file);
+        return reachProgressPrefix(pct) + stripReachProgressPrefix(base);
+    }
+
+    private String reachProgressPrefix(int pct) {
+        if (pct < 0) return "";
+        if (pct >= 100 && !reachDownloadInProgress()) return "";
+        if (pct > 100) pct = 100;
+        return "[" + pct + "%] ";
+    }
+
+    private String stripReachProgressPrefix(String title) {
+        if (title == null || title.length() < 4 || title.charAt(0) != '[') return title != null ? title : "";
+        int close = title.indexOf(']');
+        if (close <= 1 || close > 7) return title;
+        if (close + 1 < title.length() && title.charAt(close + 1) == ' ') {
+            return title.substring(close + 2);
+        }
+        return title;
+    }
+
+    private int reachDownloadPercentForFile(File file) {
+        if (file == null || !isReachTempFile(file)) return -1;
+        long total = 0;
+        long done = file.length();
+        if (reachGrowingCacheFile != null && file.equals(reachGrowingCacheFile) && reachGrowingTotalBytes > 0) {
+            total = reachGrowingTotalBytes;
+            done = reachGrowingCacheFile.length();
+        } else if (reachQueuePartialFile != null && file.equals(reachQueuePartialFile) && reachGrowingTotalBytes > 0) {
+            total = reachGrowingTotalBytes;
+            done = reachQueuePartialFile.length();
+        }
+        if (total > 0) {
+            int pct = (int) (done * 100 / total);
+            return Math.min(100, Math.max(0, pct));
+        }
+        if (reachDownloadInProgress() && isActiveReachDownloadFile(file)) {
+            return Math.min(100, Math.max(0, soulseekActiveDownloadPercent));
+        }
+        return -1;
+    }
+
+    private boolean isActiveReachDownloadFile(File file) {
+        if (file == null || !reachDownloadInProgress()) return false;
+        if (reachGrowingCacheFile != null && file.equals(reachGrowingCacheFile)) return true;
+        return reachQueuePartialFile != null && file.equals(reachQueuePartialFile);
+    }
+
+    private void refreshReachProgressUi() {
+        refreshReachPlayerTitleProgress();
+        refreshContextQueueTierIfOpen();
+        refreshNowPlayingPreview();
+    }
+
+    private void refreshReachPlayerTitleProgress() {
+        if (tvPlayerTitle == null) return;
+        PlayQueue.QueueItem cur = playback.currentItem();
+        if (cur == null || cur.file == null) return;
+        if (cur.kind != PlayQueue.ItemKind.REACH_STREAM && !isReachTempFile(cur.file)) return;
+        int pct = reachDownloadPercentForFile(cur.file);
+        if (pct < 0 && !reachPartialPlaybackStarted) return;
+        String base = stripReachProgressPrefix(tvPlayerTitle.getText().toString());
+        if (base.isEmpty()) {
+            if (cur.reachMeta != null && !cur.reachMeta.isEmpty()) base = cur.reachMeta;
+            else {
+                String n = cur.file.getName();
+                int dot = n.lastIndexOf('.');
+                base = dot > 0 ? n.substring(0, dot) : n;
+            }
+        }
+        String titled = reachProgressPrefix(pct) + base;
+        tvPlayerTitle.setText(titled);
+        if (tvVizTitle != null) tvVizTitle.setText(titled);
+    }
+
+    private String queueItemSubtitle(PlayQueue.QueueItem item) {
+        if (item == null) return "";
+        if (item.kind == PlayQueue.ItemKind.MUSIC_FILE && item.file != null) {
+            SongItem si = findSongItem(item.file);
+            if (si != null) return si.artist + " · " + si.album;
+            return getString(R.string.home_menu_music);
+        }
+        if (item.kind == PlayQueue.ItemKind.REACH_STREAM) return getString(R.string.status_soulseek);
+        if (item.kind == PlayQueue.ItemKind.PODCAST_EPISODE) {
+            return item.podcastShowTitle != null ? item.podcastShowTitle : getString(R.string.home_menu_podcasts);
+        }
+        return "";
+    }
+
+    private int contextQueueSize() {
+        return contextQueueEditPlaylist ? playlistEditTracks.size() : playback.unifiedQueue().size();
+    }
+
+    private boolean canPickContextQueueMoveFrom(int idx) {
+        return idx >= 0 && idx < contextQueueSize();
+    }
+
+    private int nextContextQueueMoveIndex(int from, int delta) {
+        return QueueMoveWindow.nextMoveIndex(from, delta, contextQueueSize());
+    }
+
+    private void applyContextQueueMove(int from, int to) {
+        if (from == to) return;
+        if (contextQueueEditPlaylist) {
+            if (from < 0 || to < 0 || from >= playlistEditTracks.size() || to >= playlistEditTracks.size()) return;
+            File moved = playlistEditTracks.remove(from);
+            playlistEditTracks.add(to, moved);
+            contextQueueMoveFrom = to;
+            contextQueueFocusIndex = to;
+            contextQueueMoveDirty = true;
+            if (themedContextMenu != null && themedContextMenu.isQueueMode()) {
+                themedContextMenu.applyQueueReorderLive(from, to, -1, false);
+            } else {
+                pushContextPlaylistEditTier();
+            }
+            return;
+        }
+        if (!QueueMoveWindow.canMoveTo(from, to)) return;
+        playback.moveQueueItem(from, to);
+        contextQueueMoveFrom = to;
+        contextQueueFocusIndex = to;
+        contextQueueMoveDirty = true;
+        if (themedContextMenu != null && themedContextMenu.isQueueMode()) {
+            themedContextMenu.applyQueueReorderLive(from, to, playback.unifiedQueue().index(),
+                    isMediaPlaying());
+        } else {
+            pushContextQueueTier();
+        }
+    }
+
+    private boolean isMediaPlaying() {
+        try {
+            return mediaPlayer != null && mediaPlayer.isPlaying();
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private void flushContextQueueMoveIfDirty() {
+        if (!contextQueueMoveDirty) return;
+        contextQueueMoveDirty = false;
+        if (contextQueueEditPlaylist) {
+            persistPlaylistEdit();
+            return;
+        }
+        persistPlaybackQueue();
+    }
+
+    private void clearContextQueueMoveSession() {
+        contextQueueMoveFrom = -1;
+        contextQueueMovePickIndex = -1;
+        contextQueueMoveSnapshot = null;
+        contextQueueMoveSnapshotIndex = -1;
+        contextPlaylistMoveSnapshot = null;
+        contextQueueMoveWheelFilter.reset();
+    }
+
+    private void beginContextQueueMoveSession(int pickIndex) {
+        contextQueueMovePickIndex = pickIndex;
+        if (contextQueueEditPlaylist) {
+            contextPlaylistMoveSnapshot = new java.util.ArrayList<File>(playlistEditTracks);
+        } else {
+            contextQueueMoveSnapshot = new java.util.ArrayList<PlayQueue.QueueItem>(
+                    playback.unifiedQueue().items());
+            contextQueueMoveSnapshotIndex = playback.unifiedQueue().index();
+        }
+    }
+
+    /** Back cancels move (animated) and restores the pre-move queue order. */
+    private void cancelContextQueueMove(boolean focusList) {
+        if (contextQueueMoveFrom < 0 && (themedContextMenu == null || themedContextMenu.queueMoveFrom() < 0)) {
+            return;
+        }
+        if (themedContextMenu != null && themedContextMenu.isQueueMoveRibbonAnimating()) {
+            return;
+        }
+        final int home = contextQueueMovePickIndex >= 0 ? contextQueueMovePickIndex : contextQueueFocusIndex;
+        final int current = contextQueueMoveFrom >= 0 ? contextQueueMoveFrom
+                : (themedContextMenu != null ? themedContextMenu.queueMoveFrom() : home);
+        // #region agent log
+        try {
+            org.json.JSONObject d = new org.json.JSONObject();
+            d.put("focusList", focusList);
+            d.put("moveFrom", current);
+            d.put("home", home);
+            d.put("hadSnapshot", contextQueueMoveSnapshot != null || contextPlaylistMoveSnapshot != null);
+            DebugAgentLog.log(this, "MainActivity.cancelContextQueueMove", "cancel move", "H8", d);
+        } catch (Exception ignored) {}
+        // #endregion
+        if (themedContextMenu != null && themedContextMenu.queueMoveFrom() >= 0 && current != home) {
+            themedContextMenu.animateQueueMoveCancelReturn(current, home, new Runnable() {
+                @Override
+                public void run() {
+                    finishCancelContextQueueMove(focusList, home);
+                }
+            });
+            return;
+        }
+        finishCancelContextQueueMove(focusList, home);
+    }
+
+    private void finishCancelContextQueueMove(boolean focusList, int focus) {
+        contextQueueMoveDirty = false;
+        if (contextQueueEditPlaylist && contextPlaylistMoveSnapshot != null) {
+            playlistEditTracks.clear();
+            playlistEditTracks.addAll(contextPlaylistMoveSnapshot);
+        } else if (contextQueueMoveSnapshot != null) {
+            playback.restoreQueueState(contextQueueMoveSnapshot, contextQueueMoveSnapshotIndex);
+        }
+        clearContextQueueMoveSession();
+        contextQueueFocusIndex = Math.max(0, focus);
+        if (themedContextMenu != null) {
+            rebuildContextQueueTier(focusList);
+        }
+    }
+
+    private void confirmContextQueueMove() {
+        if (themedContextMenu == null) return;
+        int placed = contextQueueMoveFrom >= 0 ? contextQueueMoveFrom : themedContextMenu.focusIndex();
+        flushContextQueueMoveIfDirty();
+        clearContextQueueMoveSession();
+        contextQueueFocusIndex = placed;
+        rebuildContextQueueTier(true);
+        themedContextMenu.flashQueueConfirm(placed);
+        if (!contextQueueEditPlaylist) {
+            themedContextMenu.refreshQueuePlayingState(buildContextQueueRowSpecs());
+        }
+    }
+
+    private void persistPlaylistEdit() {
+        if (playlistEditEntry == null || playlistEditEntry.sourceFile == null) return;
+        try {
+            PlaylistManager.saveM3u(
+                    PlaylistManager.fromTracks(playlistEditEntry.name, playlistEditTracks),
+                    playlistEditEntry.sourceFile);
+            if ("PLAYLIST".equals(virtualQueryType) && virtualQueryValue != null
+                    && virtualQueryValue.equals(playlistEditEntry.name)) {
+                virtualSongList.clear();
+                virtualSongList.addAll(playlistEditTracks);
+            }
+        } catch (Exception e) {
+            Toast.makeText(this, getString(R.string.library_playlist_save_failed), Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private void handleContextQueueCenterActivate(boolean longPress) {
+        if (themedContextMenu == null || !contextMenuInQueueTier) return;
+        int idx = themedContextMenu.focusIndex();
+        contextQueueFocusIndex = idx;
+        if (contextQueueMoveFrom >= 0) {
+            if (contextQueueMoveFrom == idx) {
+                confirmContextQueueMove();
+            } else {
+                applyContextQueueMove(contextQueueMoveFrom, idx);
+            }
+            return;
+        }
+        if (longPress) {
+            if (canPickContextQueueMoveFrom(idx)) {
+                contextQueueMoveFrom = idx;
+                beginContextQueueMoveSession(idx);
+                contextQueueMoveWheelFilter.reset();
+                themedContextMenu.setQueueMoveFrom(idx);
+            }
+        } else {
+            playUnifiedQueueItemAt(idx);
+        }
+    }
+
+    private void playUnifiedQueueItemAt(int idx) {
+        if (contextQueueEditPlaylist) {
+            if (idx < 0 || idx >= playlistEditTracks.size()) return;
+            playTrackList(new ArrayList<File>(playlistEditTracks), idx,
+                    playlistEditEntry != null ? playlistEditEntry.name : null);
+            return;
+        }
+        PlayQueue q = playback.unifiedQueue();
+        if (idx < 0 || idx >= q.size()) return;
+        if (idx == q.index()) {
+            playOrPauseMusic();
+            return;
+        }
+        finalizeReachStreamHandoff();
+        saveCurrentPodcastResume();
+        stopPodcastDownloadFully();
+        playback.setQueueIndex(idx);
+        PlayQueue.QueueItem item = playback.currentItem();
+        if (item == null) return;
+        if (item.kind == PlayQueue.ItemKind.PODCAST_EPISODE) {
+            preparePodcastEpisode(playback.podcastIndex());
+        } else if (item.file != null) {
+            prepareMusicTrack(playback.musicIndex());
+        }
+        isPausedByHand = false;
+        persistPlaybackQueue();
+        refreshContextQueueTierIfOpen();
+    }
+
+    private void handlePlaylistListCenterActivate(boolean longPress) {
+        int idx = virtualSongListPosition();
+        if (idx < 0 && playlistMoveFrom < 0) return;
+        if (playlistMoveFrom >= 0) {
+            confirmPlaylistMove();
+            return;
+        }
+        if (longPress) {
+            beginPlaylistMove(idx);
+        } else {
+            File audio = idx < virtualSongList.size() ? virtualSongList.get(idx) : null;
+            if (audio != null) {
+                playTrackList(virtualSongList, idx, virtualQueryValue);
+            }
+        }
+    }
+
+    private void beginPlaylistMove(int pickIndex) {
+        if (pickIndex < 0 || pickIndex >= virtualSongList.size()) return;
+        // #region agent log
+        try {
+            org.json.JSONObject d = new org.json.JSONObject();
+            d.put("pickIndex", pickIndex);
+            d.put("size", virtualSongList.size());
+            DebugAgentLog.log(this, "MainActivity.beginPlaylistMove", "move begin", "H3", d);
+        } catch (Exception ignored) {}
+        // #endregion
+        playlistMovePickIndex = pickIndex;
+        playlistMoveFrom = pickIndex;
+        playlistMoveSnapshot = new java.util.ArrayList<File>(virtualSongList);
+        playlistMoveDirty = false;
+        playlistMoveWheelFilter.reset();
+        showPlaylistMoveStripUi();
+    }
+
+    private MoveStripController.Adapter createPlaylistMoveAdapter() {
+        return new MoveStripController.Adapter() {
+            @Override
+            public View createRow() {
+                return MoveRibbonRows.createLibraryMoveRow(
+                        MainActivity.this, y1LibraryRowHeightPx);
+            }
+
+            @Override
+            public void bindRow(View row, int dataIndex, boolean moving, boolean confirming) {
+                SongItem song = songItemAtPlaylistIndex(dataIndex);
+                boolean np = isPlaylistViewNowPlayingSlot(dataIndex);
+                boolean playing = np && !isPausedByHand && playback.isMusicActive();
+                String title = String.format(Locale.US, "%02d · %s", dataIndex + 1,
+                        song != null ? song.title : "");
+                MoveRibbonRows.bindLibraryMoveRow(MainActivity.this, (FrameLayout) row,
+                        title, songSubtitleLine(song), moving, moving || confirming,
+                        np, playing, y1ActiveRowWidthPx(), y1LibraryRowHeightPx);
+            }
+
+            @Override
+            public int itemCount() {
+                return virtualSongList.size();
+            }
+
+            @Override
+            public int rowSlotHeight() {
+                return y1LibraryRowHeightPx + 2;
+            }
+        };
+    }
+
+    private SongItem songItemAtPlaylistIndex(int index) {
+        if (index < 0 || index >= virtualSongList.size()) {
+            File empty = new File("");
+            return new SongItem(empty, "", "", "", "");
+        }
+        return findSongItem(virtualSongList.get(index));
+    }
+
+    private String songSubtitleLine(SongItem song) {
+        if (song == null) return "";
+        if (ArtistBrowsePolicy.isGuestOnlyArtistBrowse(virtualQueryValue, virtualQueryType,
+                policyTracksFromLibrary(), libraryBrowsePrefs)) {
+            String owner = ArtistBrowsePolicy.guestSongSubtitleOwner(song.album, virtualQueryValue,
+                    policyTracksFromLibrary(), libraryBrowsePrefs);
+            if (owner != null && !owner.trim().isEmpty() && song.album != null && !song.album.isEmpty()) {
+                return getString(R.string.library_song_from_album, owner, song.album);
+            }
+        }
+        if (song.artist.isEmpty()) return song.album;
+        if (song.album.isEmpty()) return song.artist;
+        return song.artist + " · " + song.album;
+    }
+
+    private List<ArtistBrowsePolicy.Track> policyTracksFromLibrary() {
+        List<ArtistBrowsePolicy.Track> out = new ArrayList<>();
+        for (SongItem song : customLibrary) {
+            out.add(new ArtistBrowsePolicy.Track(song.artist, song.album, song.albumArtist,
+                    song.file.lastModified()));
+        }
+        return out;
+    }
+
+    private void refreshLibraryBrowseIfVisible() {
+        if (currentScreenState != STATE_BROWSER) return;
+        clearArtistOwnAlbumCache();
+        if (currentBrowserMode == BROWSER_ARTISTS) {
+            buildVirtualCategories("ARTIST");
+        } else if (currentBrowserMode == BROWSER_ARTIST_ALBUMS) {
+            buildArtistAlbums();
+        } else if (currentBrowserMode == BROWSER_VIRTUAL_SONGS && "ARTIST".equals(virtualQueryType)) {
+            buildVirtualSongs();
+        } else if (currentBrowserMode == BROWSER_ALBUMS) {
+            buildVirtualCategories("ALBUM");
+        }
+    }
+
+    private boolean isLibraryArtistBrowseContext() {
+        if (currentScreenState != STATE_BROWSER) return false;
+        if (currentBrowserMode == BROWSER_ARTISTS || currentBrowserMode == BROWSER_ARTIST_ALBUMS) return true;
+        return currentBrowserMode == BROWSER_VIRTUAL_SONGS && "ARTIST".equals(virtualQueryType);
+    }
+
+    private void clearArtistOwnAlbumCache() {
+        artistOwnAlbumCacheKey = "";
+    }
+
+    /** True when the artist is primary on at least one album in the library. */
+    private boolean artistHasOwnAlbum(String artist) {
+        if (artist == null || artist.trim().isEmpty()) return false;
+        String normalized = artist.trim();
+        String cacheKey = ArtistNames.matchKey(normalized);
+        if (cacheKey.equals(artistOwnAlbumCacheKey)) return artistOwnAlbumCacheValue;
+        boolean owns = ArtistBrowsePolicy.hasOwnAlbum(normalized, policyTracksFromLibrary(), libraryBrowsePrefs);
+        artistOwnAlbumCacheKey = cacheKey;
+        artistOwnAlbumCacheValue = owns;
+        return owns;
+    }
+
+    private void openArtistBrowse(String artist) {
+        virtualQueryArtist = artist.trim();
+        if (ArtistBrowsePolicy.shouldSkipAlbumPicker(virtualQueryArtist, libraryBrowsePrefs,
+                policyTracksFromLibrary())) {
+            currentBrowserMode = BROWSER_VIRTUAL_SONGS;
+            virtualQueryType = "ARTIST";
+            virtualQueryValue = virtualQueryArtist;
+            virtualQueryArtist = "";
+            buildVirtualSongs();
+            return;
+        }
+        currentBrowserMode = BROWSER_ARTIST_ALBUMS;
+        buildArtistAlbums();
+    }
+
+    private void showPlaylistMoveStripUi() {
+        listVirtualSongs.setVisibility(View.GONE);
+        android.view.ViewGroup browserParent = (android.view.ViewGroup) scrollViewBrowser.getParent();
+        if (playlistMoveOverlay == null) {
+            playlistMoveOverlay = new FrameLayout(this);
+            browserParent.addView(playlistMoveOverlay, new android.view.ViewGroup.LayoutParams(
+                    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                    android.view.ViewGroup.LayoutParams.MATCH_PARENT));
+        }
+        playlistMoveOverlay.setVisibility(View.VISIBLE);
+        playlistMoveOverlay.removeAllViews();
+        playlistMoveScroll = new ScrollView(this);
+        playlistMoveScroll.setVerticalScrollBarEnabled(false);
+        playlistMoveScroll.setFillViewport(true);
+        LinearLayout host = new LinearLayout(this);
+        host.setOrientation(LinearLayout.VERTICAL);
+        playlistMoveScroll.addView(host, new ScrollView.LayoutParams(
+                ScrollView.LayoutParams.MATCH_PARENT, ScrollView.LayoutParams.WRAP_CONTENT));
+        playlistMoveStrip = new MoveStripController(host, createPlaylistMoveAdapter());
+        playlistMoveStrip.setScrollParent(playlistMoveScroll);
+        playlistMoveOverlay.addView(playlistMoveScroll, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+        playlistMoveStrip.enter(playlistMoveFrom);
+    }
+
+    private void hidePlaylistMoveStripUi() {
+        if (playlistMoveOverlay != null) playlistMoveOverlay.setVisibility(View.GONE);
+        if (listVirtualSongs != null) listVirtualSongs.setVisibility(View.VISIBLE);
+        if (playlistMoveStrip != null) playlistMoveStrip.teardown();
+        playlistMoveStrip = null;
+        playlistMoveScroll = null;
+    }
+
+    private void confirmPlaylistMove() {
+        if (playlistMoveStrip != null && playlistMoveStrip.isAnimating()) return;
+        final int placed = playlistMoveFrom;
+        Runnable finish = new Runnable() {
+            @Override
+            public void run() {
+                flushPlaylistMoveIfDirty();
+                playlistMoveFrom = -1;
+                playlistMovePickIndex = -1;
+                playlistMoveSnapshot = null;
+                playlistMoveWheelFilter.reset();
+                hidePlaylistMoveStripUi();
+                refreshPlaylistSongList();
+            }
+        };
+        if (playlistMoveStrip != null && placed >= 0) {
+            playlistMoveStrip.flashConfirm(placed, finish);
+        } else {
+            finish.run();
+        }
+    }
+
+    private int virtualSongListPosition() {
+        if (listVirtualSongs == null) return -1;
+        View focused = listVirtualSongs.getFocusedChild();
+        if (focused != null) {
+            return listVirtualSongs.getPositionForView(focused);
+        }
+        return listVirtualSongs.getSelectedItemPosition();
+    }
+
+    private void applyPlaylistMove(int from, int to) {
+        if (from == to || from < 0 || to < 0
+                || from >= virtualSongList.size() || to >= virtualSongList.size()) return;
+        if (playlistMoveStrip != null && playlistMoveStrip.isAnimating()) return;
+        if (playlistMoveStrip != null) {
+            playlistMoveStrip.animateStep(from, to, new Runnable() {
+                @Override
+                public void run() {
+                    File moved = virtualSongList.remove(from);
+                    virtualSongList.add(to, moved);
+                    playlistMoveFrom = to;
+                    playlistMoveDirty = true;
+                }
+            });
+            return;
+        }
+        File moved = virtualSongList.remove(from);
+        virtualSongList.add(to, moved);
+        playlistMoveFrom = to;
+        playlistMoveDirty = true;
+        refreshPlaylistSongList();
+    }
+
+    private void flushPlaylistMoveIfDirty() {
+        if (!playlistMoveDirty) return;
+        playlistMoveDirty = false;
+        if (playlistViewEntry == null || playlistViewEntry.sourceFile == null) return;
+        try {
+            PlaylistManager.saveM3u(
+                    PlaylistManager.fromTracks(playlistViewEntry.name, virtualSongList),
+                    playlistViewEntry.sourceFile);
+            playlistViewEntry.tracks.clear();
+            playlistViewEntry.tracks.addAll(virtualSongList);
+            if (libraryPlaylists != null) {
+                for (PlaylistManager.Entry e : libraryPlaylists) {
+                    if (playlistViewEntry.name.equals(e.name)) {
+                        e.tracks.clear();
+                        e.tracks.addAll(virtualSongList);
+                        break;
+                    }
+                }
+            }
+        } catch (Exception e) {
+            Toast.makeText(this, getString(R.string.library_playlist_save_failed), Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private void cancelPlaylistMove() {
+        if (playlistMoveFrom < 0) return;
+        if (playlistMoveStrip != null && playlistMoveStrip.isAnimating()) return;
+        final int home = playlistMovePickIndex >= 0 ? playlistMovePickIndex : playlistMoveFrom;
+        final int current = playlistMoveFrom;
+        if (playlistMoveStrip != null && current != home) {
+            final int next = current + (current > home ? -1 : 1);
+            playlistMoveStrip.animateStep(current, next, new Runnable() {
+                @Override
+                public void run() {
+                    File moved = virtualSongList.remove(current);
+                    virtualSongList.add(next, moved);
+                    playlistMoveFrom = next;
+                    cancelPlaylistMove();
+                }
+            });
+            return;
+        }
+        if (playlistMoveSnapshot != null) {
+            virtualSongList.clear();
+            virtualSongList.addAll(playlistMoveSnapshot);
+        }
+        playlistMoveDirty = false;
+        playlistMoveFrom = -1;
+        playlistMovePickIndex = -1;
+        playlistMoveSnapshot = null;
+        playlistMoveWheelFilter.reset();
+        hidePlaylistMoveStripUi();
+        refreshPlaylistSongList();
+    }
+
+    private void resetPlaylistMoveState() {
+        if (playlistMoveFrom >= 0 && playlistMoveSnapshot != null) {
+            virtualSongList.clear();
+            virtualSongList.addAll(playlistMoveSnapshot);
+        }
+        playlistMoveFrom = -1;
+        playlistMovePickIndex = -1;
+        playlistMoveSnapshot = null;
+        playlistMoveDirty = false;
+        playlistMoveWheelFilter.reset();
+        hidePlaylistMoveStripUi();
+        playlistViewEntry = null;
+    }
+
+    private void refreshPlaylistSongList() {
+        if (listVirtualSongs == null || listVirtualSongs.getAdapter() == null) return;
+        final int focusIdx = playlistMoveFrom >= 0 ? playlistMoveFrom : virtualSongListPosition();
+        android.widget.BaseAdapter adapter = (android.widget.BaseAdapter) listVirtualSongs.getAdapter();
+        adapter.notifyDataSetChanged();
+        listVirtualSongs.post(new Runnable() {
+            @Override
+            public void run() {
+                if (listVirtualSongs == null) return;
+                int target = Math.max(0, focusIdx);
+                if (target >= virtualSongList.size()) target = Math.max(0, virtualSongList.size() - 1);
+                int first = listVirtualSongs.getFirstVisiblePosition();
+                int last = listVirtualSongs.getLastVisiblePosition();
+                if (target < first || target > last) {
+                    listVirtualSongs.setSelection(target);
+                }
+                int childIdx = target - listVirtualSongs.getFirstVisiblePosition();
+                if (childIdx >= 0 && childIdx < listVirtualSongs.getChildCount()) {
+                    View v = listVirtualSongs.getChildAt(childIdx);
+                    if (v != null && v.isFocusable()) v.requestFocus();
+                }
+            }
+        });
+    }
+
+    private boolean isPlaylistViewNowPlayingSlot(int idx) {
+        if (!playback.isMusicActive() || virtualQueryValue == null) return false;
+        String activePl = playback.musicActivePlaylistName();
+        if (activePl == null || !activePl.equals(virtualQueryValue)) return false;
+        if (idx < 0 || idx >= virtualSongList.size()) return false;
+        File cur = playback.musicPlaylist().isEmpty() ? null : playback.musicPlaylist().get(playback.musicIndex());
+        return cur != null && cur.equals(virtualSongList.get(idx));
+    }
+
+    private void refreshContextQueueTierIfOpen() {
+        if (themedContextMenu == null || !themedContextMenu.isShowing()) return;
+        if (!contextMenuInQueueTier && !"queue".equals(contextMenuTopTier())) {
+            return;
+        }
+        if (themedContextMenu.isQueueMode()) {
+            ThemedContextMenu.QueueRowSpec[] specs = buildContextQueueRowSpecs();
+            if (specs.length != themedContextMenu.queueRowCount()) {
+                rebuildContextQueueTier(true);
+                return;
+            }
+            themedContextMenu.ensureQueueListVisible();
+            themedContextMenu.refreshQueueRowTitles(specs);
+            themedContextMenu.refreshQueuePlayingState(specs);
+            int np = playback.unifiedQueue().index();
+            if (np >= 0 && np < specs.length && specs[np].nowPlaying) {
+                SolarAdbTest.queuePlaybackState(specs[np].playing);
+            }
+            return;
+        }
+        if (contextQueueEditPlaylist) pushContextPlaylistEditTier();
+        else rebuildContextQueueTier(true);
+    }
+
+    private ThemedContextMenu.QueueRowSpec[] buildContextQueueRowSpecs() {
+        if (contextQueueEditPlaylist) {
+            ThemedContextMenu.QueueRowSpec[] rows =
+                    new ThemedContextMenu.QueueRowSpec[playlistEditTracks.size()];
+            for (int i = 0; i < playlistEditTracks.size(); i++) {
+                File f = playlistEditTracks.get(i);
+                String line = musicTrackLabel(f);
+                int dot = line.indexOf(" · ");
+                String title = dot > 0 ? line.substring(0, dot) : line;
+                String sub = dot > 0 ? line.substring(dot + 3) : "";
+                rows[i] = new ThemedContextMenu.QueueRowSpec(title, sub, false, false);
+            }
+            return rows;
+        }
+        return buildQueueRowSpecsFast(playback.unifiedQueue());
+    }
+
+    private ThemedContextMenu.QueueRowSpec[] buildQueueRowSpecs() {
+        PlayQueue q = playback.unifiedQueue();
+        int size = q.size();
+        if (size >= QUEUE_SPEC_FULL_METADATA_MAX) return buildQueueRowSpecsFast(q);
+        boolean playing = false;
+        try { playing = mediaPlayer != null && mediaPlayer.isPlaying(); } catch (Exception ignored) {}
+        ThemedContextMenu.QueueRowSpec[] rows = new ThemedContextMenu.QueueRowSpec[size];
+        for (int i = 0; i < size; i++) {
+            PlayQueue.QueueItem item = q.items().get(i);
+            rows[i] = new ThemedContextMenu.QueueRowSpec(
+                    queueItemTitle(item), queueItemSubtitle(item),
+                    i == q.index(), playing && i == q.index());
+        }
+        return rows;
+    }
+
+    /** Large queue — filename labels only; avoids scanning the whole library per row. */
+    private ThemedContextMenu.QueueRowSpec[] buildQueueRowSpecsFast(PlayQueue q) {
+        boolean playing = false;
+        try { playing = mediaPlayer != null && mediaPlayer.isPlaying(); } catch (Exception ignored) {}
+        int size = q.size();
+        int np = q.index();
+        ThemedContextMenu.QueueRowSpec[] rows = new ThemedContextMenu.QueueRowSpec[size];
+        for (int i = 0; i < size; i++) {
+            PlayQueue.QueueItem item = q.items().get(i);
+            rows[i] = new ThemedContextMenu.QueueRowSpec(
+                    queueItemTitleFast(item), queueItemSubtitleFast(item),
+                    i == np, playing && i == np);
+        }
+        return rows;
+    }
+
+    private String queueItemTitleFast(PlayQueue.QueueItem item) {
+        if (item == null) return "";
+        if (item.kind == PlayQueue.ItemKind.MUSIC_FILE && item.file != null) {
+            String n = item.file.getName();
+            int dot = n.lastIndexOf('.');
+            String base = dot > 0 ? n.substring(0, dot) : n;
+            return maybePrefixReachDownloadProgress(item, base);
+        }
+        return queueItemTitle(item);
+    }
+
+    private String queueItemSubtitleFast(PlayQueue.QueueItem item) {
+        if (item == null) return "";
+        if (item.kind == PlayQueue.ItemKind.MUSIC_FILE) return getString(R.string.home_menu_music);
+        return queueItemSubtitle(item);
+    }
+
+    private String wifiCapabilitiesForSsid(String ssid) {
+        if (ssid == null || ssid.isEmpty()) return "";
+        try {
+            WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+            java.util.List<ScanResult> results = wm != null ? wm.getScanResults() : null;
+            if (results == null) return "";
+            for (ScanResult result : results) {
+                if (ssid.equals(result.SSID)) return result.capabilities != null ? result.capabilities : "";
+            }
+        } catch (Exception ignored) {}
+        return "";
+    }
+
+    private String wifiStateTextForSsid(String ssid, String capabilities) {
+        try {
+            WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+            WifiInfo info = wm != null ? wm.getConnectionInfo() : null;
+            String connected = info != null && info.getSSID() != null ? info.getSSID().replace("\"", "") : "";
+            if (ssid != null && ssid.equals(connected)) return "ON";
+        } catch (Exception ignored) {}
+        boolean secure = capabilities != null && !isWifiNetworkOpen(capabilities);
+        return secure ? "Secured" : "Open";
+    }
+
+    private BluetoothDevice bluetoothDeviceByAddress(String addr) {
+        if (addr == null || addr.isEmpty()) return null;
+        try {
+            BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
+            if (adapter == null) return null;
+            return adapter.getRemoteDevice(addr);
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private String bluetoothStateText(BluetoothDevice device) {
+        if (device == null) return "";
+        try {
+            if (isBluetoothAudioConnected(device)) return "Connected";
+            if (device.getBondState() == BluetoothDevice.BOND_BONDED) return "Paired";
+        } catch (Exception ignored) {}
+        return "";
+    }
+
+    private void showContextMenuTierInPlace(String title, java.util.List<String> labels,
+            java.util.List<String> stateTexts, java.util.List<Boolean> headers,
+            final java.util.List<Runnable> actions) {
+        showContextMenuTierInPlace(title, labels, stateTexts, null, headers, actions, true);
+    }
+
+    private void showContextMenuTierInPlace(String title, java.util.List<String> labels,
+            java.util.List<String> stateTexts, java.util.List<String> iconKeys,
+            java.util.List<Boolean> headers, final java.util.List<Runnable> actions) {
+        showContextMenuTierInPlace(title, labels, stateTexts, iconKeys, headers, actions, true);
+    }
+
+    private void showContextMenuTierInPlace(String title, java.util.List<String> labels,
+            java.util.List<String> stateTexts, java.util.List<Boolean> headers,
+            final java.util.List<Runnable> actions, boolean resetFocus) {
+        showContextMenuTierInPlace(title, labels, stateTexts, null, headers, actions, resetFocus);
+    }
+
+    private void showContextMenuTierInPlace(String title, java.util.List<String> labels,
+            java.util.List<String> stateTexts, java.util.List<String> iconKeys,
+            java.util.List<Boolean> headers, final java.util.List<Runnable> actions, boolean resetFocus) {
+        String[] arr = labels.toArray(new String[labels.size()]);
+        String[] states = stateTexts.toArray(new String[stateTexts.size()]);
+        String[] icons = iconKeys != null ? iconKeys.toArray(new String[iconKeys.size()]) : null;
+        boolean[] headerFlags = new boolean[headers.size()];
+        for (int i = 0; i < headers.size(); i++) headerFlags[i] = Boolean.TRUE.equals(headers.get(i));
+        if (!resetFocus && themedContextMenu.refreshListStatesIfSameStructure(arr, states, headerFlags)) {
+            themedContextMenu.setSubmenuTierOpen(true);
+            themedContextMenu.ensureSubmenuListVisible();
+            return;
+        }
+        contextMenuInVolumeSlider = false;
+        if (themedContextMenu != null) themedContextMenu.exitMediaSliderTab();
+        themedContextMenu.replaceListContent(title, arr, icons, states, headerFlags,
+                new ThemedContextMenu.Listener() {
+                    @Override
+                    public void onSelected(int index) {
+                        suppressListClickUntil = System.currentTimeMillis() + CONTEXT_MENU_CLICK_SUPPRESS_MS;
+                        if (index >= 0 && index < actions.size()) {
+                            final Runnable a = actions.get(index);
+                            if (a != null) a.run();
+                        }
+                    }
+                }, resetFocus);
+        themedContextMenu.setSubmenuTierOpen(true);
+        themedContextMenu.ensureSubmenuListVisible();
+        themedContextMenu.requestOverlayFocus();
+        // #region agent log
+        try {
+            org.json.JSONObject d = new org.json.JSONObject();
+            d.put("title", title);
+            d.put("rowCount", arr.length);
+            d.put("firstLabel", arr.length > 0 ? arr[0] : "");
+            d.put("tierTop", contextMenuTopTier());
+            DebugAgentLog.log(this, "MainActivity.showContextMenuTierInPlace", "tier shown", "H2", d);
+        } catch (Exception ignored) {}
+        // #endregion
+    }
+
+    private void handleContextMenuBackKeyUp() {
+        if (themedContextMenu == null || !themedContextMenu.isShowing()) return;
+        if (contextMenuVolumeOnly) {
+            dismissThemedContextMenu();
+            return;
+        }
+        navigateContextMenuBack(true);
+    }
+
+    private boolean popContextMenuTier() {
+        if (themedContextMenu == null || !themedContextMenu.isShowing()) return false;
+        navigateContextMenuBack(false);
+        return true;
+    }
+
+    /** Back from queue list — keep queue visible, focus the Queue quick chip. */
+    private void leaveContextQueueListFocus() {
+        if (themedContextMenu == null) return;
+        contextQueueFocusIndex = themedContextMenu.focusIndex();
+        themedContextMenu.focusQuickBarLeavingQueueList(CONTEXT_QUICK_QUEUE_INDEX);
+    }
+
+    /** Back from queue tier — pop queue and restore parent tier (usually root options). */
+    private void returnFromContextQueueTier() {
+        if (contextQueueMoveFrom >= 0) {
+            cancelContextQueueMove(false);
+        } else {
+            flushContextQueueMoveIfDirty();
+        }
+        contextMenuInQueueTier = false;
+        contextQueueEditPlaylist = false;
+        playlistEditEntry = null;
+        playlistEditTracks.clear();
+        clearContextQueueMoveSession();
+        if ("queue".equals(contextMenuTopTier())) {
+            contextMenuTierStack.removeLast();
+        }
+        updateNetworkRescanLoop();
+        if (themedContextMenu == null) return;
+        themedContextMenu.setQuickReturnIndex(CONTEXT_QUICK_QUEUE_INDEX);
+        restoreContextMenuTierState(false);
+    }
+
+    private void persistPlaybackQueue() {
+        PlayQueueStore.save(getApplicationContext(), playback.unifiedQueue());
+        syncNowPlayingHomeVisibility();
+    }
+
+    private void restorePlaybackQueue() {
+        PlayQueue q = new PlayQueue();
+        if (!PlayQueueStore.restore(getApplicationContext(), q) || q.isEmpty()) return;
+        playback.restoreQueueState(q.items(), q.index());
+        syncNowPlayingHomeVisibility();
+        refreshContextQueueTierIfOpen();
+    }
+
+    private void retryRestorePlaybackQueueAfterMount() {
+        PlayQueue q = new PlayQueue();
+        if (!PlayQueueStore.restore(getApplicationContext(), q) || q.isEmpty()) return;
+        int before = playback.unifiedQueue().size();
+        if (!playback.hasAnyQueue()) {
+            playback.restoreQueueState(q.items(), q.index());
+        } else if (q.size() > playback.unifiedQueue().size()) {
+            playback.restoreQueueState(q.items(), q.index());
+        }
+        syncNowPlayingHomeVisibility();
+        if (playback.unifiedQueue().size() != before) {
+            // #region agent log
+            try {
+                JSONObject d = new JSONObject();
+                d.put("before", before);
+                d.put("after", playback.unifiedQueue().size());
+                d.put("fromDisk", q.size());
+                QueueDebugLog.log("MainActivity.retryRestorePlaybackQueueAfterMount", "mount retry restore", "H1", d);
+            } catch (Exception ignored) {}
+            // #endregion
+            refreshContextQueueTierIfOpen();
+        }
+    }
+
+    private void scheduleStartupMountRetry() {
+        if (PlayQueueStore.countMissingPaths(getApplicationContext()) <= 0) return;
+        startupMountRetryAttempt = 0;
+        startupMountHandler.removeCallbacks(startupMountRetryRunnable);
+        startupMountHandler.postDelayed(startupMountRetryRunnable, STARTUP_MOUNT_RETRY_INTERVAL_MS);
+    }
+
+    private void clearPlaybackQueue() {
+        finalizeReachStreamHandoff();
+        try {
+            if (mediaPlayer != null) {
+                mediaPlayer.stop();
+                mediaPlayer.reset();
+            }
+        } catch (Exception ignored) {}
+        isPausedByHand = false;
+        PlayQueueStore.clear(getApplicationContext());
+        playback.clearQueue();
+        lastAlbumArtBytes = null;
+        syncNowPlayingHomeVisibility();
+        refreshContextQuickBarIfShowing();
+        updatePlayerUI();
+    }
+
+    private void addClearQueueContextActionIfNeeded() {
+        if (!playback.hasAnyQueue()) return;
+        addContextAction(getString(R.string.context_clear_queue), new Runnable() {
+            @Override
+            public void run() {
+                clearPlaybackQueue();
+            }
+        });
+    }
+
+    private boolean handlePlayPauseKeyDown(KeyEvent event) {
+        if (currentScreenState == STATE_WIFI_KEYBOARD) return false;
+        if (event.getRepeatCount() == 0) {
+            globalPpKeyDownAt = System.currentTimeMillis();
+            globalPpLongClearHandled = false;
+            // #region agent log
+            try {
+                org.json.JSONObject d = new org.json.JSONObject();
+                d.put("contextMenu", themedContextMenu != null && themedContextMenu.isShowing());
+                d.put("queueTier", contextMenuInQueueTier);
+                d.put("queueMoveFrom", contextQueueMoveFrom);
+                DebugAgentLog.log(this, "MainActivity.handlePlayPauseKeyDown",
+                        "pp key down armed", "H6-H7", d);
+            } catch (Exception ignored) {}
+            // #endregion
+            return true;
+        }
+        if (!globalPpLongClearHandled && playback.hasAnyQueue()
+                && System.currentTimeMillis() - globalPpKeyDownAt >= QUEUE_CLEAR_HOLD_MS) {
+            clearPlaybackQueue();
+            globalPpLongClearHandled = true;
+            clickFeedback();
+        }
+        return true;
+    }
+
+    private boolean handlePlayPauseKeyUp() {
+        if (currentScreenState == STATE_WIFI_KEYBOARD) return false;
+        boolean willToggle = !globalPpLongClearHandled && globalPpKeyDownAt > 0
+                && System.currentTimeMillis() - globalPpKeyDownAt < QUEUE_CLEAR_HOLD_MS;
+        // #region agent log
+        try {
+            org.json.JSONObject d = new org.json.JSONObject();
+            d.put("willToggle", willToggle);
+            d.put("contextMenu", themedContextMenu != null && themedContextMenu.isShowing());
+            d.put("queueTier", contextMenuInQueueTier);
+            d.put("queueMoveFrom", contextQueueMoveFrom);
+            DebugAgentLog.log(this, "MainActivity.handlePlayPauseKeyUp",
+                    "pp key up", "H6", d);
+        } catch (Exception ignored) {}
+        // #endregion
+        if (willToggle) {
+            playOrPauseMusic();
+            clickFeedback();
+        }
+        globalPpKeyDownAt = 0;
+        return true;
     }
 
     private void showThemedContextMenu() {
         if (themedContextMenu == null) return;
         if (layoutLoadingOverlay != null && layoutLoadingOverlay.getVisibility() == View.VISIBLE) return;
+        volumeHandler.removeCallbacks(hideVolumeContextTask);
+        contextMenuInVolumeSlider = false;
+        contextMenuVolumeOnly = false;
+        contextMenuVolumeReturnTier = null;
         populateContextMenu();
-        if (contextMenuActions.isEmpty()) return;
+        contextMenuQuickOnly = contextMenuLabels.isEmpty();
         String[] labels = contextMenuLabels.toArray(new String[contextMenuLabels.size()]);
         String[] iconKeys = contextMenuIconKeys.toArray(new String[contextMenuIconKeys.size()]);
         String[] stateTexts = contextMenuStateTexts.toArray(new String[contextMenuStateTexts.size()]);
@@ -6629,46 +9575,34 @@ public class MainActivity extends Activity {
         boolean menuRows = currentScreenState == STATE_MENU || currentScreenState == STATE_SETTINGS;
         int margin = (int) (10 * getResources().getDisplayMetrics().density);
         int panelW = screenWidthPx > margin * 2 ? screenWidthPx - margin * 2 : y1ActiveRowWidthPx();
-        themedContextMenu.show(root, getContextMenuTitle(), labels, iconKeys, stateTexts, headers,
-                new ThemedContextMenu.Listener() {
-                    @Override
-                    public void onSelected(final int index) {
-                        suppressListClickUntil = System.currentTimeMillis() + CONTEXT_MENU_CLICK_SUPPRESS_MS;
-                        dismissThemedContextMenu();
-                        final Runnable action = (index >= 0 && index < contextMenuActions.size())
-                                ? contextMenuActions.get(index) : null;
-                        if (action == null) return;
-                        new Handler().post(new Runnable() {
-                            @Override
-                            public void run() {
-                                suppressListClickUntil = System.currentTimeMillis() + CONTEXT_MENU_CLICK_SUPPRESS_MS;
-                                if (action != null) action.run();
-                            }
-                        });
-                    }
-                }, y1RowHeightPx, panelW, menuRows);
+        themedContextMenu.show(root, null, null, labels, iconKeys, stateTexts, headers,
+                createContextMenuListListener(), y1RowHeightPx, panelW, menuRows, false,
+                buildContextQuickBar(), createContextQuickBarListener());
+        themedContextMenu.setPrimaryEndQuickIndex(CONTEXT_QUICK_QUEUE_INDEX);
+        themedContextMenu.setMediaSliderQuickIndices(CONTEXT_QUICK_VOLUME_INDEX,
+                CONTEXT_QUICK_BRIGHTNESS_INDEX);
+        themedContextMenu.setSubmenuTierOpen(false);
+        contextMenuTierStack.clear();
+        contextMenuTierStack.push(CONTEXT_NAV_ROOT);
+        contextMenuInQueueTier = false;
+        contextMenuVolumeReturnTier = null;
+        if (!contextMenuLabels.isEmpty()) {
+            themedContextMenu.focusOptionsList();
+        }
+        contextMenuOpenedAtMs = System.currentTimeMillis();
+        // #region agent log
+        try {
+            org.json.JSONObject d = new org.json.JSONObject();
+            d.put("screen", currentScreenState);
+            d.put("actionCount", contextMenuLabels.size());
+            d.put("quickOnly", contextMenuQuickOnly);
+            d.put("hasQueue", playback.hasAnyQueue());
+            d.put("queueSize", playback.unifiedQueue().size());
+            d.put("singleTrackChip", playback.hasAnyQueue() && playback.unifiedQueue().size() == 1);
+            QueueDebugLog.log("MainActivity.showThemedContextMenu", "opened", "H6", d);
+        } catch (Exception ignored) {}
+        // #endregion
         clickFeedback();
-    }
-
-    private String getContextMenuTitle() {
-        if (currentScreenState == STATE_PODCASTS && podcastUiMode == PODCAST_UI_EPISODES) {
-            return podcastSelected != null ? podcastSelected.title : getString(R.string.context_menu_title);
-        }
-        if (currentScreenState == STATE_PODCASTS && podcastUiMode == PODCAST_UI_SAVED
-                && podcastSavedShowFolder != null && !podcastSavedShowFolder.isEmpty()) {
-            return podcastSavedShowFolder;
-        }
-        if (currentScreenState == STATE_PLAYER && playback.isPodcastActive()) {
-            return getString(R.string.context_menu_title);
-        }
-        if (currentScreenState == STATE_SOULSEEK && soulseekUiMode == SOULSEEK_UI_RESULTS) {
-            return getString(R.string.context_menu_title);
-        }
-        if (currentScreenState == STATE_SOULSEEK && soulseekUiMode == SOULSEEK_UI_SEARCH) {
-            String recent = soulseekFocusedRecentQuery();
-            if (recent != null) return recent;
-        }
-        return getString(R.string.context_menu_title);
     }
 
     private void populateContextMenu() {
@@ -6677,11 +9611,11 @@ public class MainActivity extends Activity {
         contextMenuStateTexts.clear();
         contextMenuHeaders.clear();
         contextMenuActions.clear();
-        if (currentScreenState == STATE_MENU || currentScreenState == STATE_SETTINGS) {
-            addContextAction(getString(R.string.context_action_button_radius), new Runnable() {
+        if (currentScreenState == STATE_MENU) {
+            addContextAction(getString(R.string.context_action_edit_home), new Runnable() {
                 @Override
                 public void run() {
-                    showButtonRadiusMenu();
+                    openHomeScreenEditorFromMenu();
                 }
             });
         }
@@ -6695,6 +9629,7 @@ public class MainActivity extends Activity {
                         changeScreen(STATE_PLAYER);
                     }
                 });
+                addClearQueueContextActionIfNeeded();
             } else if (HomeMenuConfig.ID_MUSIC.equals(homeId)) {
                 addContextAction(getString(R.string.context_action_open_music), new Runnable() {
                     @Override
@@ -6703,6 +9638,7 @@ public class MainActivity extends Activity {
                         changeScreen(STATE_BROWSER);
                     }
                 });
+                addClearQueueContextActionIfNeeded();
             } else if (HomeMenuConfig.ID_PODCASTS.equals(homeId)) {
                 addContextAction(getString(R.string.context_action_open_podcasts), new Runnable() {
                     @Override
@@ -6816,7 +9752,7 @@ public class MainActivity extends Activity {
             addContextAction(getString(R.string.library_edit_queue), new Runnable() {
                 @Override
                 public void run() {
-                    openMusicQueueEditor();
+                    openPlaybackQueueInContextMenu();
                 }
             });
             addContextAction(getString(R.string.library_save_queue_m3u), new Runnable() {
@@ -6834,38 +9770,6 @@ public class MainActivity extends Activity {
                     toggleVisualizer();
                 }
             });
-        }
-        if (currentScreenState == STATE_SETTINGS && SettingsScreens.MUSIC_QUEUE.equals(settingsSubScreenKey)) {
-            final int idx = musicQueueFocusedIndex();
-            if (idx >= 0) {
-                final File queueTrack = playback.musicPlaylist().get(idx);
-                if (ReachCache.isTempFile(getCacheDir(), queueTrack)) {
-                    addContextAction(getString(R.string.soulseek_add_to_library), new Runnable() {
-                        @Override
-                        public void run() {
-                            saveReachTrackToLibrary(queueTrack);
-                            refreshMusicQueueList();
-                        }
-                    });
-                }
-                addContextAction(getString(R.string.library_queue_remove), new Runnable() {
-                    @Override
-                    public void run() {
-                        if (isMusicQueueNowPlayingSlot(idx)) return;
-                        playback.removeMusicTrackAt(idx);
-                        purgeStreamTempFiles();
-                        updateMusicTrackCountUi();
-                        Toast.makeText(MainActivity.this, getString(R.string.library_queue_removed),
-                                Toast.LENGTH_SHORT).show();
-                        if (playback.musicPlaylist().isEmpty()) {
-                            setMusicQueueListVisible(false);
-                            changeScreen(musicQueueReturnScreen);
-                        } else {
-                            refreshMusicQueueList();
-                        }
-                    }
-                });
-            }
         }
         if (currentScreenState == STATE_BROWSER && currentBrowserMode == BROWSER_PLAYLISTS) {
             addContextAction(getString(R.string.library_save_queue_m3u), new Runnable() {
@@ -6908,6 +9812,41 @@ public class MainActivity extends Activity {
         }
         if (currentScreenState == STATE_BROWSER && currentBrowserMode == BROWSER_VIRTUAL_SONGS) {
             final File audio = virtualFocusedAudioFile();
+            if ("PLAYLIST".equals(virtualQueryType)) {
+                if (audio != null) {
+                    addContextAction(getString(R.string.context_action_move), new Runnable() {
+                        @Override
+                        public void run() {
+                            int idx = virtualSongList.indexOf(audio);
+                            if (idx >= 0) beginPlaylistMove(idx);
+                        }
+                    });
+                    addContextAction(getString(R.string.context_action_remove_from_playlist), new Runnable() {
+                        @Override
+                        public void run() {
+                            int idx = virtualSongList.indexOf(audio);
+                            if (idx >= 0) {
+                                virtualSongList.remove(idx);
+                                flushPlaylistMoveIfDirty();
+                                if (playlistViewEntry != null && playlistViewEntry.sourceFile != null) {
+                                    try {
+                                        PlaylistManager.saveM3u(
+                                                PlaylistManager.fromTracks(playlistViewEntry.name, virtualSongList),
+                                                playlistViewEntry.sourceFile);
+                                        playlistViewEntry.tracks.clear();
+                                        playlistViewEntry.tracks.addAll(virtualSongList);
+                                    } catch (Exception e) {
+                                        Toast.makeText(MainActivity.this,
+                                                getString(R.string.library_playlist_save_failed),
+                                                Toast.LENGTH_SHORT).show();
+                                    }
+                                }
+                                refreshPlaylistSongList();
+                            }
+                        }
+                    });
+                }
+            }
             if (audio != null) {
                 addContextAction(getString(R.string.context_action_play_now), new Runnable() {
                     @Override
@@ -6923,6 +9862,17 @@ public class MainActivity extends Activity {
                     }
                 });
             }
+            if (!"PLAYLIST".equals(virtualQueryType)) {
+                addContextAction(getString(R.string.library_sort_label, librarySortLabel()), new Runnable() {
+                    @Override
+                    public void run() {
+                        cycleLibrarySort();
+                    }
+                });
+            }
+        }
+        if (currentScreenState == STATE_BROWSER && (currentBrowserMode == BROWSER_ALBUMS
+                || currentBrowserMode == BROWSER_GENRES)) {
             addContextAction(getString(R.string.library_sort_label, librarySortLabel()), new Runnable() {
                 @Override
                 public void run() {
@@ -6930,17 +9880,60 @@ public class MainActivity extends Activity {
                 }
             });
         }
-        if (currentScreenState == STATE_BROWSER && (currentBrowserMode == BROWSER_ARTISTS
-                || currentBrowserMode == BROWSER_ALBUMS || currentBrowserMode == BROWSER_GENRES
-                || currentBrowserMode == BROWSER_ARTIST_ALBUMS)) {
+        if (isLibraryArtistBrowseContext()) {
+            addContextAction(getString(R.string.lib_context_sort_artists,
+                    getString(LibraryBrowsePrefs.artistSortLabelRes(libraryBrowsePrefs.artistSort()))),
+                    new Runnable() {
+                @Override
+                public void run() {
+                    libraryBrowsePrefs.cycleArtistSort();
+                    clearArtistOwnAlbumCache();
+                    Toast.makeText(MainActivity.this, getString(R.string.lib_context_sort_artists,
+                            getString(LibraryBrowsePrefs.artistSortLabelRes(libraryBrowsePrefs.artistSort()))),
+                            Toast.LENGTH_SHORT).show();
+                    if (currentBrowserMode == BROWSER_ARTISTS) buildVirtualCategories("ARTIST");
+                }
+            });
+            addContextAction(getString(R.string.lib_context_filter_artists,
+                    getString(LibraryBrowsePrefs.artistFilterLabelRes(libraryBrowsePrefs.artistFilter()))),
+                    new Runnable() {
+                @Override
+                public void run() {
+                    libraryBrowsePrefs.cycleArtistFilter();
+                    clearArtistOwnAlbumCache();
+                    Toast.makeText(MainActivity.this, getString(R.string.lib_context_filter_artists,
+                            getString(LibraryBrowsePrefs.artistFilterLabelRes(libraryBrowsePrefs.artistFilter()))),
+                            Toast.LENGTH_SHORT).show();
+                    if (currentBrowserMode == BROWSER_ARTISTS) buildVirtualCategories("ARTIST");
+                }
+            });
+            addContextAction(getString(R.string.lib_context_guest_browse,
+                    getString(LibraryBrowsePrefs.guestBrowseModeLabelRes(libraryBrowsePrefs.guestBrowseMode()))),
+                    new Runnable() {
+                @Override
+                public void run() {
+                    libraryBrowsePrefs.cycleGuestBrowseMode();
+                    clearArtistOwnAlbumCache();
+                    Toast.makeText(MainActivity.this, getString(R.string.lib_context_guest_browse,
+                            getString(LibraryBrowsePrefs.guestBrowseModeLabelRes(
+                                    libraryBrowsePrefs.guestBrowseMode()))),
+                            Toast.LENGTH_SHORT).show();
+                    refreshLibraryBrowseIfVisible();
+                }
+            });
             addContextAction(getString(R.string.library_sort_label, librarySortLabel()), new Runnable() {
                 @Override
                 public void run() {
                     cycleLibrarySort();
                     if (currentBrowserMode == BROWSER_ARTIST_ALBUMS) buildArtistAlbums();
-                    else if (currentBrowserMode == BROWSER_ARTISTS) buildVirtualCategories("ARTIST");
-                    else if (currentBrowserMode == BROWSER_GENRES) buildVirtualCategories("GENRE");
-                    else buildVirtualCategories("ALBUM");
+                    else if (currentBrowserMode == BROWSER_VIRTUAL_SONGS) buildVirtualSongs();
+                }
+            });
+            addContextAction(getString(R.string.lib_context_browse_settings), new Runnable() {
+                @Override
+                public void run() {
+                    changeScreen(STATE_SETTINGS);
+                    buildLibraryBrowseSettingsUI();
                 }
             });
         }
@@ -7069,7 +10062,9 @@ public class MainActivity extends Activity {
                     addContextAction(q, new Runnable() {
                         @Override
                         public void run() {
-                            if (requireInternet(R.string.soulseek_wifi_required)) startSoulseekReSearch(q);
+                            if (requireInternet(R.string.soulseek_wifi_required)) {
+                                openSoulseekSearchKeyboard(q);
+                            }
                         }
                     });
                     shown++;
@@ -7111,12 +10106,6 @@ public class MainActivity extends Activity {
             }
         }
         if (currentScreenState == STATE_WIFI) {
-            addContextAction(getString(R.string.context_action_refresh_scan), new Runnable() {
-                @Override
-                public void run() {
-                    startWifiScan();
-                }
-            });
             final String wifiSsid = wifiFocusedSsid();
             if (wifiSsid != null && isWifiNetworkSaved(wifiSsid)) {
                 addContextAction(getString(R.string.context_action_forget_wifi), new Runnable() {
@@ -7136,32 +10125,24 @@ public class MainActivity extends Activity {
         if (musicTrack != null) {
             String plCtx = null;
             if (playback.musicActivePlaylistName() != null
-                    && ((currentScreenState == STATE_PLAYER && playback.isMusicActive())
-                    || isMusicQueueEditorScreen())) {
+                    && currentScreenState == STATE_PLAYER && playback.isMusicActive()) {
                 plCtx = playback.musicActivePlaylistName();
             }
             addMusicBrowseContextActions(musicTrack, plCtx);
         }
-        addContextAction(getString(R.string.context_action_lock_screen), "keyLockOn", null, new Runnable() {
-            @Override
-            public void run() {
-                performScreenSleep(true);
-            }
-        });
     }
 
-    /** Screen off — su power key first (Y1), then goToSleep; shared by hold-center and context menu. */
+    /** Screen off — root power key only (Y1); shared by hold-center and context menu. */
     private void performScreenSleep(boolean feedback) {
         if (feedback) clickFeedback();
-        if (trySuScreenOff()) return;
-        try {
-            PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
-            java.lang.reflect.Method goToSleep = PowerManager.class.getMethod(
-                    "goToSleep", long.class);
-            goToSleep.invoke(pm, android.os.SystemClock.uptimeMillis());
-            if (!isScreenInteractive()) return;
-        } catch (Exception ignored) {}
-        if (trySuScreenOff()) return;
+        dismissThemedContextMenu();
+        if (trySuScreenOff()) {
+            return;
+        }
+        try { Thread.sleep(80); } catch (InterruptedException ignored) {}
+        if (trySuScreenOff()) {
+            return;
+        }
         Toast.makeText(this, getString(R.string.context_action_lock_failed), Toast.LENGTH_SHORT).show();
     }
 
@@ -7222,6 +10203,17 @@ public class MainActivity extends Activity {
         List<File> one = new ArrayList<File>();
         one.add(track);
         playback.appendToMusicQueue(one);
+        persistPlaybackQueue();
+        suppressListClickUntil = System.currentTimeMillis() + 400;
+        Toast.makeText(this, getString(R.string.toast_added_to_queue), Toast.LENGTH_SHORT).show();
+    }
+
+    private void queueReachTrackAfterCurrent(File track, String meta) {
+        if (track == null || !track.isFile()) return;
+        playback.queueReachAfterCurrent(track, meta != null ? meta : track.getName());
+        persistPlaybackQueue();
+        refreshContextQueueTierIfOpen();
+        refreshReachProgressUi();
         suppressListClickUntil = System.currentTimeMillis() + 400;
         Toast.makeText(this, getString(R.string.toast_added_to_queue), Toast.LENGTH_SHORT).show();
     }
@@ -7265,6 +10257,134 @@ public class MainActivity extends Activity {
         } else {
             Toast.makeText(this, getString(R.string.podcasts_delete_failed), Toast.LENGTH_SHORT).show();
         }
+    }
+
+    private void addContextWifiToggle() {
+        if (currentScreenState == STATE_WIFI_KEYBOARD) return;
+        addContextAction(wifiContextToggleLabel(), null, null, new Runnable() {
+            @Override
+            public void run() {
+                toggleWifiFromContextMenu();
+            }
+        });
+    }
+
+    private String wifiContextToggleLabel() {
+        WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+        if (wm == null) return getString(R.string.context_wifi_off);
+        int state = wm.getWifiState();
+        if (state == WifiManager.WIFI_STATE_ENABLING || state == WifiManager.WIFI_STATE_DISABLING) {
+            return getString(R.string.context_wifi_busy);
+        }
+        return getString(isWifiPowerOn() ? R.string.context_wifi_on : R.string.context_wifi_off);
+    }
+
+    private boolean isWifiContextToggleLabel(String label) {
+        if (label == null || label.isEmpty()) return false;
+        return label.equals(getString(R.string.context_wifi_on))
+                || label.equals(getString(R.string.context_wifi_off))
+                || label.equals(getString(R.string.context_wifi_busy));
+    }
+
+    private boolean isWifiPowerOn() {
+        WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+        return wm != null && wm.isWifiEnabled();
+    }
+
+    private String wifiPowerStateText() {
+        WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+        if (wm == null) return stateOnOff(false);
+        int state = wm.getWifiState();
+        if (state == WifiManager.WIFI_STATE_ENABLING || state == WifiManager.WIFI_STATE_DISABLING) {
+            return "Wait...";
+        }
+        return stateOnOff(wm.isWifiEnabled());
+    }
+
+    private boolean podcastStreamingNeedsWifi() {
+        if (!playback.isPodcastActive()) return false;
+        if (podcastDownloadInProgress) return true;
+        if (!podcastPartialPlaybackStarted) return false;
+        if (podcastGrowingCacheFinal != null && podcastGrowingCacheFinal.isFile()) return false;
+        if (podcastGrowingCacheFile != null && podcastDownloadBytesTotal > 0
+                && podcastGrowingCacheFile.length() >= podcastDownloadBytesTotal) {
+            return false;
+        }
+        return true;
+    }
+
+    private boolean wifiDisableNeedsWarning() {
+        return WifiOffPolicy.disableNeedsWarning(
+                isWifiPowerOn(),
+                soulseekSharePolicy.announceShares(),
+                hasActiveReachDownload(),
+                reachPartialPlaybackStarted && reachDownloadInProgress(),
+                podcastStreamingNeedsWifi());
+    }
+
+    private void applyWifiPowerState(boolean enable) {
+        WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+        if (wm == null) return;
+        if (enable) {
+            Toast.makeText(this, getString(R.string.toast_wifi_turning_on), Toast.LENGTH_SHORT).show();
+            wm.setWifiEnabled(true);
+        } else {
+            Toast.makeText(this, getString(R.string.toast_wifi_turning_off), Toast.LENGTH_SHORT).show();
+            wm.setWifiEnabled(false);
+        }
+    }
+
+    private void toggleWifiFromContextMenu() {
+        if (!isWifiPowerOn()) {
+            applyWifiPowerState(true);
+            return;
+        }
+        if (!wifiDisableNeedsWarning()) {
+            applyWifiPowerState(false);
+            return;
+        }
+        showThemedConfirm(
+                getString(R.string.wifi_off_warning_title),
+                getString(R.string.wifi_off_warning_message),
+                getString(R.string.wifi_off_confirm),
+                getString(R.string.common_cancel),
+                new Runnable() {
+                    @Override
+                    public void run() {
+                        applyWifiPowerState(false);
+                    }
+                });
+    }
+
+    private void showThemedConfirm(final String title, final String message,
+            final String confirmLabel, final String cancelLabel, final Runnable onConfirm) {
+        showThemedConfirm(title, message, confirmLabel, cancelLabel, onConfirm, null);
+    }
+
+    private void showThemedConfirm(final String title, final String message,
+            final String confirmLabel, final String cancelLabel,
+            final Runnable onConfirm, final Runnable onCancel) {
+        dismissThemedContextMenu();
+        String[] labels = new String[] { confirmLabel, cancelLabel };
+        ViewGroup root = (ViewGroup) findViewById(android.R.id.content);
+        int margin = (int) (10 * getResources().getDisplayMetrics().density);
+        int panelW = screenWidthPx > margin * 2 ? screenWidthPx - margin * 2 : y1ActiveRowWidthPx();
+        themedContextMenu.show(root, title, message, labels, null, null,
+                new boolean[] { false, false },
+                new ThemedContextMenu.Listener() {
+                    @Override
+                    public void onSelected(final int index) {
+                        suppressListClickUntil = System.currentTimeMillis() + CONTEXT_MENU_CLICK_SUPPRESS_MS;
+                        dismissThemedContextMenu();
+                        if (index == 0 && onConfirm != null) {
+                            clickFeedback();
+                            onConfirm.run();
+                        } else if (index != 0 && onCancel != null) {
+                            onCancel.run();
+                        }
+                    }
+                }, y1RowHeightPx, panelW, false, true);
+        clickFeedback();
     }
 
     private void addContextAction(String label, Runnable action) {
@@ -7323,6 +10443,7 @@ public class MainActivity extends Activity {
     }
 
     private void handleBackShortPress() {
+        if (otaSystemReplaceInProgress) return;
         if (currentScreenState == STATE_WIFI_KEYBOARD) {
             if (keyboardReturnState == STATE_SETTINGS && keyboardReturnSettingsSubKey != null) {
                 restoreSettingsAfterSoulseekAccount();
@@ -7340,11 +10461,11 @@ public class MainActivity extends Activity {
             return;
         }
         if (currentScreenState == STATE_BRIGHTNESS) {
-            changeScreen(STATE_SETTINGS);
+            returnFromAuxScreen();
             return;
         }
         if (currentScreenState == STATE_STORAGE) {
-            changeScreen(STATE_SETTINGS);
+            returnFromAuxScreen();
             return;
         }
         if (currentScreenState == STATE_WEBSERVER) {
@@ -7355,17 +10476,17 @@ public class MainActivity extends Activity {
                         .setPositiveButton(getString(R.string.webserver_stop_exit), new DialogInterface.OnClickListener() {
                             public void onClick(DialogInterface dialog, int which) {
                                 toggleWebServer();
-                                changeScreen(STATE_SETTINGS);
+                                returnFromAuxScreen();
                             }
                         })
                         .setNegativeButton(getString(R.string.webserver_keep_running), new DialogInterface.OnClickListener() {
                             public void onClick(DialogInterface dialog, int which) {
-                                changeScreen(STATE_SETTINGS);
+                                returnFromAuxScreen();
                             }
                         })
                         .show();
             } else {
-                changeScreen(STATE_SETTINGS);
+                returnFromAuxScreen();
             }
             return;
         }
@@ -7391,6 +10512,13 @@ public class MainActivity extends Activity {
                         buildFileBrowserUI();
                     }
                 } else if (currentBrowserMode == BROWSER_VIRTUAL_SONGS) {
+                    if ("PLAYLIST".equals(virtualQueryType) && playlistMoveFrom >= 0) {
+                        cancelPlaylistMove();
+                        return;
+                    }
+                    if ("PLAYLIST".equals(virtualQueryType)) {
+                        resetPlaylistMoveState();
+                    }
                     if ("ARTIST_ALBUM".equals(virtualQueryType)) {
                         currentBrowserMode = BROWSER_ARTIST_ALBUMS;
                         buildArtistAlbums();
@@ -7482,8 +10610,12 @@ public class MainActivity extends Activity {
             changeScreen(STATE_MENU);
             return;
         }
+        if (currentScreenState == STATE_MORE) {
+            changeScreen(STATE_MENU);
+            return;
+        }
         if (currentScreenState == STATE_BLUETOOTH || currentScreenState == STATE_WIFI) {
-            changeScreen(STATE_SETTINGS);
+            returnFromAuxScreen();
             return;
         }
         if (currentScreenState == STATE_SETTINGS) {
@@ -7493,9 +10625,10 @@ public class MainActivity extends Activity {
                 return;
             }
             if (handleHomeScreenEditorBack()) return;
-            if (handleMusicQueueEditorBack()) return;
             if (handleLanguageSettingsBack()) return;
             if (handleSoulseekSettingsBack()) return;
+            if (handleLibraryBrowseSettingsBack()) return;
+            if (handleAboutSettingsBack()) return;
             if (handleThemeGalleryBack()) return;
             changeScreen(STATE_MENU);
         }
@@ -7505,10 +10638,9 @@ public class MainActivity extends Activity {
         if (event.getRepeatCount() == 0) {
             backKeyDownTime = System.currentTimeMillis();
             backLongPressHandled = false;
-        } else if (!backLongPressHandled
-                && System.currentTimeMillis() - backKeyDownTime >= BACK_LONG_PRESS_MS) {
-            showThemedContextMenu();
-            backLongPressHandled = true;
+            backKeyHeld = true;
+            clockHandler.removeCallbacks(backLongPressRunnable);
+            clockHandler.postDelayed(backLongPressRunnable, BACK_LONG_PRESS_MS);
         }
         return true;
     }
@@ -7588,7 +10720,7 @@ public class MainActivity extends Activity {
     }
     private void buildSettingsUI() {
         final int targetFocusIndex = lastSettingsFocusIndex;
-        setMusicQueueListVisible(false);
+        setSettingsAboutFullWidth(false);
         setThemesListVisible(false);
         clearThemeGalleryPreview();
         settingsSubScreenKey = null;
@@ -7839,7 +10971,7 @@ public class MainActivity extends Activity {
         btnServerMenu.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                changeScreen(STATE_WEBSERVER);
+                openScreenWithReturn(STATE_WEBSERVER);
                 clickFeedback();
             }
         });
@@ -7851,7 +10983,7 @@ public class MainActivity extends Activity {
         btnWifiMenu.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                changeScreen(STATE_WIFI);
+                openScreenWithReturn(STATE_WIFI);
                 clickFeedback();
             }
         });
@@ -7870,6 +11002,17 @@ public class MainActivity extends Activity {
             containerSettingsItems.addView(btnSoulseekMenu);
         }
 
+        LinearLayout btnLibraryBrowse = createSettingsRow(RowKeys.LIBRARY_BROWSE, R.string.settings_library_browse, true);
+        libraryBrowseSettingsMenuFocusIndex = containerSettingsItems.getChildCount();
+        btnLibraryBrowse.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                clickFeedback();
+                buildLibraryBrowseSettingsUI();
+            }
+        });
+        containerSettingsItems.addView(btnLibraryBrowse);
+
 // 🚀 [추가 1] 인터넷에서 앨범 아트 및 곡 정보 자동 검색 켜기/끄기
         final LinearLayout btnAutoFetch = createSettingsRow(RowKeys.AUTO_FETCH, R.string.settings_auto_fetch, false);
         btnAutoFetch.setOnClickListener(new View.OnClickListener() {
@@ -7885,25 +11028,11 @@ public class MainActivity extends Activity {
         });
         containerSettingsItems.addView(btnAutoFetch);
 
-        if (BuildConfig.FEATURE_OTA_UPDATE) {
-            LinearLayout btnAppVersion = createSettingsRow(RowKeys.SYSTEM_UPDATE, R.string.settings_app_version, true);
-            btnAppVersion.setOnClickListener(new View.OnClickListener() {
-                @Override
-                public void onClick(View v) {
-                    clickFeedback();
-                    buildUpdateSettingsUI();
-                }
-            });
-            containerSettingsItems.addView(btnAppVersion);
-        }
-
-
-
         LinearLayout btnBtMenu = createSettingsRow(RowKeys.BLUETOOTH_SETUP, R.string.settings_bluetooth_setup, true);
         btnBtMenu.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                changeScreen(STATE_BLUETOOTH);
+                openScreenWithReturn(STATE_BLUETOOTH);
                 clickFeedback();
             }
         });
@@ -7913,7 +11042,7 @@ public class MainActivity extends Activity {
         btnBrightMenu.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                changeScreen(STATE_BRIGHTNESS);
+                openScreenWithReturn(STATE_BRIGHTNESS);
                 clickFeedback();
             }
         });
@@ -7923,7 +11052,7 @@ public class MainActivity extends Activity {
         btnStorageMenu.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                changeScreen(STATE_STORAGE);
+                openScreenWithReturn(STATE_STORAGE);
                 clickFeedback();
             }
         });
@@ -7991,6 +11120,16 @@ public class MainActivity extends Activity {
         });
         containerSettingsItems.addView(btnTime);
 
+        LinearLayout btnAbout = createSettingsRow(RowKeys.ABOUT, R.string.settings_about, true);
+        btnAbout.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                clickFeedback();
+                buildAboutUI();
+            }
+        });
+        containerSettingsItems.addView(btnAbout);
+
         // 🚀 [수정] 오염되지 않은 안전한 백업 인덱스(targetFocusIndex)를 사용하여 정확한 위치로 강제 이동!
         containerSettingsItems.postDelayed(new Runnable() {
             @Override
@@ -8016,6 +11155,134 @@ public class MainActivity extends Activity {
             }
         }, 50);
     } // buildSettingsUI 함수 끝/ buildSettingsUI 함수 끝
+
+    private void buildLibraryBrowseSettingsUI() {
+        setSettingsSubScreen(SettingsScreens.LIBRARY_BROWSE);
+        updateStatusBarTitle();
+        containerSettingsItems.removeAllViews();
+
+        Button btnBack = createListButton(getString(R.string.common_cancel_back));
+        styleSecondaryLabel(btnBack);
+        btnBack.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                clickFeedback();
+                lastSettingsFocusIndex = libraryBrowseSettingsMenuFocusIndex;
+                buildSettingsUI();
+            }
+        });
+        containerSettingsItems.addView(btnBack);
+
+        LinearLayout btnSplit = createSettingsRow(RowKeys.LIB_SPLIT_CREDITS, R.string.lib_split_credits, false);
+        btnSplit.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                clickFeedback();
+                libraryBrowsePrefs.setSplitCredits(!libraryBrowsePrefs.splitCredits());
+                clearArtistOwnAlbumCache();
+                refreshLibraryBrowseIfVisible();
+                refreshSettingsPreview(RowKeys.LIB_SPLIT_CREDITS);
+            }
+        });
+        containerSettingsItems.addView(btnSplit);
+
+        LinearLayout btnNormAlbum = createSettingsRow(RowKeys.LIB_NORM_ALBUM, R.string.lib_norm_album_case, false);
+        btnNormAlbum.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                clickFeedback();
+                libraryBrowsePrefs.setNormalizeAlbumCase(!libraryBrowsePrefs.normalizeAlbumCase());
+                clearArtistOwnAlbumCache();
+                refreshLibraryBrowseIfVisible();
+                refreshSettingsPreview(RowKeys.LIB_NORM_ALBUM);
+            }
+        });
+        containerSettingsItems.addView(btnNormAlbum);
+
+        LinearLayout btnGuest = createSettingsRow(RowKeys.LIB_GUEST_MODE, R.string.lib_guest_browse, false);
+        btnGuest.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                clickFeedback();
+                libraryBrowsePrefs.cycleGuestBrowseMode();
+                clearArtistOwnAlbumCache();
+                refreshLibraryBrowseIfVisible();
+                refreshSettingsPreview(RowKeys.LIB_GUEST_MODE);
+            }
+        });
+        containerSettingsItems.addView(btnGuest);
+
+        LinearLayout btnFilter = createSettingsRow(RowKeys.LIB_ARTIST_FILTER, R.string.lib_artist_filter, false);
+        btnFilter.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                clickFeedback();
+                libraryBrowsePrefs.cycleArtistFilter();
+                clearArtistOwnAlbumCache();
+                refreshLibraryBrowseIfVisible();
+                refreshSettingsPreview(RowKeys.LIB_ARTIST_FILTER);
+            }
+        });
+        containerSettingsItems.addView(btnFilter);
+
+        LinearLayout btnArtistSort = createSettingsRow(RowKeys.LIB_ARTIST_SORT, R.string.lib_artist_sort, false);
+        btnArtistSort.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                clickFeedback();
+                libraryBrowsePrefs.cycleArtistSort();
+                clearArtistOwnAlbumCache();
+                refreshLibraryBrowseIfVisible();
+                refreshSettingsPreview(RowKeys.LIB_ARTIST_SORT);
+            }
+        });
+        containerSettingsItems.addView(btnArtistSort);
+
+        LinearLayout btnSongSort = createSettingsRow(RowKeys.LIB_SONG_SORT, R.string.lib_song_sort, false);
+        btnSongSort.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                clickFeedback();
+                libraryBrowsePrefs.cycleSongSort();
+                refreshLibraryBrowseIfVisible();
+                refreshSettingsPreview(RowKeys.LIB_SONG_SORT);
+            }
+        });
+        containerSettingsItems.addView(btnSongSort);
+
+        LinearLayout btnAlbumSub = createSettingsRow(RowKeys.LIB_ALBUM_SUB, R.string.lib_album_owner_sub, false);
+        btnAlbumSub.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                clickFeedback();
+                libraryBrowsePrefs.setAlbumOwnerSubtitles(!libraryBrowsePrefs.albumOwnerSubtitles());
+                refreshLibraryBrowseIfVisible();
+                refreshSettingsPreview(RowKeys.LIB_ALBUM_SUB);
+            }
+        });
+        containerSettingsItems.addView(btnAlbumSub);
+
+        LinearLayout btnGuestSub = createSettingsRow(RowKeys.LIB_GUEST_SUB, R.string.lib_guest_song_sub, false);
+        btnGuestSub.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                clickFeedback();
+                libraryBrowsePrefs.setGuestSongSubtitles(!libraryBrowsePrefs.guestSongSubtitles());
+                refreshLibraryBrowseIfVisible();
+                refreshSettingsPreview(RowKeys.LIB_GUEST_SUB);
+            }
+        });
+        containerSettingsItems.addView(btnGuestSub);
+
+        containerSettingsItems.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                if (containerSettingsItems.getChildCount() > 1) {
+                    containerSettingsItems.getChildAt(1).requestFocus();
+                }
+            }
+        }, 50);
+    }
 
     private void buildAppearanceSettingsUI() {
         settingsParentKey = null;
@@ -8265,18 +11532,35 @@ public class MainActivity extends Activity {
         });
         containerSettingsItems.addView(btnAbout);
 
-        LinearLayout btnHideFlac = createSettingsRow(RowKeys.SOULSEEK_HIDE_FLAC,
-                R.string.soulseek_hide_flac, false);
-        btnHideFlac.setOnClickListener(new View.OnClickListener() {
+        LinearLayout btnSharing = createSettingsRow(RowKeys.SOULSEEK_SHARING,
+                R.string.soulseek_share_library, false);
+        btnSharing.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
                 clickFeedback();
-                soulseekHideFlac = !soulseekHideFlac;
-                prefs.edit().putBoolean(SoulseekAccount.PREF_HIDE_FLAC, soulseekHideFlac).commit();
-                refreshSettingsPreview(RowKeys.SOULSEEK_HIDE_FLAC);
+                soulseekSharingEnabled = !soulseekSharingEnabled;
+                prefs.edit().putBoolean(SoulseekAccount.PREF_SHARING_ENABLED, soulseekSharingEnabled).commit();
+                updateSoulseekSharePolicy();
+                if (soulseekClient != null) {
+                    soulseekClient.refreshShareAnnouncement();
+                }
+                refreshSettingsPreview(RowKeys.SOULSEEK_SHARING);
             }
         });
-        containerSettingsItems.addView(btnHideFlac);
+        containerSettingsItems.addView(btnSharing);
+
+        LinearLayout btnHideHighBitrate = createSettingsRow(RowKeys.SOULSEEK_HIDE_HIGH_BITRATE,
+                R.string.soulseek_hide_high_bitrate, false);
+        btnHideHighBitrate.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                clickFeedback();
+                soulseekHideHighBitrate = !soulseekHideHighBitrate;
+                prefs.edit().putBoolean(SoulseekAccount.PREF_HIDE_HIGH_BITRATE, soulseekHideHighBitrate).commit();
+                refreshSettingsPreview(RowKeys.SOULSEEK_HIDE_HIGH_BITRATE);
+            }
+        });
+        containerSettingsItems.addView(btnHideHighBitrate);
 
         Button btnSoulseekRegen = createListButton(getString(R.string.soulseek_regenerate_account));
         btnSoulseekRegen.setOnClickListener(new View.OnClickListener() {
@@ -8326,6 +11610,215 @@ public class MainActivity extends Activity {
         btnBack.requestFocus();
     }
 
+    private void setSettingsAboutFullWidth(boolean fullWidth) {
+        settingsAboutFullWidth = fullWidth;
+        applyFullWidthMenusLayout();
+    }
+
+    private void restoreSettingsPreviewPane() {
+        if (settingsPreviewPane != null) {
+            settingsPreviewPane.setVisibility(isFullWidthMenus ? View.GONE : View.VISIBLE);
+        }
+    }
+
+    private int sampleScreenBackgroundColor() {
+        try {
+            if (ivMainBg != null && ivMainBg.getDrawable() instanceof android.graphics.drawable.BitmapDrawable) {
+                Bitmap bm = ((android.graphics.drawable.BitmapDrawable) ivMainBg.getDrawable()).getBitmap();
+                if (bm != null && !bm.isRecycled() && bm.getWidth() > 0 && bm.getHeight() > 0) {
+                    return bm.getPixel(bm.getWidth() / 2, bm.getHeight() / 2);
+                }
+            }
+        } catch (Exception ignored) {}
+        return ThemeManager.relativeLuminance(ThemeManager.getTextColorPrimary()) > 0.45
+                ? 0xFF333333 : 0xFFCCCCCC;
+    }
+
+    private static final int ABOUT_LOGO_MAX_PX = 292;
+
+    private Bitmap loadAssetBitmap(String assetPath) {
+        return loadAssetBitmap(assetPath, ABOUT_LOGO_MAX_PX);
+    }
+
+    private Bitmap loadAssetBitmap(String assetPath, int maxSidePx) {
+        java.io.InputStream in = null;
+        try {
+            BitmapFactory.Options bounds = new BitmapFactory.Options();
+            bounds.inJustDecodeBounds = true;
+            in = getAssets().open(assetPath);
+            BitmapFactory.decodeStream(in, null, bounds);
+            in.close();
+            in = null;
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null;
+            int sample = 1;
+            while (Math.max(bounds.outWidth, bounds.outHeight) / sample > maxSidePx) sample *= 2;
+            BitmapFactory.Options opts = new BitmapFactory.Options();
+            opts.inSampleSize = sample;
+            in = getAssets().open(assetPath);
+            return BitmapFactory.decodeStream(in, null, opts);
+        } catch (Exception ignored) {
+            return null;
+        } finally {
+            if (in != null) {
+                try { in.close(); } catch (Exception ignored) {}
+            }
+        }
+    }
+
+    private CharSequence buildAboutAttributionLine() {
+        String logotypePath = ThemeManager.pickSolarLogotypeAsset(sampleScreenBackgroundColor());
+        Bitmap logoBmp = loadAssetBitmap(logotypePath);
+        String prefix = getString(R.string.about_brought_by_prefix);
+        String suffix = getString(R.string.about_brought_by_suffix);
+        if (logoBmp == null) {
+            return prefix + "Solar" + suffix;
+        }
+        int textPx = (int) getResources().getDimension(R.dimen.y1_menu_text_size);
+        float scale = textPx / (float) Math.max(1, logoBmp.getHeight());
+        int w = Math.max(1, (int) (logoBmp.getWidth() * scale));
+        int h = Math.max(1, textPx);
+        Bitmap scaled = Bitmap.createScaledBitmap(logoBmp, w, h, true);
+        if (scaled != logoBmp) logoBmp.recycle();
+        android.text.SpannableString span = new android.text.SpannableString(prefix + " \uFFFC " + suffix);
+        android.graphics.drawable.BitmapDrawable bd =
+                new android.graphics.drawable.BitmapDrawable(getResources(), scaled);
+        bd.setBounds(0, 0, w, h);
+        span.setSpan(new android.text.style.ImageSpan(bd, android.text.style.ImageSpan.ALIGN_BASELINE),
+                prefix.length() + 1, prefix.length() + 2, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
+        return span;
+    }
+
+    private void buildAboutUI() {
+        setSettingsAboutFullWidth(true);
+        setSettingsSubScreen(SettingsScreens.ABOUT);
+        updateStatusBarTitle();
+        updateScreenBackground(STATE_SETTINGS);
+        containerSettingsItems.removeAllViews();
+
+        float density = getResources().getDisplayMetrics().density;
+        int hPad = (int) (12 * density);
+        int logoSize = (int) (96 * density);
+        int rowW = settingsAboutFullWidth && screenWidthPx > 0
+                ? screenWidthPx : (listRowWidthPx > 0 ? listRowWidthPx : y1ActiveRowWidthPx());
+
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setGravity(Gravity.CENTER_HORIZONTAL);
+        content.setPadding(hPad, hPad, hPad, hPad);
+        content.setFocusable(false);
+
+        ImageView logo = new ImageView(this);
+        Bitmap appIcon = loadAssetBitmap("logo/square_full_logo_colour.png");
+        if (appIcon != null) {
+            logo.setImageBitmap(appIcon);
+            logo.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        }
+        content.addView(logo, new LinearLayout.LayoutParams(logoSize, logoSize));
+
+        TextView tvVersion = new TextView(this);
+        tvVersion.setFocusable(false);
+        tvVersion.setGravity(Gravity.CENTER);
+        tvVersion.setSingleLine(true);
+        tvVersion.setText(getString(R.string.about_version, AppVersion.displayLabel(this)));
+        tvVersion.setTypeface(ThemeManager.getCustomFont(), android.graphics.Typeface.BOLD);
+        tvVersion.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX,
+                getResources().getDimension(R.dimen.y1_menu_text_size) * 1.1f);
+        ThemeManager.applyThemedTextStyle(tvVersion, ThemeManager.getTextColorPrimary());
+        LinearLayout.LayoutParams verLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        verLp.topMargin = hPad / 2;
+        content.addView(tvVersion, verLp);
+
+        TextView attribution = new TextView(this);
+        attribution.setFocusable(false);
+        attribution.setGravity(Gravity.CENTER);
+        attribution.setText(buildAboutAttributionLine());
+        attribution.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX,
+                getResources().getDimension(R.dimen.y1_menu_text_size));
+        ThemeManager.applyThemedTextStyle(attribution, ThemeManager.getTextColorPrimary());
+        LinearLayout.LayoutParams attrLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        attrLp.topMargin = hPad / 2;
+        content.addView(attribution, attrLp);
+
+        containerSettingsItems.addView(content, new LinearLayout.LayoutParams(
+                rowW, LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        if (BuildConfig.FEATURE_OTA_UPDATE) {
+            final Button otaProbe = createListButton(getString(R.string.update_checking));
+            otaProbe.setEnabled(false);
+            containerSettingsItems.addView(otaProbe);
+            probeAboutOtaAvailability(otaProbe);
+            otaProbe.requestFocus();
+        } else if (containerSettingsItems.getChildCount() > 0) {
+            containerSettingsItems.getChildAt(0).requestFocus();
+        }
+    }
+
+    private void probeAboutOtaAvailability(final Button placeholder) {
+        if (!ConnectivityHelper.isOnline(this)) {
+            replaceAboutOtaPlaceholder(placeholder, null, true);
+            return;
+        }
+        final String updatesUrl = OTA_UPDATES_URL != null && !OTA_UPDATES_URL.trim().isEmpty()
+                ? OTA_UPDATES_URL.trim() : SolarUpdateClient.DEFAULT_UPDATES_URL;
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                boolean ok = false;
+                int releaseCount = 0;
+                try {
+                    List<SolarUpdateClient.ReleaseInfo> fetched =
+                            SolarUpdateClient.fetchUpdates(updatesUrl);
+                    releaseCount = fetched.size();
+                    ok = releaseCount > 0;
+                } catch (Exception ignored) {}
+                final boolean reachable = ok;
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (!SettingsScreens.ABOUT.equals(settingsSubScreenKey)) return;
+                        if (reachable) {
+                            Button updateBtn = createListButton(getString(R.string.about_update_button));
+                            updateBtn.setOnClickListener(new View.OnClickListener() {
+                                @Override
+                                public void onClick(View v) {
+                                    clickFeedback();
+                                    buildUpdateSettingsUI();
+                                }
+                            });
+                            replaceAboutOtaPlaceholder(placeholder, updateBtn, false);
+                        } else {
+                            replaceAboutOtaPlaceholder(placeholder, null, true);
+                        }
+                    }
+                });
+            }
+        }, "AboutOtaProbe").start();
+    }
+
+    private void replaceAboutOtaPlaceholder(Button placeholder, Button replacement, boolean showUnavailable) {
+        if (placeholder == null || placeholder.getParent() != containerSettingsItems) return;
+        int idx = containerSettingsItems.indexOfChild(placeholder);
+        containerSettingsItems.removeView(placeholder);
+        if (replacement != null) {
+            containerSettingsItems.addView(replacement, idx);
+            replacement.requestFocus();
+            return;
+        }
+        if (showUnavailable) {
+            TextView note = new TextView(this);
+            note.setFocusable(false);
+            note.setText(getString(R.string.about_update_unavailable));
+            note.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX,
+                    getResources().getDimension(R.dimen.y1_menu_text_size) * 0.85f);
+            ThemeManager.applyThemedTextStyle(note, ThemeManager.getTextColorSecondary());
+            int pad = (int) (12 * getResources().getDisplayMetrics().density);
+            note.setPadding(pad, pad / 2, pad, pad);
+            containerSettingsItems.addView(note, idx);
+        }
+    }
+
     private void buildSoulseekAboutInfoUI() {
         setSettingsSubScreen(SettingsScreens.SOULSEEK_ABOUT);
         updateStatusBarTitle();
@@ -8350,6 +11843,7 @@ public class MainActivity extends Activity {
 
     private void buildUpdateSettingsUI() {
         if (!BuildConfig.FEATURE_OTA_UPDATE) return;
+        setSettingsAboutFullWidth(true);
         setSettingsSubScreen(SettingsScreens.SYSTEM_UPDATE);
         updateStatusBarTitle();
         containerSettingsItems.removeAllViews();
@@ -8360,23 +11854,15 @@ public class MainActivity extends Activity {
             @Override
             public void onClick(View v) {
                 clickFeedback();
-                buildSettingsUI();
+                buildAboutUI();
             }
         });
         containerSettingsItems.addView(btnBack);
 
-        String myVersionName = BuildConfig.VERSION_NAME;
-        int myVersionCode = BuildConfig.VERSION_CODE;
-        try {
-            android.content.pm.PackageInfo pInfo = getPackageManager().getPackageInfo(getPackageName(), 0);
-            myVersionName = pInfo.versionName;
-            myVersionCode = pInfo.versionCode;
-        } catch (Exception ignored) {}
-
-        final int localCode = myVersionCode;
-        final String localName = myVersionName;
+        final int localCode = AppVersion.installedVersionCode(this);
+        final String localName = AppVersion.installedVersionName(this);
         containerSettingsItems.addView(createSettingRow(RowKeys.UPDATE_CURRENT, R.string.update_current_version,
-                "v" + localName));
+                AppVersion.displayLabel(this)));
 
         final Button loadingRow = createListButton(getString(R.string.update_checking));
         loadingRow.setEnabled(false);
@@ -8397,21 +11883,30 @@ public class MainActivity extends Activity {
                 try {
                     final List<SolarUpdateClient.ReleaseInfo> releases =
                             SolarUpdateClient.fetchUpdates(updatesUrl);
+                    final List<SolarUpdateClient.ReleaseInfo> picker =
+                            SolarUpdateClient.releasesForPicker(releases, localCode, localName,
+                                    SolarUpdateClient.MAX_PICKER_RELEASES);
                     runOnUiThread(new Runnable() {
                         @Override
                         public void run() {
+                            if (!SettingsScreens.SYSTEM_UPDATE.equals(settingsSubScreenKey)) {
+                                if (loadingView.getParent() != null) {
+                                    containerSettingsItems.removeView(loadingView);
+                                }
+                                return;
+                            }
                             if (loadingView.getParent() != null) {
                                 containerSettingsItems.removeView(loadingView);
                             }
-                            if (releases.isEmpty()) {
+                            if (picker.isEmpty()) {
                                 Button empty = createListButton(getString(R.string.update_none_found));
                                 empty.setEnabled(false);
                                 containerSettingsItems.addView(empty);
                                 return;
                             }
                             int insertAt = containerSettingsItems.getChildCount();
-                            for (int i = 0; i < releases.size(); i++) {
-                                final SolarUpdateClient.ReleaseInfo release = releases.get(i);
+                            for (int i = 0; i < picker.size(); i++) {
+                                final SolarUpdateClient.ReleaseInfo release = picker.get(i);
                                 String label = release.listLabel();
                                 if (release.matchesInstalled(localCode, localName)) {
                                     label += getString(R.string.update_installed_marker);
@@ -8430,6 +11925,18 @@ public class MainActivity extends Activity {
                                 }
                                 containerSettingsItems.addView(btn, insertAt + i);
                             }
+                            if (releases.size() > picker.size()) {
+                                TextView note = new TextView(MainActivity.this);
+                                note.setFocusable(false);
+                                note.setText(getString(R.string.update_releases_truncated,
+                                        picker.size(), releases.size()));
+                                note.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX,
+                                        getResources().getDimension(R.dimen.y1_menu_text_size) * 0.85f);
+                                ThemeManager.applyThemedTextStyle(note, ThemeManager.getTextColorSecondary());
+                                int pad = (int) (12 * getResources().getDisplayMetrics().density);
+                                note.setPadding(pad, pad / 2, pad, pad);
+                                containerSettingsItems.addView(note);
+                            }
                             if (insertAt < containerSettingsItems.getChildCount()) {
                                 containerSettingsItems.getChildAt(insertAt).requestFocus();
                             }
@@ -8439,6 +11946,7 @@ public class MainActivity extends Activity {
                     runOnUiThread(new Runnable() {
                         @Override
                         public void run() {
+                            if (!SettingsScreens.SYSTEM_UPDATE.equals(settingsSubScreenKey)) return;
                             if (loadingView.getParent() != null) {
                                 containerSettingsItems.removeView(loadingView);
                             }
@@ -8457,35 +11965,23 @@ public class MainActivity extends Activity {
             Toast.makeText(this, getString(R.string.update_url_missing), Toast.LENGTH_SHORT).show();
             return;
         }
-        int localCode = BuildConfig.VERSION_CODE;
-        String localName = BuildConfig.VERSION_NAME;
-        try {
-            android.content.pm.PackageInfo pInfo = getPackageManager().getPackageInfo(getPackageName(), 0);
-            localCode = pInfo.versionCode;
-            localName = pInfo.versionName;
-        } catch (Exception ignored) {}
+        int localCode = AppVersion.installedVersionCode(this);
+        String localName = AppVersion.installedVersionName(this);
         if (release.matchesInstalled(localCode, localName)) {
             Toast.makeText(this, getString(R.string.update_already_installed), Toast.LENGTH_SHORT).show();
             return;
         }
-        final ProgressBar progressBar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
-        progressBar.setMax(100);
-        final TextView tvProgress = new TextView(this);
-        tvProgress.setGravity(android.view.Gravity.CENTER);
-        tvProgress.setPadding(0, 30, 0, 0);
-        tvProgress.setText(getString(R.string.update_checking));
-        LinearLayout layout = new LinearLayout(this);
-        layout.setOrientation(LinearLayout.VERTICAL);
-        layout.setPadding(50, 50, 50, 50);
-        layout.addView(progressBar);
-        layout.addView(tvProgress);
-        String dialogTitle = getString(R.string.update_download_title) + " — " + release.listLabel();
-        final AlertDialog progressDialog = new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-                .setTitle(dialogTitle)
-                .setView(layout)
-                .setCancelable(false)
-                .create();
-        progressDialog.show();
+        final ViewGroup otaRoot = (ViewGroup) findViewById(android.R.id.content);
+        final String dialogTitle = getString(R.string.update_download_title) + " — " + release.listLabel();
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                if (themedContextMenu != null && otaRoot != null) {
+                    themedContextMenu.showProgressOverlay(otaRoot, dialogTitle,
+                            getString(R.string.update_checking), 100);
+                }
+            }
+        });
         final String apkUrl = release.apkUrl;
 
         new Thread(new Runnable() {
@@ -8521,8 +12017,9 @@ public class MainActivity extends Activity {
                             runOnUiThread(new Runnable() {
                                 @Override
                                 public void run() {
-                                    progressBar.setProgress(progress);
-                                    tvProgress.setText(progress + "%");
+                                    if (themedContextMenu != null) {
+                                        themedContextMenu.updateProgressOverlay(progress, progress + "%");
+                                    }
                                 }
                             });
                         }
@@ -8537,15 +12034,14 @@ public class MainActivity extends Activity {
                     runOnUiThread(new Runnable() {
                         @Override
                         public void run() {
-                            progressDialog.dismiss();
-                            installApk(updateFile, release);
+                            finishDownloadAndInstall(updateFile, release);
                         }
                     });
                 } catch (Exception e) {
                     runOnUiThread(new Runnable() {
                         @Override
                         public void run() {
-                            progressDialog.dismiss();
+                            dismissThemedContextMenu();
                             Toast.makeText(MainActivity.this, getString(R.string.toast_download_failed), Toast.LENGTH_LONG).show();
                         }
                     });
@@ -8554,40 +12050,30 @@ public class MainActivity extends Activity {
         }).start();
     }
 
-    private LinearLayout createHomeOrderRow(final HomeMenuConfig.Entry entry, boolean moving) {
-        final String rowKey = RowKeys.homeShortcut(entry.id);
-        final LinearLayout layout = createRearrangeListRow(rowKey, getString(entry.labelResId),
-                new View.OnFocusChangeListener() {
-                    @Override
-                    public void onFocusChange(View v, boolean hasFocus) {
-                        if (!(v instanceof LinearLayout)) return;
-                        LinearLayout row = (LinearLayout) v;
-                        bindRearrangeRowAdornment(row, entry.id.equals(
-                                isHomeMoreArrangeScreen() ? homeMoreMoveModeId : homeScreenMoveModeId),
-                                hasFocus);
-                        if (hasFocus && currentScreenState == STATE_SETTINGS) {
-                            int idx = containerSettingsItems.indexOfChild(row);
-                            if (idx != -1) homeScreenOrderFocusIndex = idx;
-                            updateSettingsPreview(rowKey);
-                            applyHomeShortcutConnectivityHint(row, rowKey, true);
-                        } else if (!hasFocus) {
-                            applyHomeShortcutConnectivityHint(row, rowKey, false);
-                        }
-                    }
-                });
-        bindRearrangeRowAdornment(layout, moving, false);
-        return layout;
+    private String homeEditorToggleLabel(int labelResId, boolean enabled) {
+        String name = getString(labelResId);
+        return getString(enabled ? R.string.home_screen_label_on : R.string.home_screen_label_off, name);
     }
 
-    private void openHomeArrangeForRequiredShortcut(String id, int editorRowIndex) {
+    private String homeShortcutEditorLabel(HomeMenuConfig.Entry entry) {
+        boolean shown = entry.required || HomeMenuConfig.isShortcutEnabled(prefs, entry.id);
+        return homeEditorToggleLabel(entry.labelResId, shown);
+    }
+
+    private void onHomeShortcutEditorClick(final HomeMenuConfig.Entry entry) {
+        if (entry.required) return;
         clickFeedback();
-        homeScreenEditorFocusIndex = editorRowIndex;
-        List<String> ids = HomeMenuConfig.loadHomeOrderIds(prefs);
-        int idx = ids.indexOf(id);
-        homeScreenMoveModeId = id;
-        homeScreenOrderFocusIndex = idx >= 0 ? idx + 1 : 1;
-        Toast.makeText(this, getString(R.string.home_screen_settings_move_only), Toast.LENGTH_SHORT).show();
-        buildHomeScreenArrangeUI();
+        boolean on = HomeMenuConfig.isShortcutEnabled(prefs, entry.id);
+        HomeMenuConfig.setShortcutEnabled(prefs, entry.id, !on);
+        buildHomeMenu();
+        buildHomeScreenEditorUI();
+    }
+
+    private void openHomeScreenEditorFromMenu() {
+        homeScreenEditorFocusIndex = 2;
+        settingsParentKey = SettingsScreens.APPEARANCE;
+        changeScreen(STATE_SETTINGS);
+        buildHomeScreenEditorUI();
     }
 
     private void buildHomeScreenEditorUI() {
@@ -8610,36 +12096,26 @@ public class MainActivity extends Activity {
 
         createCategoryHeader(getString(R.string.home_screen_shortcuts));
 
-        for (final HomeMenuConfig.Entry entry : HomeMenuConfig.catalog()) {
-            String state = entry.required ? getString(R.string.home_screen_move)
-                    : stateOnOff(HomeMenuConfig.isShortcutEnabled(prefs, entry.id));
-            final LinearLayout row = createSettingRow(RowKeys.homeShortcut(entry.id), entry.labelResId, state);
-            if (entry.required) {
+        for (final HomeMenuConfig.Entry entry : HomeMenuConfig.loadEditorCatalogEntries()) {
+            final LinearLayout row = createSettingsRow(
+                    RowKeys.homeShortcut(entry.id), homeShortcutEditorLabel(entry), false, false);
+            if (!entry.required) {
                 row.setOnClickListener(new View.OnClickListener() {
                     @Override
                     public void onClick(View v) {
-                        openHomeArrangeForRequiredShortcut(entry.id,
-                                containerSettingsItems.indexOfChild(v));
-                    }
-                });
-            } else {
-                row.setOnClickListener(new View.OnClickListener() {
-                    @Override
-                    public void onClick(View v) {
-                        clickFeedback();
                         homeScreenEditorFocusIndex = containerSettingsItems.indexOfChild(v);
-                        boolean nowOn = !HomeMenuConfig.isShortcutEnabled(prefs, entry.id);
-                        HomeMenuConfig.setShortcutEnabled(prefs, entry.id, nowOn);
-                        buildHomeMenu();
-                        buildHomeScreenEditorUI();
+                        onHomeShortcutEditorClick(entry);
                     }
                 });
             }
             containerSettingsItems.addView(row);
         }
 
-        LinearLayout btnMoreTile = createSettingRow(RowKeys.HOME_MORE, R.string.home_screen_more,
-                stateOnOff(HomeMenuConfig.isMoreEnabled(prefs)));
+        createCategoryHeader(getString(R.string.home_screen_options));
+
+        LinearLayout btnMoreTile = createSettingsRow(RowKeys.HOME_MORE,
+                homeEditorToggleLabel(R.string.home_screen_more, HomeMenuConfig.isMoreEnabled(prefs)),
+                false, false);
         btnMoreTile.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -8651,18 +12127,6 @@ public class MainActivity extends Activity {
             }
         });
         containerSettingsItems.addView(btnMoreTile);
-
-        LinearLayout btnArrange = createSettingsRow(RowKeys.HOME_ARRANGE, R.string.home_screen_arrange, true);
-        btnArrange.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                clickFeedback();
-                homeScreenOrderFocusIndex = 1;
-                homeScreenMoveModeId = null;
-                buildHomeScreenArrangeUI();
-            }
-        });
-        containerSettingsItems.addView(btnArrange);
 
         createCategoryHeader(getString(R.string.settings_widgets_section));
 
@@ -8707,99 +12171,6 @@ public class MainActivity extends Activity {
             }
         });
         containerSettingsItems.addView(btnAlbum);
-
-        restoreHomeScreenEditorFocus(targetFocusIndex);
-    }
-
-    private void buildHomeScreenArrangeUI() {
-        setSettingsSubScreen(SettingsScreens.HOME_ARRANGE);
-        updateStatusBarTitle();
-        containerSettingsItems.removeAllViews();
-
-        int targetFocusIndex = homeScreenOrderFocusIndex;
-        if (homeScreenMoveModeId != null) {
-            List<String> ids = HomeMenuConfig.loadHomeOrderIds(prefs);
-            int rowIdx = ids.indexOf(homeScreenMoveModeId);
-            if (rowIdx >= 0) targetFocusIndex = rowIdx + 1;
-        }
-
-        Button btnBack = createListButton(getString(R.string.common_back_short));
-        styleSecondaryLabel(btnBack);
-        btnBack.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                clickFeedback();
-                if (homeScreenMoveModeId != null) {
-                    homeScreenMoveModeId = null;
-                    refreshHomeArrangeMoveUi(false);
-                } else {
-                    buildHomeScreenEditorUI();
-                }
-            }
-        });
-        containerSettingsItems.addView(btnBack);
-
-        final List<String> orderIds = HomeMenuConfig.loadHomeOrderIds(prefs);
-        for (int i = 0; i < orderIds.size(); i++) {
-            String id = orderIds.get(i);
-            HomeMenuConfig.Entry entry = HomeMenuConfig.find(id);
-            if (entry == null) continue;
-            boolean moving = id.equals(homeScreenMoveModeId);
-            containerSettingsItems.addView(createHomeOrderRow(entry, moving));
-        }
-
-        if (HomeMenuConfig.isMoreEnabled(prefs)) {
-            LinearLayout moreRow = createSettingsRow(RowKeys.HOME_MORE, R.string.home_menu_more, true);
-            moreRow.setOnClickListener(new View.OnClickListener() {
-                @Override
-                public void onClick(View v) {
-                    clickFeedback();
-                    homeMoreMoveModeId = null;
-                    buildHomeMoreArrangeUI();
-                }
-            });
-            containerSettingsItems.addView(moreRow);
-        }
-
-        restoreHomeScreenEditorFocus(targetFocusIndex);
-    }
-
-    private void buildHomeMoreArrangeUI() {
-        setSettingsSubScreen(SettingsScreens.HOME_MORE_ARRANGE);
-        updateStatusBarTitle();
-        containerSettingsItems.removeAllViews();
-
-        int targetFocusIndex = homeScreenOrderFocusIndex;
-        if (homeMoreMoveModeId != null) {
-            List<String> ids = HomeMenuConfig.loadMoreOrderIds(prefs);
-            int rowIdx = ids.indexOf(homeMoreMoveModeId);
-            if (rowIdx >= 0) targetFocusIndex = rowIdx + 1;
-        }
-
-        Button btnBack = createListButton(getString(R.string.common_back_short));
-        styleSecondaryLabel(btnBack);
-        btnBack.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                clickFeedback();
-                if (homeMoreMoveModeId != null) {
-                    homeMoreMoveModeId = null;
-                    refreshHomeArrangeMoveUi(true);
-                } else {
-                    buildHomeScreenArrangeUI();
-                }
-            }
-        });
-        containerSettingsItems.addView(btnBack);
-
-        final List<String> orderIds = HomeMenuConfig.loadMoreOrderIds(prefs);
-        for (int i = 0; i < orderIds.size(); i++) {
-            String id = orderIds.get(i);
-            HomeMenuConfig.Entry entry = HomeMenuConfig.find(id);
-            if (entry == null) continue;
-            boolean moving = id.equals(homeMoreMoveModeId);
-            containerSettingsItems.addView(createHomeOrderRow(entry, moving));
-        }
 
         restoreHomeScreenEditorFocus(targetFocusIndex);
     }
@@ -8956,17 +12327,21 @@ public class MainActivity extends Activity {
     }
 
     // 💡 1. 안드로이드 스캐너를 버리고, 앱이 직접 MP3 태그를 추출하여 분류하는 함수!
+    // ponytail: dedupe by path; secondary by title+artist+duration hash — may collapse distinct files
+    private final java.util.HashSet<String> libraryScanPaths = new java.util.HashSet<String>();
+    private final java.util.HashSet<String> libraryScanMetaKeys = new java.util.HashSet<String>();
+
     private void buildCustomLibrary(File folder) {
         if (libraryScanGen != activeLibraryScanGen) return;
         File[] files = folder.listFiles();
         if (files != null) {
             for (File f : files) {
                 if (f.isDirectory()) {
-                    buildCustomLibrary(f); // 폴더면 끝까지 파고듭니다.
+                    buildCustomLibrary(f);
                 } else if (isAudioFile(f)) {
-
-                    if (blacklist.contains(f.getAbsolutePath()))
-                        continue;
+                    if (blacklist.contains(f.getAbsolutePath())) continue;
+                    String normPath = f.getAbsolutePath().toLowerCase(java.util.Locale.US);
+                    if (!libraryScanPaths.add(normPath)) continue;
                     try {
                         MediaMetadataRetriever mmr = new MediaMetadataRetriever();
                         java.io.FileInputStream fis = new java.io.FileInputStream(f);
@@ -8976,15 +12351,26 @@ public class MainActivity extends Activity {
                         String artist = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST);
                         String album = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM);
                         String genre = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_GENRE);
+                        String duration = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION);
+                        String albumArtist = "";
+                        if (android.os.Build.VERSION.SDK_INT >= 19) {
+                            albumArtist = mmr.extractMetadata(
+                                    MediaMetadataRetriever.METADATA_KEY_ALBUMARTIST);
+                        }
 
-                        if (title == null || title.isEmpty())
-                            title = f.getName();
-                        if (artist == null || artist.isEmpty())
-                            artist = "Unknown Artist";
-                        if (album == null || album.isEmpty())
-                            album = "Unknown Album";
+                        if (title == null || title.isEmpty()) title = f.getName();
+                        if (artist == null || artist.isEmpty()) artist = "Unknown Artist";
+                        if (album == null || album.isEmpty()) album = "Unknown Album";
+                        if (albumArtist == null) albumArtist = "";
 
-                        customLibrary.add(new SongItem(f, title, artist, album, genre));
+                        String metaKey = (title + "\0" + artist + "\0" + duration).toLowerCase(java.util.Locale.US);
+                        if (!libraryScanMetaKeys.add(metaKey)) {
+                            fis.close();
+                            mmr.release();
+                            continue;
+                        }
+
+                        customLibrary.add(new SongItem(f, title, artist, album, genre, albumArtist));
 
                         fis.close();
                         mmr.release();
@@ -8993,6 +12379,21 @@ public class MainActivity extends Activity {
                 }
             }
         }
+    }
+
+    /** Merge album tags that differ only by letter case (majority spelling wins). */
+    private void normalizeLibraryAlbumTitles() {
+        if (libraryBrowsePrefs == null || !libraryBrowsePrefs.normalizeAlbumCase()) return;
+        java.util.ArrayList<String> rawAlbums = new java.util.ArrayList<>();
+        for (SongItem song : customLibrary) {
+            if (song.album != null && !song.album.trim().isEmpty()) rawAlbums.add(song.album);
+        }
+        java.util.Map<String, String> canonicalByKey = AlbumNames.canonicalTitles(rawAlbums);
+        if (canonicalByKey.isEmpty()) return;
+        for (SongItem song : customLibrary) {
+            song.album = AlbumNames.normalizeDisplay(song.album, canonicalByKey);
+        }
+        clearArtistOwnAlbumCache();
     }
 
     // 💡 2. 라이브러리 메인 라우터 (자체 스캔 버튼 적용)
@@ -9054,16 +12455,11 @@ public class MainActivity extends Activity {
     }
 
     private String librarySortLabel() {
-        switch (librarySortMode) {
-            case LIB_SORT_ARTIST: return getString(R.string.library_sort_artist);
-            case LIB_SORT_ALBUM: return getString(R.string.library_sort_album);
-            case LIB_SORT_DATE: return getString(R.string.library_sort_date);
-            default: return getString(R.string.library_sort_title);
-        }
+        return getString(LibraryBrowsePrefs.songSortLabelRes(libraryBrowsePrefs.songSort()));
     }
 
     private void cycleLibrarySort() {
-        librarySortMode = (librarySortMode + 1) % 4;
+        libraryBrowsePrefs.cycleSongSort();
         Toast.makeText(this, getString(R.string.library_sort_now, librarySortLabel()), Toast.LENGTH_SHORT).show();
         if (currentBrowserMode == BROWSER_VIRTUAL_SONGS) buildVirtualSongs();
     }
@@ -9072,14 +12468,14 @@ public class MainActivity extends Activity {
         java.util.Collections.sort(list, new java.util.Comparator<SongItem>() {
             @Override
             public int compare(SongItem a, SongItem b) {
-                switch (librarySortMode) {
-                    case LIB_SORT_ARTIST:
+                switch (libraryBrowsePrefs.songSort()) {
+                    case LibraryBrowsePrefs.SONG_SORT_ARTIST:
                         int c = a.artist.compareToIgnoreCase(b.artist);
                         return c != 0 ? c : a.title.compareToIgnoreCase(b.title);
-                    case LIB_SORT_ALBUM:
+                    case LibraryBrowsePrefs.SONG_SORT_ALBUM:
                         c = a.album.compareToIgnoreCase(b.album);
                         return c != 0 ? c : a.title.compareToIgnoreCase(b.title);
-                    case LIB_SORT_DATE:
+                    case LibraryBrowsePrefs.SONG_SORT_DATE:
                         long da = a.file.lastModified();
                         long db = b.file.lastModified();
                         return da == db ? a.title.compareToIgnoreCase(b.title) : Long.compare(db, da);
@@ -9132,6 +12528,7 @@ public class MainActivity extends Activity {
                 containerBrowserItems.addView(row);
             }
         }
+
         if (containerBrowserItems.getChildCount() > 0) {
             containerBrowserItems.getChildAt(0).requestFocus();
         }
@@ -9297,7 +12694,9 @@ public class MainActivity extends Activity {
                     @Override
                     public void run() {
                         customLibrary.clear();
+                        invalidateSongPathIndex();
                         buildCustomLibrary(rootFolder);
+                        normalizeLibraryAlbumTitles();
 
                         runOnUiThread(new Runnable() {
                             @Override
@@ -9363,22 +12762,43 @@ public class MainActivity extends Activity {
         updateStatusBarTitle();
         updateLibraryBreadcrumb();
 
+        java.util.HashMap<String, String> albumByKey = new java.util.HashMap<>();
         java.util.HashSet<String> uniqueCategories = new java.util.HashSet<>();
-        for (SongItem song : customLibrary) {
-            String val;
-            if ("ARTIST".equals(type)) val = song.artist;
-            else if ("GENRE".equals(type)) val = song.genre;
-            else val = song.album;
-            uniqueCategories.add(val);
+        if (!"ARTIST".equals(type)) {
+            for (SongItem song : customLibrary) {
+                if ("GENRE".equals(type)) {
+                    uniqueCategories.add(song.genre);
+                } else if ("ALBUM".equals(type)) {
+                    if (libraryBrowsePrefs.normalizeAlbumCase()) {
+                        registerAlbumCategory(albumByKey, song.album);
+                    } else if (song.album != null && !song.album.trim().isEmpty()
+                            && !"Unknown Album".equalsIgnoreCase(song.album.trim())) {
+                        uniqueCategories.add(song.album.trim());
+                    }
+                } else {
+                    uniqueCategories.add(song.album);
+                }
+            }
         }
 
-        List<String> categories = new ArrayList<>(uniqueCategories);
-        java.util.Collections.sort(categories);
+        List<String> categories;
+        if ("ARTIST".equals(type)) {
+            categories = new ArrayList<>(ArtistBrowsePolicy.collectArtists(
+                    policyTracksFromLibrary(), libraryBrowsePrefs));
+        } else if ("ALBUM".equals(type)) {
+            categories = libraryBrowsePrefs.normalizeAlbumCase()
+                    ? new ArrayList<>(albumByKey.values())
+                    : new ArrayList<>(uniqueCategories);
+            java.util.Collections.sort(categories);
+        } else {
+            categories = new ArrayList<>(uniqueCategories);
+            java.util.Collections.sort(categories);
+        }
 // 🚀 [추가] 점프를 위해 아티스트/앨범 이름 기억
         currentScrollIndexList.clear();
         currentScrollIndexList.addAll(categories);
         // 🚀 수백 개의 아티스트/앨범 데이터도 재활용 엔진(어댑터)에 밀어넣습니다.
-        CategoryListAdapter adapter = new CategoryListAdapter(categories, type);
+        CategoryListAdapter adapter = new CategoryListAdapter(categories, type, null);
         listVirtualSongs.setAdapter(adapter);
 
         listVirtualSongs.post(new Runnable() {
@@ -9390,7 +12810,49 @@ public class MainActivity extends Activity {
             }
         });
     }
-    // 💡 [추가] 이름에서 앞의 특수문자를 무시하고 순수 '첫 글자(알파벳)'만 뽑아내는 함수
+    private void registerArtistCategory(java.util.HashMap<String, String> artistByKey, String raw) {
+        if (raw == null) return;
+        String trimmed = raw.trim();
+        if (trimmed.isEmpty() || "Unknown Artist".equalsIgnoreCase(trimmed)) return;
+        String display = trimmed;
+        String key = ArtistNames.matchKey(display);
+        String existing = artistByKey.get(key);
+        if (existing == null) {
+            artistByKey.put(key, display);
+        } else {
+            artistByKey.put(key, ArtistNames.preferCanonical(existing, display));
+        }
+    }
+
+    private void registerAlbumCategory(java.util.HashMap<String, String> albumByKey, String raw) {
+        if (raw == null) return;
+        String trimmed = raw.trim();
+        if (trimmed.isEmpty() || "Unknown Album".equalsIgnoreCase(trimmed)) return;
+        String key = AlbumNames.matchKey(trimmed);
+        String existing = albumByKey.get(key);
+        if (existing == null) {
+            albumByKey.put(key, trimmed);
+        } else if (!existing.equals(trimmed)) {
+            java.util.HashMap<String, Integer> counts = new java.util.HashMap<String, Integer>();
+            counts.put(existing, 1);
+            counts.put(trimmed, 1);
+            albumByKey.put(key, AlbumNames.chooseCanonical(counts));
+        }
+    }
+
+    /** Primary artist for album when browsed via a guest/feature credit. */
+    private String albumOwnerArtistForBrowse(String album, String browsedArtist) {
+        return ArtistBrowsePolicy.albumOwnerForBrowse(album, browsedArtist,
+                policyTracksFromLibrary(), libraryBrowsePrefs);
+    }
+
+    private String albumBrowseSubtitle(String album) {
+        String owner = ArtistBrowsePolicy.albumBrowseSubtitle(album, virtualQueryArtist,
+                policyTracksFromLibrary(), libraryBrowsePrefs);
+        if (owner == null || owner.trim().isEmpty()) return "";
+        if (ArtistNames.equals(owner, virtualQueryArtist)) return "";
+        return getString(R.string.library_album_by_artist, owner);
+    }
     private char getInitialChar(String text) {
         if (text == null || text.isEmpty()) return '#';
         String clean = text.replace("📁 ", "").replace("👤 ", "")
@@ -9402,10 +12864,12 @@ public class MainActivity extends Activity {
     private class CategoryListAdapter extends android.widget.BaseAdapter {
         private List<String> items;
         private String type;
+        private String browseArtist;
 
-        public CategoryListAdapter(List<String> items, String type) {
+        public CategoryListAdapter(List<String> items, String type, String browseArtist) {
             this.items = items;
             this.type = type;
+            this.browseArtist = browseArtist;
         }
 
         @Override public int getCount() { return items.size(); }
@@ -9414,19 +12878,60 @@ public class MainActivity extends Activity {
 
         @Override
         public View getView(final int position, View convertView, android.view.ViewGroup parent) {
+            final String name = items.get(position);
+            final boolean artistAlbumBrowse = "ARTIST_ALBUM".equals(type) && browseArtist != null;
+
+            if (artistAlbumBrowse) {
+                final String subtitle = albumBrowseSubtitle(name);
+                final int rowKind = Y1_ROW_ITEM;
+                final int rowW = y1ActiveRowWidthPx();
+                FrameLayout row;
+                if (convertView instanceof FrameLayout && "artist_album_row".equals(convertView.getTag())) {
+                    row = (FrameLayout) convertView;
+                } else {
+                    row = MoveRibbonRows.createLibraryMoveRow(MainActivity.this, y1LibraryRowHeightPx);
+                    row.setTag("artist_album_row");
+                    row.setFocusable(true);
+                    row.setSoundEffectsEnabled(false);
+                    row.setLayoutParams(new android.widget.AbsListView.LayoutParams(
+                            android.widget.AbsListView.LayoutParams.MATCH_PARENT, y1LibraryRowHeightPx + 2));
+                }
+                final String titleText = "💿 " + name;
+                row.setOnFocusChangeListener(new View.OnFocusChangeListener() {
+                    @Override
+                    public void onFocusChange(View v, boolean hasFocus) {
+                        MoveRibbonRows.bindLibraryMoveRow(MainActivity.this, row, titleText, subtitle,
+                                false, hasFocus, false, false, rowW, y1LibraryRowHeightPx);
+                        if (hasFocus) showFastScrollLetter(name);
+                    }
+                });
+                row.setOnClickListener(new View.OnClickListener() {
+                    @Override
+                    public void onClick(View v) {
+                        clickFeedback();
+                        virtualQueryType = "ARTIST_ALBUM";
+                        virtualQueryValue = name;
+                        currentBrowserMode = BROWSER_VIRTUAL_SONGS;
+                        buildVirtualSongs();
+                    }
+                });
+                MoveRibbonRows.bindLibraryMoveRow(MainActivity.this, row, titleText, subtitle,
+                        false, row.hasFocus(), false, false, rowW, y1LibraryRowHeightPx);
+                return row;
+            }
+
             final Button btn;
 
-            if (convertView == null) {
+            if (convertView != null && convertView instanceof Button) {
+                btn = (Button) convertView;
+            } else {
                 btn = createListButton("");
                 btn.setLayoutParams(new android.widget.AbsListView.LayoutParams(
                         android.widget.AbsListView.LayoutParams.MATCH_PARENT,
                         android.widget.AbsListView.LayoutParams.WRAP_CONTENT
                 ));
-            } else {
-                btn = (Button) convertView;
             }
 
-            final String name = items.get(position);
             String prefix = "👤 ";
             if ("ALBUM".equals(type) || "ARTIST_ALBUM".equals(type)) prefix = "💿 ";
             else if ("GENRE".equals(type)) prefix = "🎸 ";
@@ -9453,9 +12958,7 @@ public class MainActivity extends Activity {
                 public void onClick(View v) {
                     clickFeedback();
                     if ("ARTIST".equals(type)) {
-                        virtualQueryArtist = name;
-                        currentBrowserMode = BROWSER_ARTIST_ALBUMS;
-                        buildArtistAlbums();
+                        openArtistBrowse(name);
                     } else if ("ARTIST_ALBUM".equals(type)) {
                         virtualQueryType = "ARTIST_ALBUM";
                         virtualQueryValue = name;
@@ -9487,15 +12990,27 @@ public class MainActivity extends Activity {
         updateStatusBarTitle();
         updateLibraryBreadcrumb();
 
-        java.util.HashSet<String> albums = new java.util.HashSet<String>();
-        for (SongItem song : customLibrary) {
-            if (song.artist.equals(virtualQueryArtist)) albums.add(song.album);
+        if (ArtistBrowsePolicy.shouldSkipAlbumPicker(virtualQueryArtist, libraryBrowsePrefs,
+                policyTracksFromLibrary())) {
+            virtualQueryType = "ARTIST";
+            virtualQueryValue = virtualQueryArtist;
+            virtualQueryArtist = "";
+            currentBrowserMode = BROWSER_VIRTUAL_SONGS;
+            buildVirtualSongs();
+            return;
         }
-        List<String> categories = new ArrayList<>(albums);
+        java.util.LinkedHashMap<String, String> albumsByKey = new java.util.LinkedHashMap<>();
+        for (SongItem song : customLibrary) {
+            if (!ArtistParser.containsArtist(song.artist, virtualQueryArtist)) continue;
+            if (song.album == null || song.album.trim().isEmpty()) continue;
+            String key = AlbumNames.matchKey(song.album);
+            if (!albumsByKey.containsKey(key)) albumsByKey.put(key, song.album);
+        }
+        List<String> categories = new ArrayList<>(albumsByKey.values());
         java.util.Collections.sort(categories);
         currentScrollIndexList.clear();
         currentScrollIndexList.addAll(categories);
-        CategoryListAdapter adapter = new CategoryListAdapter(categories, "ARTIST_ALBUM");
+        CategoryListAdapter adapter = new CategoryListAdapter(categories, "ARTIST_ALBUM", virtualQueryArtist);
         listVirtualSongs.setAdapter(adapter);
         listVirtualSongs.post(new Runnable() {
             @Override
@@ -9557,10 +13072,13 @@ public class MainActivity extends Activity {
     }
 
     private void buildVirtualSongsFromPlaylist(final PlaylistManager.Entry pl) {
+        resetPlaylistMoveState();
+        currentBrowserMode = BROWSER_VIRTUAL_SONGS;
         scrollViewBrowser.setVisibility(View.GONE);
         listVirtualSongs.setVisibility(View.VISIBLE);
         virtualQueryType = "PLAYLIST";
         virtualQueryValue = pl.name;
+        playlistViewEntry = pl;
         browserStatusTitle = getString(R.string.status_path, pl.name);
         updateStatusBarTitle();
         updateLibraryBreadcrumb();
@@ -9578,10 +13096,7 @@ public class MainActivity extends Activity {
                 currentScrollIndexList.add(f.getName());
             }
         }
-        sortSongItems(targetSongs);
-        virtualSongList.clear();
-        for (SongItem s : targetSongs) virtualSongList.add(s.file);
-        SongListAdapter adapter = new SongListAdapter(targetSongs);
+        SongListAdapter adapter = new SongListAdapter(targetSongs, true);
         listVirtualSongs.setAdapter(adapter);
         listVirtualSongs.post(new Runnable() {
             @Override
@@ -9593,10 +13108,26 @@ public class MainActivity extends Activity {
 
     private SongItem findSongItem(File f) {
         if (f == null) return null;
+        ensureSongPathIndex();
+        SongItem cached = songPathIndex.get(f.getAbsolutePath());
+        if (cached != null) return cached;
         for (SongItem s : customLibrary) {
             if (f.equals(s.file)) return s;
         }
         return null;
+    }
+
+    private void ensureSongPathIndex() {
+        if (songPathIndex != null) return;
+        songPathIndex = new java.util.HashMap<String, SongItem>();
+        java.util.ArrayList<SongItem> snap = new java.util.ArrayList<SongItem>(customLibrary);
+        for (SongItem s : snap) {
+            if (s.file != null) songPathIndex.put(s.file.getAbsolutePath(), s);
+        }
+    }
+
+    private void invalidateSongPathIndex() {
+        songPathIndex = null;
     }
 
     private boolean isPodcastMediaFile(File f) {
@@ -9636,7 +13167,11 @@ public class MainActivity extends Activity {
         if (type == null || !type.equals(virtualQueryType)) return false;
         if (value == null || !value.equals(virtualQueryValue)) return false;
         if ("ARTIST_ALBUM".equals(type)) {
-            return (artistForAlbum != null ? artistForAlbum : "").equals(virtualQueryArtist);
+            return ArtistParser.containsArtist(artistForAlbum, virtualQueryArtist)
+                    && value != null && value.equals(virtualQueryValue);
+        }
+        if ("ARTIST".equals(type) && value != null) {
+            return value.equals(virtualQueryValue);
         }
         return true;
     }
@@ -9646,7 +13181,7 @@ public class MainActivity extends Activity {
         changeScreen(STATE_BROWSER);
         currentBrowserMode = BROWSER_VIRTUAL_SONGS;
         virtualQueryType = "ARTIST";
-        virtualQueryValue = artist;
+        virtualQueryValue = ArtistNames.normalizeDisplay(artist);
         virtualQueryArtist = "";
         buildVirtualSongs();
     }
@@ -9701,36 +13236,40 @@ public class MainActivity extends Activity {
             if (currentBrowserMode == BROWSER_VIRTUAL_SONGS) return virtualFocusedAudioFile();
             if (currentBrowserMode == BROWSER_FOLDER && !isPickingBackground) return browserFocusedAudioFile();
         }
-        if (isMusicQueueEditorScreen()) {
-            int idx = musicQueueFocusedIndex();
-            java.util.List<File> q = playback.musicPlaylist();
-            if (idx >= 0 && idx < q.size()) return q.get(idx);
-        }
         return null;
     }
+
+    private static final int FIND_LIKE_SUGGESTIONS_MAX = 10;
 
     private void addMusicBrowseContextActions(File trackFile, String playlistNameIfAny) {
         if (!isMusicBrowseContextFile(trackFile)) return;
         final SongItem si = resolveSongMetadata(trackFile);
         if (si == null) return;
 
-        if (si.artist != null && !si.artist.trim().isEmpty() && !"Unknown Artist".equals(si.artist)
-                && !isOnSameMusicListing("ARTIST", si.artist, null)) {
-            addContextAction(getString(R.string.context_browse_artist, si.artist), new Runnable() {
-                @Override
-                public void run() {
-                    openMusicArtistListing(si.artist);
-                }
-            });
+        java.util.List<String> creditedArtists = ArtistParser.splitArtists(si.artist);
+        if (creditedArtists.isEmpty() && si.artist != null && !si.artist.trim().isEmpty()
+                && !"Unknown Artist".equals(si.artist)) {
+            creditedArtists = java.util.Collections.singletonList(si.artist.trim());
+        }
+        for (final String artistName : creditedArtists) {
+            if (!isOnSameMusicListing("ARTIST", artistName, null)) {
+                addContextAction(getString(R.string.context_browse_artist, artistName), new Runnable() {
+                    @Override
+                    public void run() {
+                        openMusicArtistListing(artistName);
+                    }
+                });
+            }
         }
         if (si.album != null && !si.album.trim().isEmpty() && !"Unknown Album".equals(si.album)) {
-            final String listingType = (si.artist != null && !si.artist.trim().isEmpty()
-                    && !"Unknown Artist".equals(si.artist)) ? "ARTIST_ALBUM" : "ALBUM";
-            if (!isOnSameMusicListing(listingType, si.album, si.artist)) {
+            final String listingType = !creditedArtists.isEmpty() ? "ARTIST_ALBUM" : "ALBUM";
+            final String albumArtist = creditedArtists.isEmpty() ? si.artist
+                    : ArtistParser.primaryArtist(si.artist);
+            if (!isOnSameMusicListing(listingType, si.album, albumArtist)) {
                 addContextAction(getString(R.string.context_browse_album, si.album), new Runnable() {
                     @Override
                     public void run() {
-                        openMusicAlbumListing(si.artist, si.album);
+                        openMusicAlbumListing(albumArtist, si.album);
                     }
                 });
             }
@@ -9753,6 +13292,24 @@ public class MainActivity extends Activity {
                 }
             });
         }
+        if (ConnectivityHelper.isOnline(this) && ConnectivityHelper.isReachLoginOk()) {
+            List<String> findLike = SoulseekSearchSuggestions.suggestionsFromId3(
+                    si.title, si.artist, si.album, si.genre);
+            if (!findLike.isEmpty()) {
+                addContextSectionHeader(getString(R.string.context_find_like_this));
+                int shown = 0;
+                for (final String q : findLike) {
+                    if (shown >= FIND_LIKE_SUGGESTIONS_MAX) break;
+                    addContextAction(q, new Runnable() {
+                        @Override
+                        public void run() {
+                            launchReachSearchFromSuggestion(q, true);
+                        }
+                    });
+                    shown++;
+                }
+            }
+        }
     }
 
     private void saveMusicQueueAsM3u() {
@@ -9771,136 +13328,6 @@ public class MainActivity extends Activity {
         } catch (Exception e) {
             Toast.makeText(this, getString(R.string.library_playlist_save_failed), Toast.LENGTH_SHORT).show();
         }
-    }
-
-    private boolean isMusicQueueEditorScreen() {
-        return SettingsScreens.MUSIC_QUEUE.equals(settingsSubScreenKey);
-    }
-
-    private void openMusicQueueEditor() {
-        if (!playback.isMusicActive() || playback.musicPlaylist().isEmpty()) {
-            Toast.makeText(this, getString(R.string.library_queue_empty), Toast.LENGTH_SHORT).show();
-            return;
-        }
-        playback.clampMusicIndex();
-        musicQueueMoveFrom = -1;
-        musicQueueEditorFocus = Math.min(playback.musicIndex() + 1, playback.musicPlaylist().size());
-        musicQueueReturnScreen = currentScreenState == STATE_PLAYER ? STATE_PLAYER : STATE_MENU;
-        setSettingsSubScreen(SettingsScreens.MUSIC_QUEUE);
-        changeScreen(STATE_SETTINGS);
-    }
-
-    private void setMusicQueueListVisible(boolean visible) {
-        if (visible) {
-            setThemesListVisible(false);
-        }
-        if (settingsScrollView != null) {
-            settingsScrollView.setVisibility(visible ? View.GONE : View.VISIBLE);
-        }
-        if (listMusicQueue != null) {
-            listMusicQueue.setVisibility(visible ? View.VISIBLE : View.GONE);
-        }
-        if (!visible) {
-            musicQueueMoveFrom = -1;
-        }
-    }
-
-    private boolean isMusicQueueNowPlayingSlot(int queueIdx) {
-        return queueIdx >= 0 && queueIdx == playback.musicIndex();
-    }
-
-    private boolean canPickMusicQueueMoveFrom(int queueIdx) {
-        return queueIdx >= 0 && queueIdx < playback.musicPlaylist().size()
-                && !isMusicQueueNowPlayingSlot(queueIdx);
-    }
-
-    private boolean canDropMusicQueueMoveAt(int queueIdx) {
-        return queueIdx >= 0 && queueIdx < playback.musicPlaylist().size()
-                && !isMusicQueueNowPlayingSlot(queueIdx);
-    }
-
-    private int nextMusicQueueMoveIndex(int from, int delta) {
-        int size = playback.musicPlaylist().size();
-        int to = from + delta;
-        while (to >= 0 && to < size && isMusicQueueNowPlayingSlot(to)) {
-            to += delta;
-        }
-        if (to < 0 || to >= size) return from;
-        return to;
-    }
-
-    private void applyMusicQueueMove(int from, int to) {
-        if (!canPickMusicQueueMoveFrom(from) || !canDropMusicQueueMoveAt(to) || from == to) return;
-        playback.moveMusicTrack(from, to);
-        musicQueueMoveFrom = to;
-        musicQueueEditorFocus = to + 1;
-        updateMusicTrackCountUi();
-        refreshMusicQueueList();
-    }
-
-    private int musicQueueListPosition() {
-        if (listMusicQueue == null) return -1;
-        View focused = listMusicQueue.getFocusedChild();
-        if (focused != null) {
-            return listMusicQueue.getPositionForView(focused);
-        }
-        return listMusicQueue.getSelectedItemPosition();
-    }
-
-    private int musicQueueFocusedIndex() {
-        int listPos = musicQueueListPosition();
-        if (listPos <= 0) return -1;
-        int idx = listPos - 1;
-        return idx < playback.musicPlaylist().size() ? idx : -1;
-    }
-
-    private void refreshMusicQueueList() {
-        if (musicQueueListAdapter != null) {
-            musicQueueListAdapter.notifyDataSetChanged();
-        }
-        scrollMusicQueueToListPos(Math.max(1, musicQueueEditorFocus));
-    }
-
-    private void scrollMusicQueueToListPos(final int listPos) {
-        if (listMusicQueue == null || listPos < 0) return;
-        listMusicQueue.setSelection(listPos);
-        listMusicQueue.post(new Runnable() {
-            @Override
-            public void run() {
-                if (listMusicQueue == null) return;
-                listMusicQueue.setSelection(listPos);
-                int first = listMusicQueue.getFirstVisiblePosition();
-                int childIdx = listPos - first;
-                if (childIdx >= 0 && childIdx < listMusicQueue.getChildCount()) {
-                    View v = listMusicQueue.getChildAt(childIdx);
-                    if (v != null && v.isFocusable()) v.requestFocus();
-                }
-            }
-        });
-    }
-
-    private void buildMusicQueueEditorUI() {
-        if (!playback.isMusicActive() || playback.musicPlaylist().isEmpty()) {
-            settingsSubScreenKey = null;
-            setMusicQueueListVisible(false);
-            buildSettingsUI();
-            return;
-        }
-        playback.clampMusicIndex();
-        setSettingsSubScreen(SettingsScreens.MUSIC_QUEUE);
-        updateStatusBarTitle();
-        setThemesListVisible(false);
-        setMusicQueueListVisible(true);
-        containerSettingsItems.removeAllViews();
-        if (listMusicQueue == null) return;
-        if (musicQueueListAdapter == null) {
-            musicQueueListAdapter = new MusicQueueListAdapter();
-        }
-        listMusicQueue.setAdapter(musicQueueListAdapter);
-        int focusListPos = musicQueueEditorFocus > 0 ? musicQueueEditorFocus
-                : playback.musicIndex() + 1;
-        focusListPos = Math.min(focusListPos, playback.musicPlaylist().size());
-        scrollMusicQueueToListPos(focusListPos);
     }
 
     private BluetoothDevice bluetoothFocusedDevice() {
@@ -9968,18 +13395,6 @@ public class MainActivity extends Activity {
         }
     }
 
-    private boolean handleMusicQueueEditorBack() {
-        if (!isMusicQueueEditorScreen()) return false;
-        if (musicQueueMoveFrom >= 0) {
-            musicQueueMoveFrom = -1;
-            refreshMusicQueueList();
-            return true;
-        }
-        setMusicQueueListVisible(false);
-        changeScreen(musicQueueReturnScreen);
-        return true;
-    }
-
     private String musicTrackLabel(File f) {
         if (f == null) return "";
         SongItem si = findSongItem(f);
@@ -9997,6 +13412,9 @@ public class MainActivity extends Activity {
             buildFileBrowserUI();
             return;
         }
+        if (!"PLAYLIST".equals(virtualQueryType)) {
+            resetPlaylistMoveState();
+        }
         // 🚀 기존의 뚱뚱하고 느린 스크롤뷰를 끄고, 초고속 리스트뷰를 켭니다!
         scrollViewBrowser.setVisibility(View.GONE);
         listVirtualSongs.setVisibility(View.VISIBLE);
@@ -10011,11 +13429,13 @@ public class MainActivity extends Activity {
         for (SongItem song : customLibrary) {
             boolean match = false;
             if (virtualQueryType.equals("ALL")) match = true;
-            else if (virtualQueryType.equals("ARTIST") && song.artist.equals(virtualQueryValue)) match = true;
-            else if (virtualQueryType.equals("ALBUM") && song.album.equals(virtualQueryValue)) match = true;
+            else if (virtualQueryType.equals("ARTIST")
+                    && ArtistParser.containsArtist(song.artist, virtualQueryValue)) match = true;
+            else if (virtualQueryType.equals("ALBUM") && AlbumNames.equals(song.album, virtualQueryValue)) match = true;
             else if (virtualQueryType.equals("GENRE") && song.genre.equals(virtualQueryValue)) match = true;
             else if (virtualQueryType.equals("ARTIST_ALBUM")
-                    && song.artist.equals(virtualQueryArtist) && song.album.equals(virtualQueryValue)) match = true;
+                    && ArtistParser.containsArtist(song.artist, virtualQueryArtist)
+                    && AlbumNames.equals(song.album, virtualQueryValue)) match = true;
             if (match) {
                 targetSongs.add(song);
                 virtualSongList.add(song.file);
@@ -10025,7 +13445,7 @@ public class MainActivity extends Activity {
         sortSongItems(targetSongs);
         virtualSongList.clear();
         for (SongItem s : targetSongs) virtualSongList.add(s.file);
-        SongListAdapter adapter = new SongListAdapter(targetSongs);
+        SongListAdapter adapter = new SongListAdapter(targetSongs, false);
         listVirtualSongs.setAdapter(adapter);
         listVirtualSongs.post(new Runnable() {
             @Override
@@ -10967,13 +14387,50 @@ public class MainActivity extends Activity {
     private void updateSoulseekSharePolicy() {
         boolean reachUi = currentScreenState == STATE_SOULSEEK || hasActiveReachDownload();
         boolean wifi = hasInternetConnection();
+        soulseekSharePolicy.setUserEnabled(soulseekSharingEnabled);
         soulseekSharePolicy.update(soulseekCharging, wifi, reachUi);
-        if (!soulseekSharePolicy.announceShares() && soulseekClient == null) return;
-        SoulseekClient client = soulseekSharePolicy.announceShares()
-                ? ensureSoulseekClient() : soulseekClient;
+        // #region agent log
+        try {
+            org.json.JSONObject d = new org.json.JSONObject();
+            d.put("charging", soulseekCharging);
+            d.put("wifi", wifi);
+            d.put("reachUi", reachUi);
+            d.put("sharingEnabled", soulseekSharingEnabled);
+            d.put("policyState", soulseekSharePolicy.state().name());
+            d.put("announce", soulseekSharePolicy.announceShares());
+            d.put("indexedFiles", soulseekShareIndex.fileCount());
+            DebugAgentLog.log(this, "MainActivity.updateSoulseekSharePolicy",
+                    "policy tick", "H1", d);
+        } catch (Exception ignored) {}
+        // #endregion
+        if (!wifi) {
+            if (soulseekClient != null && !hasActiveReachDownload() && !soulseekSearchInProgress) {
+                soulseekClient.pauseWhenIdle();
+            }
+            return;
+        }
+        if (!soulseekSharePolicy.announceShares()) {
+            if (soulseekClient == null) return;
+            if (!reachUi && !soulseekSearchInProgress
+                    && (soulseekClient == null || !soulseekClient.isTransferActive())) {
+                soulseekClient.pauseWhenIdle();
+                return;
+            }
+            soulseekClient.setSharePolicy(soulseekSharePolicy);
+            soulseekClient.setShareIndex(soulseekShareIndex);
+            return;
+        }
+        if (soulseekSearchInProgress || (soulseekClient != null && soulseekClient.isSearchActive())) {
+            SoulseekClient c = soulseekClient;
+            if (c == null) c = ensureSoulseekClient();
+            c.setSharePolicy(soulseekSharePolicy);
+            c.setShareIndex(soulseekShareIndex);
+            return;
+        }
+        SoulseekClient client = ensureSoulseekClient();
         if (client == null) return;
         client.setSharePolicy(soulseekSharePolicy);
-        if (soulseekSharePolicy.announceShares() && !soulseekShareScanRunning) {
+        if (!soulseekShareScanRunning) {
             soulseekShareScanRunning = true;
             final SoulseekAccount account = SoulseekAccount.load(prefs);
             new Thread(new Runnable() {
@@ -10982,6 +14439,18 @@ public class MainActivity extends Activity {
                     try {
                         soulseekShareIndex.scan(account.username, rootFolder, PodcastLibrary.ROOT);
                         SoulseekClient c = soulseekClient;
+                        // #region agent log
+                        try {
+                            org.json.JSONObject d = new org.json.JSONObject();
+                            d.put("files", soulseekShareIndex.fileCount());
+                            d.put("dirs", soulseekShareIndex.dirCount());
+                            d.put("musicRoot", rootFolder != null ? rootFolder.getAbsolutePath() : "null");
+                            d.put("musicExists", rootFolder != null && rootFolder.isDirectory());
+                            d.put("user", account.username);
+                            DebugAgentLog.log(MainActivity.this, "MainActivity.updateSoulseekSharePolicy",
+                                    "share scan done", "H2", d);
+                        } catch (Exception ignored) {}
+                        // #endregion
                         if (c != null) {
                             c.setShareIndex(soulseekShareIndex);
                             c.refreshShareAnnouncement();
@@ -10998,6 +14467,9 @@ public class MainActivity extends Activity {
     }
 
     private String soulseekSharingStatusLabel() {
+        if (!soulseekSharingEnabled) {
+            return getString(R.string.soulseek_sharing_disabled);
+        }
         switch (soulseekSharePolicy.state()) {
             case ACTIVE:
                 return getString(R.string.soulseek_sharing_on, soulseekShareIndex.fileCount());
@@ -11047,6 +14519,8 @@ public class MainActivity extends Activity {
             runOnUiThread(new Runnable() {
                 @Override
                 public void run() {
+                    ConnectivityHelper.setReachLoginOk(true);
+                    buildHomeMenu();
                     soulseekListenPort = listenPort;
                     if (isSoulseekUiActive() && tvBrowserPath != null && soulseekUiMode == SOULSEEK_UI_SEARCH) {
                         SoulseekAccount account = SoulseekAccount.load(prefs);
@@ -11067,8 +14541,12 @@ public class MainActivity extends Activity {
             runOnUiThread(new Runnable() {
                 @Override
                 public void run() {
+                    ConnectivityHelper.setReachLoginOk(false);
+                    buildHomeMenu();
+                    if (isTransientReachError(reason)) return;
                     Toast.makeText(MainActivity.this,
-                            getString(R.string.soulseek_login_failed_check_account, reason),
+                            getString(R.string.soulseek_login_failed_check_account,
+                                    humanizeSoulseekError(reason)),
                             Toast.LENGTH_LONG).show();
                 }
             });
@@ -11077,7 +14555,7 @@ public class MainActivity extends Activity {
         @Override
         public void onSearchResult(final SoulseekClient.Result result) {
             if (soulseekClient != null && soulseekClient.isPeerDenied(result.username)) return;
-            if (soulseekHideFlac && SoulseekClient.Result.isFlacFile(result.filename)) return;
+            if (soulseekHideHighBitrate && result.isOverBitrateThreshold()) return;
             synchronized (soulseekPendingUi) {
                 soulseekPendingUi.add(result);
                 if (!soulseekUiFlushScheduled) {
@@ -11136,6 +14614,7 @@ public class MainActivity extends Activity {
                                     }
                                     buildSoulseekResultsUI();
                                     finalizeSoulseekSearch(toSort.size());
+                                    updateSoulseekSharePolicy();
                                     if (toSort.isEmpty()) {
                                         Toast.makeText(MainActivity.this,
                                                 getString(R.string.soulseek_no_results),
@@ -11196,11 +14675,12 @@ public class MainActivity extends Activity {
                         reachGrowingCacheFile = partialFile;
                         reachGrowingPreparedBytes = partialFile.length();
                         updateReachGrowingDurationUi();
+                        tryReachId3FromPartial(partialFile);
                     } else if (action == SOULSEEK_ACTION_QUEUE && reachQueuePartialFile == null) {
                         reachQueuePartialFile = partialFile;
-                        appendTrackToMusicQueue(partialFile);
-                        soulseekUiMode = SOULSEEK_UI_RESULTS;
-                        buildSoulseekResultsUI();
+                        String meta = soulseekActiveDownload != null
+                                ? soulseekActiveDownload.title() : partialFile.getName();
+                        queueReachTrackAfterCurrent(partialFile, meta);
                     }
                 }
             });
@@ -11214,6 +14694,8 @@ public class MainActivity extends Activity {
                     final int action = soulseekPendingAction;
                     final File queuePartial = reachQueuePartialFile;
                     final boolean reachStream = reachPartialPlaybackStarted;
+                    final String reachMeta = soulseekActiveDownload != null
+                            ? soulseekActiveDownload.title() : (file != null ? file.getName() : "");
                     stopSoulseekDownloadUiRunnables();
                     if (!reachStream) progressHandler.removeCallbacks(reachGrowingEdgePoll);
                     soulseekActiveDownload = null;
@@ -11223,13 +14705,16 @@ public class MainActivity extends Activity {
                     soulseekDownloadStatusRow = null;
                     soulseekPendingAction = 0;
                     reachQueuePartialFile = null;
+                    soulseekActiveDownloadPercent = 0;
+                    refreshReachProgressUi();
                     if (action == SOULSEEK_ACTION_PLAY) {
                         if (reachPartialPlaybackStarted) {
                             reachGrowingCacheFile = file;
                             reachGrowingTotalBytes = file.length();
-                            clearReachLoadingArtistLabel();
                             updateReachGrowingDurationUi();
-                            maybeExtendReachGrowingPlayback(false);
+                            applyReachId3Metadata(file);
+                            maybeExtendReachGrowingPlayback(true);
+                            persistPlaybackQueue();
                         } else {
                             progressHandler.removeCallbacks(reachGrowingEdgePoll);
                             soulseekUiMode = SOULSEEK_UI_SEARCH;
@@ -11240,7 +14725,9 @@ public class MainActivity extends Activity {
                     } else if (action == SOULSEEK_ACTION_QUEUE) {
                         soulseekUiMode = SOULSEEK_UI_RESULTS;
                         if (queuePartial != null && !queuePartial.equals(file)) {
-                            replaceReachFileInQueue(queuePartial, file);
+                            playback.replaceReachFileInQueue(queuePartial, file, reachMeta);
+                            persistPlaybackQueue();
+                            refreshContextQueueTierIfOpen();
                         }
                         if (currentScreenState == STATE_SOULSEEK) buildSoulseekResultsUI();
                     } else {
@@ -11266,6 +14753,9 @@ public class MainActivity extends Activity {
                         if (!isSoulseekUiActive() && !shouldDeferSoulseekOffScreenCleanup()) {
                             soulseekOffScreenCleanup();
                         }
+                        return;
+                    }
+                    if (isTransientReachError(message) && currentScreenState != STATE_SOULSEEK) {
                         return;
                     }
                     String msg = humanizeSoulseekError(message);
@@ -11508,7 +14998,9 @@ public class MainActivity extends Activity {
                     @Override
                     public void onClick(View v) {
                         clickFeedback();
-                        fetchSoulseekResults(q);
+                        if (requireInternet(R.string.soulseek_wifi_required)) {
+                            fetchSoulseekResults(q);
+                        }
                     }
                 });
                 containerBrowserItems.addView(b);
@@ -11788,14 +15280,7 @@ public class MainActivity extends Activity {
     }
 
     private void replaceReachFileInQueue(File oldF, File newF) {
-        List<File> pl = playback.musicPlaylist();
-        for (int i = 0; i < pl.size(); i++) {
-            if (oldF.equals(pl.get(i))) pl.set(i, newF);
-        }
-        List<File> orig = playback.musicOriginal();
-        for (int i = 0; i < orig.size(); i++) {
-            if (oldF.equals(orig.get(i))) orig.set(i, newF);
-        }
+        playback.replaceReachFileInQueue(oldF, newF, newF != null ? newF.getName() : null);
     }
 
     private void saveReachTrackToLibrary(final File src) {
@@ -11854,8 +15339,23 @@ public class MainActivity extends Activity {
                 || soulseekUiMode == SOULSEEK_UI_ACTION;
     }
 
+    private boolean isTransientReachError(String msg) {
+        if (msg == null || msg.isEmpty()) return false;
+        String lower = msg.toLowerCase(Locale.US);
+        if (lower.contains("eof") || lower.contains("socket")
+                || lower.contains("disconnected") || lower.contains("econnreset")
+                || lower.contains("not connected") || lower.contains("connection reset")) {
+            return true;
+        }
+        return "EOFException".equals(msg) || "SocketException".equals(msg)
+                || "SocketTimeoutException".equals(msg);
+    }
+
     private String humanizeSoulseekError(String msg) {
         if (msg == null || msg.isEmpty()) return getString(R.string.soulseek_error_unknown);
+        if (isTransientReachError(msg)) {
+            return getString(R.string.soulseek_error_server_unreachable);
+        }
         if (msg.contains("EMFILE") || msg.contains("Too many peer")) {
             return getString(R.string.reach_error_too_many_peers);
         }
@@ -12007,6 +15507,7 @@ public class MainActivity extends Activity {
         stopSoulseekDownloadUiRunnables();
         prepareSoulseekBrowserChrome();
         browserStatusTitle = action == SOULSEEK_ACTION_PLAY ? getString(R.string.status_buffering)
+                : action == SOULSEEK_ACTION_QUEUE ? getString(R.string.status_queuing)
                 : getString(R.string.status_downloading);
         updateStatusBarTitle();
         if (tvBrowserPath != null) {
@@ -12017,12 +15518,6 @@ public class MainActivity extends Activity {
         Button titleRow = createListButton(r.title());
         titleRow.setEnabled(false);
         containerBrowserItems.addView(titleRow);
-
-        Button peerRow = createListButton(getString(R.string.soulseek_download_from, r.username)
-                + (r.size > 0 ? " · " + formatSoulseekSize(r.size) : "")
-                + (r.freeSlot ? " · " + getString(R.string.soulseek_slot_free) : ""));
-        peerRow.setEnabled(false);
-        containerBrowserItems.addView(peerRow);
 
         int hPad = (int) (10 * getResources().getDisplayMetrics().density);
         LinearLayout progressRow = new LinearLayout(this);
@@ -12045,9 +15540,7 @@ public class MainActivity extends Activity {
         soulseekDownloadPercentText.setTextColor(y1RowTextColorNormal(y1RowKindForScreen()));
         soulseekDownloadPercentText.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX,
                 getResources().getDimension(R.dimen.y1_menu_text_size));
-        soulseekDownloadPercentText.setText(action == SOULSEEK_ACTION_PLAY
-                ? getString(R.string.soulseek_buffering, 0)
-                : getString(R.string.soulseek_download_progress, 0));
+        soulseekDownloadPercentText.setText(reachDownloadPercentLabel(action, 0));
         progressRow.addView(soulseekDownloadPercentText);
         containerBrowserItems.addView(progressRow);
 
@@ -12056,16 +15549,12 @@ public class MainActivity extends Activity {
         soulseekDownloadDetailText.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX,
                 getResources().getDimension(R.dimen.y1_menu_text_size) * 0.85f);
         soulseekDownloadDetailText.setPadding(hPad, 0, hPad, hPad / 2);
-        String totalLabel = r.size > 0 ? formatSoulseekSize(r.size) : "?";
-        soulseekDownloadDetailText.setText(getString(R.string.soulseek_download_detail,
-                "0 B", totalLabel, getString(R.string.soulseek_download_speed_unknown),
-                getString(R.string.soulseek_download_eta_pending)));
+        soulseekDownloadDetailText.setText(formatSoulseekDownloadStatusLine(
+                formatSoulseekDownloadPhase(soulseekDownloadPhase, soulseekDownloadPhaseDetail),
+                getString(R.string.soulseek_download_speed_unknown)));
         containerBrowserItems.addView(soulseekDownloadDetailText);
 
-        soulseekDownloadStatusRow = createListButton(formatSoulseekDownloadPhase(
-                soulseekDownloadPhase, soulseekDownloadPhaseDetail));
-        soulseekDownloadStatusRow.setEnabled(false);
-        containerBrowserItems.addView(soulseekDownloadStatusRow);
+        soulseekDownloadStatusRow = null;
 
         soulseekTryAnotherRow = createListButton(getString(R.string.soulseek_try_another_result));
         soulseekTryAnotherRow.setVisibility(View.GONE);
@@ -12147,6 +15636,22 @@ public class MainActivity extends Activity {
         return phase;
     }
 
+    private String reachDownloadPercentLabel(int action, int pct) {
+        if (action == SOULSEEK_ACTION_PLAY) {
+            return getString(R.string.soulseek_buffering, pct);
+        }
+        if (action == SOULSEEK_ACTION_QUEUE) {
+            return getString(R.string.soulseek_queue_progress, pct);
+        }
+        return getString(R.string.soulseek_download_progress, pct);
+    }
+
+    private String formatSoulseekDownloadStatusLine(String phaseLine, String statsLine) {
+        if (phaseLine == null || phaseLine.length() == 0) return statsLine != null ? statsLine : "";
+        if (statsLine == null || statsLine.length() == 0) return phaseLine;
+        return getString(R.string.soulseek_download_status, phaseLine, statsLine);
+    }
+
     private void updateSoulseekDownloadStatusUi() {
         if (soulseekUiMode != SOULSEEK_UI_DOWNLOAD || soulseekActiveDownload == null) return;
         long elapsed = android.os.SystemClock.uptimeMillis() - soulseekDownloadStartMs;
@@ -12157,18 +15662,11 @@ public class MainActivity extends Activity {
         }
         if (soulseekDownloadStalled && soulseekDownloadLastDone <= 0) {
             phaseLine = getString(R.string.soulseek_stall_hint, formatSoulseekElapsed(elapsed))
-                    + "\n" + phaseLine;
+                    + " · " + phaseLine;
         }
-        if (soulseekDownloadStatusRow != null) soulseekDownloadStatusRow.setText(phaseLine);
-        if (tvBrowserPath != null) {
-            int pct = soulseekDownloadProgressBar != null ? soulseekDownloadProgressBar.getProgress() : 0;
-            String verb = soulseekPendingAction == SOULSEEK_ACTION_PLAY ? "Buffering" : "Downloading";
-            if (pct > 0) {
-                tvBrowserPath.setText(getString(R.string.path_soulseek_action,
-                        verb, soulseekActiveDownload.title(), pct));
-            } else {
-                tvBrowserPath.setText(getString(R.string.path_soulseek, phaseLine.replace('\n', ' ')));
-            }
+        if (soulseekDownloadDetailText != null && soulseekDownloadLastDone <= 0) {
+            soulseekDownloadDetailText.setText(formatSoulseekDownloadStatusLine(phaseLine,
+                    getString(R.string.soulseek_download_speed_unknown)));
         }
     }
 
@@ -12224,24 +15722,84 @@ public class MainActivity extends Activity {
                 && soulseekClient != null && soulseekClient.isTransferActive();
     }
 
+    private void clearReachStreamAlbumArt() {
+        lastAlbumArtBytes = null;
+        if (ivAlbumArt != null) ivAlbumArt.setImageResource(R.drawable.default_album);
+        if (ivPlayerBgBlur != null) ivPlayerBgBlur.setImageResource(0);
+    }
+
+    private void tryReachId3FromPartial(File partial) {
+        applyReachId3Metadata(partial);
+    }
+
+    private void applyReachId3Metadata(File partial) {
+        if (partial == null || !partial.isFile() || partial.length() < REACH_ID3_MIN_BYTES) return;
+        try {
+            MediaMetadataRetriever mmr = new MediaMetadataRetriever();
+            java.io.FileInputStream fis = new java.io.FileInputStream(partial);
+            mmr.setDataSource(fis.getFD());
+            String t = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE);
+            String a = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST);
+            byte[] art = mmr.getEmbeddedPicture();
+            fis.close();
+            mmr.release();
+            if (t != null && !t.trim().isEmpty()) {
+                tvPlayerTitle.setText(reachProgressPrefix(reachDownloadPercentForFile(partial))
+                        + stripReachProgressPrefix(t));
+            }
+            if (a != null && !a.trim().isEmpty()) {
+                tvPlayerArtist.setText(a);
+            } else {
+                clearReachLoadingArtistLabel();
+            }
+            if (art != null && art.length > 0) {
+                lastAlbumArtBytes = art;
+                applyReachStreamCoverArt();
+            }
+            refreshNowPlayingPreview();
+        } catch (Exception ignored) {}
+    }
+
+    private void applyReachStreamCoverArt() {
+        if (lastAlbumArtBytes == null || lastAlbumArtBytes.length == 0) return;
+        try {
+            BitmapFactory.Options optsCenter = new BitmapFactory.Options();
+            optsCenter.inSampleSize = 2;
+            Bitmap bmpCenter = BitmapFactory.decodeByteArray(lastAlbumArtBytes, 0, lastAlbumArtBytes.length, optsCenter);
+            if (ivAlbumArt != null) ivAlbumArt.setImageBitmap(bmpCenter);
+            if (playerAlbumBlurEnabled) {
+                BitmapFactory.Options optsBg = new BitmapFactory.Options();
+                optsBg.inSampleSize = 4;
+                Bitmap sourceBg = BitmapFactory.decodeByteArray(lastAlbumArtBytes, 0, lastAlbumArtBytes.length, optsBg);
+                if (sourceBg != null && ivPlayerBgBlur != null) {
+                    Bitmap blurredBg = applyGaussianBlur(sourceBg);
+                    ivPlayerBgBlur.setImageBitmap(blurredBg);
+                    if (sourceBg != blurredBg) sourceBg.recycle();
+                }
+            }
+            updateMainMenuBackground();
+            refreshNowPlayingPreview();
+        } catch (Exception ignored) {}
+    }
+
     private void startReachPlayFromPartial(File partial) {
         saveCurrentPodcastResume();
         stopPodcastDownloadFully();
-        List<File> one = new ArrayList<File>();
-        one.add(partial);
-        playback.activateMusic(one, 0, isShuffleMode);
-        playback.setMusicActivePlaylistName(null);
+        clearReachStreamAlbumArt();
+        playback.playReachAfterCurrent(partial, partial.getName());
         purgeUnreferencedReachCache();
-        if (!playback.musicPlaylist().isEmpty()) {
-            tvPlayerTitle.setText(partial.getName());
-            tvPlayerArtist.setText(getString(R.string.reach_buffering_track));
-            playerProgress.setProgress(0);
-            tvPlayerTimeCurrent.setText("00:00");
-            tvPlayerTimeTotal.setText("00:00");
-            updateMusicTrackCountUi();
-        }
+        String reachBase = partial.getName();
+        int dot = reachBase.lastIndexOf('.');
+        if (dot > 0) reachBase = reachBase.substring(0, dot);
+        tvPlayerTitle.setText(reachProgressPrefix(reachDownloadPercentForFile(partial)) + reachBase);
+        tvPlayerArtist.setText(getString(R.string.reach_buffering_track));
+        playerProgress.setProgress(0);
+        tvPlayerTimeCurrent.setText("00:00");
+        tvPlayerTimeTotal.setText("00:00");
+        updateMusicTrackCountUi();
         isPausedByHand = false;
-        playerReturnScreen = STATE_SOULSEEK;
+        playerReturnScreen = currentScreenState;
+        persistPlaybackQueue();
         applyScreenChange(STATE_PLAYER);
         startReachFromGrowingFile(partial, 0);
     }
@@ -12330,7 +15888,7 @@ public class MainActivity extends Activity {
                     updatePlayerStatusIndicators();
                     clearReachLoadingArtistLabel();
                     if (reachDownloadInProgress()) {
-                        progressHandler.postDelayed(reachGrowingEdgePoll, 300);
+                        progressHandler.postDelayed(reachGrowingEdgePoll, 150);
                     }
                 }
             });
@@ -12550,6 +16108,8 @@ public class MainActivity extends Activity {
     }
 
     private void updateReachPlayerBufferUi(int pct, long done, long total) {
+        soulseekActiveDownloadPercent = pct;
+        refreshReachPlayerTitleProgress();
         if (tvPlayerArtist == null) return;
         if (pct >= 95 || !reachDownloadInProgress()) {
             clearReachLoadingArtistLabel();
@@ -12572,34 +16132,24 @@ public class MainActivity extends Activity {
     }
 
     private void confirmStopReachDownload(final Runnable onConfirmed) {
-        dismissThemedContextMenu();
-        final String title = getString(R.string.reach_stop_download_title);
-        final String body = getString(R.string.reach_stop_download_message);
-        final String confirm = getString(R.string.reach_stop_download_confirm);
-        final String cancel = getString(R.string.common_cancel);
-        String[] labels = new String[] { confirm, cancel };
-        String[] iconKeys = new String[] { null, null };
-        String[] stateTexts = new String[] { null, null };
-        boolean[] headers = new boolean[] { false, false };
-        ViewGroup root = (ViewGroup) findViewById(android.R.id.content);
-        int margin = (int) (10 * getResources().getDisplayMetrics().density);
-        int panelW = screenWidthPx > margin * 2 ? screenWidthPx - margin * 2 : y1ActiveRowWidthPx();
-        themedContextMenu.show(root, title + "\n" + body, labels, iconKeys, stateTexts, headers,
-                new ThemedContextMenu.Listener() {
+        showThemedConfirm(
+                getString(R.string.reach_stop_download_title),
+                getString(R.string.reach_stop_download_message),
+                getString(R.string.reach_stop_download_confirm),
+                getString(R.string.common_cancel),
+                new Runnable() {
                     @Override
-                    public void onSelected(final int index) {
-                        suppressListClickUntil = System.currentTimeMillis() + CONTEXT_MENU_CLICK_SUPPRESS_MS;
-                        dismissThemedContextMenu();
-                        if (index == 0) {
-                            clickFeedback();
-                            cancelReachDownloadIfAny(false);
-                            if (onConfirmed != null) onConfirmed.run();
-                        } else {
-                            pendingScreenChange = -1;
-                        }
+                    public void run() {
+                        cancelReachDownloadIfAny(false);
+                        if (onConfirmed != null) onConfirmed.run();
                     }
-                }, y1RowHeightPx, panelW, false);
-        clickFeedback();
+                },
+                new Runnable() {
+                    @Override
+                    public void run() {
+                        pendingScreenChange = -1;
+                    }
+                });
     }
 
     /** @param confirm when true, ask before cancelling an active transfer */
@@ -12678,11 +16228,11 @@ public class MainActivity extends Activity {
     }
 
     private void updateSoulseekDownloadProgress(int pct, long done, long total) {
+        soulseekActiveDownloadPercent = pct;
+        refreshReachProgressUi();
         if (soulseekDownloadProgressBar != null) soulseekDownloadProgressBar.setProgress(pct);
         if (soulseekDownloadPercentText != null) {
-            soulseekDownloadPercentText.setText(soulseekPendingAction == SOULSEEK_ACTION_PLAY
-                    ? getString(R.string.soulseek_buffering, pct)
-                    : getString(R.string.soulseek_download_progress, pct));
+            soulseekDownloadPercentText.setText(reachDownloadPercentLabel(soulseekPendingAction, pct));
         }
         if (soulseekDownloadDetailText != null) {
             long now = android.os.SystemClock.uptimeMillis();
@@ -12708,12 +16258,10 @@ public class MainActivity extends Activity {
             }
             String doneLabel = formatSoulseekSize(done);
             String totalLabel = total > 0 ? formatSoulseekSize(total) : "?";
-            soulseekDownloadDetailText.setText(getString(R.string.soulseek_download_detail,
-                    doneLabel, totalLabel, speed, eta));
-        }
-        if (tvBrowserPath != null && soulseekActiveDownload != null) {
-            String verb = soulseekPendingAction == SOULSEEK_ACTION_PLAY ? "Buffering" : "Downloading";
-            tvBrowserPath.setText(getString(R.string.path_soulseek_action, verb, soulseekActiveDownload.title(), pct));
+            String stats = getString(R.string.soulseek_download_detail,
+                    doneLabel, totalLabel, speed, eta);
+            String phaseLine = formatSoulseekDownloadPhase(soulseekDownloadPhase, soulseekDownloadPhaseDetail);
+            soulseekDownloadDetailText.setText(formatSoulseekDownloadStatusLine(phaseLine, stats));
         }
     }
 
@@ -12771,7 +16319,7 @@ public class MainActivity extends Activity {
     private boolean soulseekResultAllowed(SoulseekClient.Result r) {
         if (r == null) return false;
         if (soulseekClient != null && soulseekClient.isPeerDenied(r.username)) return false;
-        if (soulseekHideFlac && SoulseekClient.Result.isFlacFile(r.filename)) return false;
+        if (soulseekHideHighBitrate && r.isOverBitrateThreshold()) return false;
         return true;
     }
 
@@ -12909,6 +16457,10 @@ public class MainActivity extends Activity {
         new Thread(new Runnable() {
             @Override
             public void run() {
+                customLibrary.clear();
+                invalidateSongPathIndex();
+                libraryScanPaths.clear();
+                libraryScanMetaKeys.clear();
                 buildCustomLibrary(rootFolder);
                 runOnUiThread(new Runnable() {
                     @Override
@@ -13602,11 +17154,25 @@ public class MainActivity extends Activity {
         }
     }
 
+    /** True when Solar lives under /system/app (OTA must replace that APK, not pm install). */
+    private boolean shouldReplaceSystemApk() {
+        if (isInstalledAsSystemApp()) return true;
+        return new File(SYSTEM_APK_PATH).exists();
+    }
+
+    private boolean systemApkMatchesDownload(File apkFile) {
+        if (apkFile == null || !apkFile.isFile()) return false;
+        File dest = new File(SYSTEM_APK_PATH);
+        return dest.isFile() && dest.length() == apkFile.length();
+    }
+
     private boolean installSystemApk(File apkFile) {
-        if (installSystemApkViaBundledScript(apkFile)) return true;
+        if (installSystemApkViaBundledScript(apkFile)) {
+            return true;
+        }
         String cmd = "mount -o remount,rw /system && cp "
                 + shQuote(apkFile.getAbsolutePath()) + " " + shQuote(SYSTEM_APK_PATH)
-                + " && chmod 644 " + shQuote(SYSTEM_APK_PATH) + " && sync";
+                + " && chmod 644 " + shQuote(SYSTEM_APK_PATH) + " && sync && reboot";
         return runSuCommandSilently(cmd);
     }
 
@@ -13635,13 +17201,117 @@ public class MainActivity extends Activity {
         }
     }
 
+    private void finishDownloadAndInstall(final File apkFile, final SolarUpdateClient.ReleaseInfo release) {
+        if (shouldReplaceSystemApk()) {
+            beginSystemApkReplaceWithOverlay(apkFile, release);
+        } else {
+            dismissThemedContextMenu();
+            installApk(apkFile, release);
+        }
+    }
+
+    /**
+     * System APK replace via bundled su script — upgrade, downgrade, sidegrade, or channel change.
+     * Keeps app data; shows reboot ETA overlay through install and reboot.
+     */
+    private void beginSystemApkReplaceWithOverlay(final File apkFile, final SolarUpdateClient.ReleaseInfo release) {
+        if (apkFile == null || !apkFile.isFile()) {
+            dismissThemedContextMenu();
+            Toast.makeText(this, getString(R.string.toast_install_failed), Toast.LENGTH_SHORT).show();
+            return;
+        }
+        int localCode = AppVersion.installedVersionCode(this);
+        String localName = AppVersion.installedVersionName(this);
+        if (release != null && release.matchesInstalled(localCode, localName)) {
+            dismissThemedContextMenu();
+            Toast.makeText(this, getString(R.string.update_already_installed), Toast.LENGTH_SHORT).show();
+            return;
+        }
+        otaSystemReplaceInProgress = true;
+        clockHandler.removeCallbacks(clockTask);
+        progressHandler.removeCallbacks(updateProgressTask);
+        final ViewGroup root = (ViewGroup) findViewById(android.R.id.content);
+        if (themedContextMenu != null && root != null) {
+            themedContextMenu.showInstallStatusOverlay(root,
+                    getString(R.string.update_device_restarting),
+                    getString(R.string.update_reboot_eta));
+        }
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    Thread.sleep(500);
+                } catch (InterruptedException ignored) {}
+                final boolean ok = installSystemApk(apkFile);
+                final boolean replaced = ok || systemApkMatchesDownload(apkFile);
+                if (replaced) {
+                    runSuCommandSilently("reboot");
+                    return;
+                }
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        otaSystemReplaceInProgress = false;
+                        clockHandler.post(clockTask);
+                        dismissThemedContextMenu();
+                        Toast.makeText(MainActivity.this, getString(R.string.toast_install_failed),
+                                Toast.LENGTH_LONG).show();
+                    }
+                });
+            }
+        }, "SolarSystemApkInstall").start();
+    }
+
+    private void scheduleStartupUpdateNudge() {
+        if (!BuildConfig.FEATURE_OTA_UPDATE) return;
+        long now = System.currentTimeMillis();
+        long last = prefs.getLong(PREF_UPDATE_NUDGE_TS, 0);
+        if (now - last < 24L * 60 * 60 * 1000) return;
+        if (!ConnectivityHelper.isOnline(this)) return;
+        prefs.edit().putLong(PREF_UPDATE_NUDGE_TS, now).apply();
+        final int localCode = AppVersion.installedVersionCode(this);
+        final String localName = AppVersion.installedVersionName(this);
+        final boolean nightlyChannel = AppVersion.isNightlyInstall(this);
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    List<SolarUpdateClient.ReleaseInfo> releases =
+                            SolarUpdateClient.fetchUpdates(SolarUpdateClient.DEFAULT_UPDATES_URL);
+                    final SolarUpdateClient.ReleaseInfo latest = nightlyChannel
+                            ? SolarUpdateClient.latestNightly(releases)
+                            : SolarUpdateClient.latestStable(releases);
+                    if (latest == null) return;
+                    if (!latest.isNewerThan(localCode, localName)) return;
+                    runOnUiThread(new Runnable() {
+                        @Override
+                        public void run() {
+                            if (currentScreenState != STATE_MENU) return;
+                            showThemedConfirm(
+                                    getString(R.string.update_available_title),
+                                    getString(R.string.update_available_message, latest.listLabel()),
+                                    getString(R.string.update_install),
+                                    getString(R.string.update_later),
+                                    new Runnable() {
+                                        @Override
+                                        public void run() {
+                                            downloadAndInstallApk(latest);
+                                        }
+                                    });
+                        }
+                    });
+                } catch (Exception ignored) {}
+            }
+        }, "SolarStartupNudge").start();
+    }
+
     private void rebootDeviceSilently() {
         new Handler().postDelayed(new Runnable() {
             @Override
             public void run() {
                 runSuCommandSilently("reboot");
             }
-        }, 1500);
+        }, 400);
     }
 
     private boolean installViaPackageManager(File apkFile, boolean allowDowngrade) {
@@ -13662,13 +17332,8 @@ public class MainActivity extends Activity {
                 Toast.makeText(this, getString(R.string.toast_install_failed), Toast.LENGTH_SHORT).show();
                 return;
             }
-            int localCode = BuildConfig.VERSION_CODE;
-            String localName = BuildConfig.VERSION_NAME;
-            try {
-                android.content.pm.PackageInfo pInfo = getPackageManager().getPackageInfo(getPackageName(), 0);
-                localCode = pInfo.versionCode;
-                localName = pInfo.versionName;
-            } catch (Exception ignored) {}
+            int localCode = AppVersion.installedVersionCode(this);
+            String localName = AppVersion.installedVersionName(this);
             SolarUpdateClient.InstallRelation relation = release != null
                     ? release.compareToInstalled(localCode, localName)
                     : SolarUpdateClient.InstallRelation.UPGRADE;
@@ -13678,23 +17343,13 @@ public class MainActivity extends Activity {
                 return;
             }
 
-            boolean systemApp = isInstalledAsSystemApp();
-            boolean tryPmFirst = !systemApp || relation == SolarUpdateClient.InstallRelation.UPGRADE;
-            boolean allowDowngrade = relation == SolarUpdateClient.InstallRelation.DOWNGRADE
-                    || relation == SolarUpdateClient.InstallRelation.SIDEGRADE;
-
-            if (tryPmFirst && installViaPackageManager(apkFile, allowDowngrade)) {
-                Toast.makeText(this, getString(R.string.toast_install_ok), Toast.LENGTH_SHORT).show();
+            boolean systemApp = shouldReplaceSystemApk();
+            if (systemApp) {
+                beginSystemApkReplaceWithOverlay(apkFile, release);
                 return;
             }
 
-            if (systemApp && installSystemApk(apkFile)) {
-                Toast.makeText(this, getString(R.string.toast_install_reboot), Toast.LENGTH_LONG).show();
-                rebootDeviceSilently();
-                return;
-            }
-
-            if (!systemApp && installViaPackageManager(apkFile, true)) {
+            if (installViaPackageManager(apkFile, true)) {
                 Toast.makeText(this, getString(R.string.toast_install_ok), Toast.LENGTH_SHORT).show();
                 return;
             }
@@ -13732,9 +17387,8 @@ public class MainActivity extends Activity {
         isPausedByHand = false;
         changeScreen(STATE_PLAYER);
         prepareMusicTrack(playback.musicIndex());
+        persistPlaybackQueue();
     }
-
-    // 💡 2. 기존 폴더 방식의 플레이리스트 생성기 (playTrackList를 부르도록 개조됨)
     private void setupFolderPlaylist(File selectedFile) {
         List<File> list = new ArrayList<>();
         File[] files = currentFolder.listFiles();
@@ -13833,12 +17487,16 @@ public class MainActivity extends Activity {
                     } catch (Exception e) {
                         currentAlbumColor = ThemeManager.getListButtonFocusedBg() | 0xFF000000;
                     }
-                    android.graphics.BitmapFactory.Options optsBg = new android.graphics.BitmapFactory.Options();
-                    optsBg.inSampleSize = 4;
-                    android.graphics.Bitmap sourceBg = android.graphics.BitmapFactory.decodeByteArray(lastAlbumArtBytes, 0, lastAlbumArtBytes.length, optsBg);
-                    android.graphics.Bitmap blurredBg = applyGaussianBlur(sourceBg);
-                    ivPlayerBgBlur.setImageBitmap(blurredBg);
-                    if (sourceBg != blurredBg) sourceBg.recycle();
+                    if (playerAlbumBlurEnabled) {
+                        android.graphics.BitmapFactory.Options optsBg = new android.graphics.BitmapFactory.Options();
+                        optsBg.inSampleSize = 4;
+                        android.graphics.Bitmap sourceBg = android.graphics.BitmapFactory.decodeByteArray(lastAlbumArtBytes, 0, lastAlbumArtBytes.length, optsBg);
+                        android.graphics.Bitmap blurredBg = applyGaussianBlur(sourceBg);
+                        ivPlayerBgBlur.setImageBitmap(blurredBg);
+                        if (sourceBg != blurredBg) sourceBg.recycle();
+                    } else {
+                        ivPlayerBgBlur.setImageResource(0);
+                    }
                 } catch (Throwable e) {}
 
             } else if (coverFile.exists()) {
@@ -13958,6 +17616,7 @@ public class MainActivity extends Activity {
                         if (!isPausedByHand) {
                             mp.start();
                         }
+                        syncNowPlayingHomeVisibility();
                         updatePlayerUI();
                     } catch (Exception ignored) {}
                 }
@@ -14171,6 +17830,23 @@ public class MainActivity extends Activity {
 
     private void playOrPauseMusic() {
         try {
+            // #region agent log
+            boolean mpNull = mediaPlayer == null;
+            boolean musicEmpty = !playback.isPodcastActive() && playback.musicPlaylist().isEmpty();
+            boolean podEmpty = playback.isPodcastActive() && playback.podcastQueue().isEmpty();
+            boolean playing = !mpNull && mediaPlayer.isPlaying();
+            try {
+                org.json.JSONObject d = new org.json.JSONObject();
+                d.put("mpNull", mpNull);
+                d.put("musicEmpty", musicEmpty);
+                d.put("podEmpty", podEmpty);
+                d.put("wasPlaying", playing);
+                d.put("contextMenu", themedContextMenu != null && themedContextMenu.isShowing());
+                d.put("queueTier", contextMenuInQueueTier);
+                DebugAgentLog.log(this, "MainActivity.playOrPauseMusic",
+                        "playOrPauseMusic entry", "H7", d);
+            } catch (Exception ignored) {}
+            // #endregion
             if (mediaPlayer == null) return;
             if (!playback.isPodcastActive() && playback.musicPlaylist().isEmpty()) return;
             if (playback.isPodcastActive() && playback.podcastQueue().isEmpty()) return;
@@ -14190,31 +17866,47 @@ public class MainActivity extends Activity {
     private void nextTrack() {
         lastTrackChangeTime = System.currentTimeMillis();
         finalizeReachStreamHandoff();
-        if (playback.isPodcastActive()) {
-            if (playback.podcastQueue().isEmpty()) return;
-            int next = (playback.podcastIndex() + 1) % playback.podcastQueue().size();
-            preparePodcastEpisode(next);
+        int next = playback.nextIndex(repeatMode > 0);
+        if (next < 0) {
+            if (repeatMode == 0) {
+                try {
+                    if (mediaPlayer != null && mediaPlayer.isPlaying()) {
+                        mediaPlayer.pause();
+                        isPausedByHand = true;
+                        updatePlayerUI();
+                    }
+                } catch (Exception ignored) {}
+                persistPlaybackQueue();
+            }
             return;
         }
-        if (playback.musicPlaylist().isEmpty())
-            return;
-        playback.setMusicIndex((playback.musicIndex() + 1) % playback.musicPlaylist().size());
-        prepareMusicTrack(playback.musicIndex());
+        playback.setQueueIndex(next);
+        PlayQueue.QueueItem item = playback.currentItem();
+        if (item == null) return;
+        if (item.kind == PlayQueue.ItemKind.PODCAST_EPISODE) {
+            preparePodcastEpisode(playback.podcastIndex());
+        } else {
+            prepareMusicTrack(playback.musicIndex());
+        }
+        persistPlaybackQueue();
+        refreshContextQueueTierIfOpen();
     }
 
     private void prevTrack() {
         lastTrackChangeTime = System.currentTimeMillis();
         finalizeReachStreamHandoff();
-        if (playback.isPodcastActive()) {
-            if (playback.podcastQueue().isEmpty()) return;
-            int prev = (playback.podcastIndex() - 1 + playback.podcastQueue().size()) % playback.podcastQueue().size();
-            preparePodcastEpisode(prev);
-            return;
+        int prev = playback.prevIndex(repeatMode > 0);
+        if (prev < 0) return;
+        playback.setQueueIndex(prev);
+        PlayQueue.QueueItem item = playback.currentItem();
+        if (item == null) return;
+        if (item.kind == PlayQueue.ItemKind.PODCAST_EPISODE) {
+            preparePodcastEpisode(playback.podcastIndex());
+        } else {
+            prepareMusicTrack(playback.musicIndex());
         }
-        if (playback.musicPlaylist().isEmpty())
-            return;
-        playback.setMusicIndex((playback.musicIndex() - 1 + playback.musicPlaylist().size()) % playback.musicPlaylist().size());
-        prepareMusicTrack(playback.musicIndex());
+        persistPlaybackQueue();
+        refreshContextQueueTierIfOpen();
     }
 
     private boolean isMediaNextKey(int keyCode) {
@@ -14234,10 +17926,20 @@ public class MainActivity extends Activity {
                 || keyCode == KeyEvent.KEYCODE_MEDIA_STOP || keyCode == 86;
     }
 
+    /** Prev/next/play-pause while context menu is open; wheel volume stays on volume tier only. */
+    private boolean handleContextMenuMediaKeyDown(int keyCode, KeyEvent event) {
+        if (isMediaPlayPauseKey(keyCode)) {
+            return false;
+        }
+        if (isMediaSkipKey(keyCode)) {
+            return handleMediaSkipKeyDown(keyCode, event);
+        }
+        return false;
+    }
+
     private boolean hasActiveMediaPlayback() {
         if (mediaPlayer == null) return false;
-        if (playback.isPodcastActive() && !playback.podcastQueue().isEmpty()) return true;
-        return !playback.musicPlaylist().isEmpty();
+        return playback.hasAnyQueue();
     }
 
     private int playbackDurationForScrub() {
@@ -14481,7 +18183,16 @@ public class MainActivity extends Activity {
         else if (!up && currentVol > 0)
             currentVol--;
         audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, currentVol, 0);
-        showDynamicVolumeOverlay();
+        if (currentScreenState == STATE_PLAYER) {
+            if (themedContextMenu != null && themedContextMenu.isShowing() && contextMenuInVolumeSlider
+                    && !contextMenuVolumeOnly) {
+                refreshContextVolumeSliderUi();
+            } else {
+                showPlayerVolumeContextOverlay();
+            }
+        } else {
+            showDynamicVolumeOverlay();
+        }
     }
 
     private void showDynamicVolumeOverlay() {
@@ -14489,7 +18200,7 @@ public class MainActivity extends Activity {
         layoutVolumeOverlay.setVisibility(View.VISIBLE);
         volumeProgress.setProgress(currentVol);
         volumeHandler.removeCallbacks(hideVolumeTask);
-        volumeHandler.postDelayed(hideVolumeTask, 2000);
+        volumeHandler.postDelayed(hideVolumeTask, VOLUME_CONTEXT_DISMISS_MS);
     }
 
     private String formatTime(int ms) {
@@ -14498,8 +18209,77 @@ public class MainActivity extends Activity {
         return String.format(Locale.US, "%02d:%02d", m, s);
     }
 
+    private boolean handleThemedContextMenuKeyDown(int keyCode, KeyEvent event) {
+        if (themedContextMenu == null || !themedContextMenu.isShowing()) return false;
+        if (keyCode == 21 || keyCode == 22) {
+            if (contextMenuInQueueTier && contextQueueMoveFrom >= 0
+                    && themedContextMenu.focusZone() == ThemedContextMenu.FocusZone.TIER_CONTENT) {
+                int delta = mapWheelToMenuMove(keyCode);
+                if (delta != 0) {
+                    if (!contextQueueMoveWheelFilter.accept()) {
+                        return true;
+                    }
+                    int newIdx = nextContextQueueMoveIndex(contextQueueMoveFrom, delta);
+                    if (newIdx != contextQueueMoveFrom) {
+                        applyContextQueueMove(contextQueueMoveFrom, newIdx);
+                    }
+                    return true;
+                }
+            }
+            if (isContextVolumeQuickBarFocused()) {
+                adjustVolume(keyCode == 22);
+                refreshContextMediaSlidersUi();
+                clickFeedback();
+                return true;
+            }
+            if (isContextBrightnessQuickBarFocused()) {
+                adjustContextBrightness(keyCode == 22);
+                clickFeedback();
+                return true;
+            }
+            if (contextMenuInVolumeSlider && audioManager != null
+                    && (themedContextMenu.isVolumeOnlyMode()
+                    || themedContextMenu.focusZone() == ThemedContextMenu.FocusZone.SLIDER)) {
+                adjustVolume(keyCode == 22);
+                refreshContextVolumeSliderUi();
+                clickFeedback();
+                return true;
+            }
+            if (themedContextMenu.handleKeyHorizontal(keyCode)) {
+                syncContextVolumeSliderWithFocus();
+                clickFeedback();
+                return true;
+            }
+        }
+        if (keyCode == 21) {
+            themedContextMenu.moveFocus(-1);
+            syncContextVolumeSliderWithFocus();
+            if (contextMenuInQueueTier) contextQueueFocusIndex = themedContextMenu.focusIndex();
+            clickFeedback();
+            return true;
+        }
+        if (keyCode == 22) {
+            themedContextMenu.moveFocus(1);
+            syncContextVolumeSliderWithFocus();
+            if (contextMenuInQueueTier) contextQueueFocusIndex = themedContextMenu.focusIndex();
+            clickFeedback();
+            return true;
+        }
+        if (keyCode == KeyEvent.KEYCODE_BACK) {
+            return handleBackKeyDown(event);
+        }
+        if (handleContextMenuMediaKeyDown(keyCode, event)) {
+            return true;
+        }
+        if (isMediaPlayPauseKey(keyCode)) {
+            return false;
+        }
+        return true;
+    }
+
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
+        if (handleThemedContextMenuKeyDown(keyCode, event)) return true;
 
         PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
         boolean isScreenOn = true;
@@ -14548,23 +18328,6 @@ public class MainActivity extends Activity {
             return true;
         }
 
-        if (themedContextMenu != null && themedContextMenu.isShowing()) {
-            if (keyCode == 21) {
-                themedContextMenu.moveFocus(-1);
-                clickFeedback();
-                return true;
-            }
-            if (keyCode == 22) {
-                themedContextMenu.moveFocus(1);
-                clickFeedback();
-                return true;
-            }
-            if (keyCode == KeyEvent.KEYCODE_BACK) {
-                return handleBackKeyDown(event);
-            }
-            return true;
-        }
-
         if (keyCode == KeyEvent.KEYCODE_BACK) {
             return handleBackKeyDown(event);
         }
@@ -14573,10 +18336,26 @@ public class MainActivity extends Activity {
             if (isMediaSkipKey(keyCode)) {
                 if (event.getRepeatCount() == 0) {
                     keyboardMediaSkipDownAt = System.currentTimeMillis();
+                    if (isMediaPrevKey(keyCode)) {
+                        keyboardPrevDelRepeatActive = true;
+                        clockHandler.removeCallbacks(keyboardPrevDelRepeatRunnable);
+                        clockHandler.postDelayed(keyboardPrevDelRepeatRunnable, MEDIA_SKIP_LONG_PRESS_MS);
+                    }
                 }
                 return true;
             }
             if (isMediaPlayPauseKey(keyCode)) {
+                // #region agent log
+                if (event.getRepeatCount() == 0) {
+                    try {
+                        org.json.JSONObject d = new org.json.JSONObject();
+                        d.put("keyCode", keyCode);
+                        d.put("repeat", event.getRepeatCount());
+                        DebugAgentLog.log(this, "MainActivity.onKeyDown",
+                                "keyboard pp down", "H1", d);
+                    } catch (Exception ignored) {}
+                }
+                // #endregion
                 if (event.getRepeatCount() == 0) {
                     keyboardPpDownAt = System.currentTimeMillis();
                     keyboardPpLongHandled = false;
@@ -14604,9 +18383,7 @@ public class MainActivity extends Activity {
 
         if (keyCode == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE || keyCode == 85 || keyCode == KeyEvent.KEYCODE_MEDIA_STOP
                 || keyCode == 86) {
-            if (event.getRepeatCount() == 0) {
-                playOrPauseMusic();
-            }
+            if (handlePlayPauseKeyDown(event)) return true;
             return true;
         }
 
@@ -14616,6 +18393,10 @@ public class MainActivity extends Activity {
         }
 
         if (currentScreenState == STATE_PLAYER) {
+            if (themedContextMenu != null && themedContextMenu.isShowing()
+                    && (keyCode == 21 || keyCode == 22)) {
+                return true;
+            }
             if (keyCode == 21) {
                 if (playerScrubCursorActive) {
                     movePlayerScrubCursor(-MEDIA_SCRUB_STEP_MS);
@@ -14665,8 +18446,42 @@ public class MainActivity extends Activity {
                 || currentScreenState == STATE_SETTINGS || currentScreenState == STATE_BLUETOOTH
                 || currentScreenState == STATE_WIFI || currentScreenState == STATE_PODCASTS
                 || currentScreenState == STATE_SOULSEEK) {
+            // Playlist move strip replaces the ListView — handle wheel while list is hidden.
+            if (currentScreenState == STATE_BROWSER && isPlaylistMoveActive()) {
+                if (playlistMoveStrip != null && playlistMoveStrip.isAnimating()) return true;
+                int delta = mapWheelToMenuMove(keyCode);
+                if (delta != 0) {
+                    if (!playlistMoveWheelFilter.accept()) return true;
+                    int newIdx = QueueMoveWindow.nextMoveIndex(
+                            playlistMoveFrom, delta, virtualSongList.size());
+                    if (newIdx != playlistMoveFrom) {
+                        applyPlaylistMove(playlistMoveFrom, newIdx);
+                        clickFeedback();
+                    }
+                    return true;
+                }
+            }
             // 🚀 [여기서부터 덮어쓰기!] 초고속 리스트뷰가 켜져있을 때는, 시스템 본연의 부드러운 스크롤 엔진에 휠 신호를 넘깁니다!
             if (currentScreenState == STATE_BROWSER && listVirtualSongs != null && listVirtualSongs.getVisibility() == View.VISIBLE) {
+
+                if (!isFocusValidForCurrentScreen()) {
+                    ensureBrowserListFocus();
+                }
+
+                if (isVirtualPlaylistView() && playlistMoveFrom >= 0) {
+                    if (playlistMoveStrip != null && playlistMoveStrip.isAnimating()) return true;
+                    int delta = mapWheelToMenuMove(keyCode);
+                    if (delta != 0) {
+                        if (!playlistMoveWheelFilter.accept()) return true;
+                        int newIdx = QueueMoveWindow.nextMoveIndex(
+                                playlistMoveFrom, delta, virtualSongList.size());
+                        if (newIdx != playlistMoveFrom) {
+                            applyPlaylistMove(playlistMoveFrom, newIdx);
+                            clickFeedback();
+                        }
+                        return true;
+                    }
+                }
 
                 long now = System.currentTimeMillis();
                 boolean isFastScroll = false;
@@ -14711,6 +18526,9 @@ public class MainActivity extends Activity {
                         }
                     }
                     listVirtualSongs.setSelection(targetPos);
+                    if (targetPos >= 0 && targetPos < currentScrollIndexList.size()) {
+                        showFastScrollLetter(currentScrollIndexList.get(targetPos));
+                    }
                     clickFeedback();
                     return true;
                 } else {
@@ -14729,82 +18547,44 @@ public class MainActivity extends Activity {
                     }
                 }
             }
-            // 🚀 [여기까지 덮어쓰기 완료!]
-            if (currentScreenState == STATE_SETTINGS && isHomeScreenArrangeScreen()
-                    && homeScreenMoveModeId != null) {
-                int delta = mapWheelToMenuMove(keyCode);
-                if (delta != 0) {
-                    List<String> ids = HomeMenuConfig.loadHomeOrderIds(prefs);
-                    int idx = ids.indexOf(homeScreenMoveModeId);
-                    int newIdx = idx + delta;
-                    if (idx >= 0 && newIdx >= 0 && newIdx < ids.size()) {
-                        HomeMenuConfig.move(prefs, idx, newIdx);
-                        buildHomeMenu();
-                        homeScreenOrderFocusIndex = newIdx + 1;
-                        reorderHomeArrangeRows(false);
-                        refreshHomeArrangeMoveUi(false);
-                        restoreHomeScreenEditorFocus(homeScreenOrderFocusIndex);
-                        clickFeedback();
-                    }
-                    return true;
-                }
-            }
-            if (currentScreenState == STATE_SETTINGS && isHomeMoreArrangeScreen()
-                    && homeMoreMoveModeId != null) {
-                int delta = mapWheelToMenuMove(keyCode);
-                if (delta != 0) {
-                    List<String> ids = HomeMenuConfig.loadMoreOrderIds(prefs);
-                    int idx = ids.indexOf(homeMoreMoveModeId);
-                    int newIdx = idx + delta;
-                    if (idx >= 0 && newIdx >= 0 && newIdx < ids.size()) {
-                        HomeMenuConfig.moveMore(prefs, idx, newIdx);
-                        buildHomeMenu();
-                        homeScreenOrderFocusIndex = newIdx + 1;
-                        reorderHomeArrangeRows(true);
-                        refreshHomeArrangeMoveUi(true);
-                        restoreHomeScreenEditorFocus(homeScreenOrderFocusIndex);
-                        clickFeedback();
-                    }
-                    return true;
-                }
-            }
-            if (currentScreenState == STATE_SETTINGS && isMusicQueueEditorScreen()
-                    && musicQueueMoveFrom >= 0) {
-                int delta = mapWheelToMenuMove(keyCode);
-                if (delta != 0) {
-                    int newIdx = nextMusicQueueMoveIndex(musicQueueMoveFrom, delta);
-                    if (newIdx != musicQueueMoveFrom) {
-                        applyMusicQueueMove(musicQueueMoveFrom, newIdx);
-                        clickFeedback();
-                    }
-                    return true;
-                }
-            }
-            if (currentScreenState == STATE_SETTINGS && isMusicQueueEditorScreen()
-                    && musicQueueMoveFrom < 0 && listMusicQueue != null
-                    && listMusicQueue.getVisibility() == View.VISIBLE
-                    && (keyCode == 21 || keyCode == 22)) {
-                if (keyCode == 21) {
-                    listMusicQueue.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_UP));
-                    listMusicQueue.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_UP));
-                } else {
-                    listMusicQueue.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_DOWN));
-                    listMusicQueue.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_DOWN));
-                }
-                clickFeedback();
-                return true;
-            }
             if (currentScreenState == STATE_SETTINGS && isThemeListActive()
                     && (keyCode == 21 || keyCode == 22)) {
                 dispatchThemeListKey(keyCode);
                 clickFeedback();
                 return true;
             }
+            if (currentScreenState == STATE_SETTINGS && (keyCode == 21 || keyCode == 22)) {
+                if (!isFocusValidForCurrentScreen() && containerSettingsItems != null
+                        && containerSettingsItems.getChildCount() > 0) {
+                    for (int i = 0; i < containerSettingsItems.getChildCount(); i++) {
+                        View row = containerSettingsItems.getChildAt(i);
+                        if (row != null && row.isFocusable() && row.requestFocus()) break;
+                    }
+                }
+                if (moveSettingsListFocus(keyCode == 21 ? -1 : 1)) {
+                    clickFeedback();
+                }
+                return true;
+            }
             if (currentScreenState == STATE_MENU && (keyCode == 21 || keyCode == 22)) {
+                if (!isFocusValidForCurrentScreen()) requestFirstHomeMenuFocus();
                 if (moveHomeMenuFocus(keyCode == 21 ? -1 : 1)) clickFeedback();
                 return true;
             }
+            if ((currentScreenState == STATE_BROWSER || currentScreenState == STATE_PODCASTS
+                    || currentScreenState == STATE_SOULSEEK || currentScreenState == STATE_APPS
+                    || currentScreenState == STATE_MORE)
+                    && (listVirtualSongs == null || listVirtualSongs.getVisibility() != View.VISIBLE)
+                    && !isFocusValidForCurrentScreen()) {
+                ensureBrowserListFocus();
+            }
             View c = getCurrentFocus();
+            if (c == null && (currentScreenState == STATE_BROWSER || currentScreenState == STATE_PODCASTS
+                    || currentScreenState == STATE_SOULSEEK || currentScreenState == STATE_APPS
+                    || currentScreenState == STATE_MORE)) {
+                ensureBrowserListFocus();
+                c = getCurrentFocus();
+            }
             if (c != null) {
                 if (keyCode == 21) { // 휠 위로 돌릴 때 (UP)
                     // 🚀 [점프 완벽 차단] 좌표 검색(focusSearch)을 버리고 리스트 순서(Index)를 직접 조작합니다!
@@ -14856,6 +18636,41 @@ public class MainActivity extends Activity {
 
     @Override
     public boolean onKeyUp(int keyCode, KeyEvent event) {
+        if (keyCode == KeyEvent.KEYCODE_BACK) {
+            clockHandler.removeCallbacks(backLongPressRunnable);
+            backKeyHeld = false;
+            if (currentScreenState == STATE_WIFI_KEYBOARD) {
+                backLongPressHandled = false;
+                clickFeedback();
+                handleBackShortPress();
+                return true;
+            }
+            long held = System.currentTimeMillis() - backKeyDownTime;
+            if (themedContextMenu != null && themedContextMenu.isShowing()) {
+                if (contextMenuOpenedAtMs > 0 && System.currentTimeMillis() - contextMenuOpenedAtMs < 250) {
+                    return true;
+                }
+                if (backLongPressHandled) {
+                    return true;
+                }
+                if (held < BACK_LONG_PRESS_MS) {
+                    handleContextMenuBackKeyUp();
+                }
+                return true;
+            }
+            if (backLongPressHandled) {
+                return true;
+            }
+            if (held >= BACK_LONG_PRESS_MS) {
+                showThemedContextMenu();
+                backLongPressHandled = true;
+                return true;
+            }
+            clickFeedback();
+            handleBackShortPress();
+            return true;
+        }
+
         PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
         boolean isScreenOn = true;
         try {
@@ -14874,49 +18689,71 @@ public class MainActivity extends Activity {
             return true;
         }
 
+        if (currentScreenState == STATE_WIFI_KEYBOARD && keyCode == 21) {
+            keyboardPrevDelRepeatActive = false;
+            clockHandler.removeCallbacks(keyboardPrevDelRepeatRunnable);
+            clockHandler.removeCallbacks(keyboardDelRepeatRunnable);
+        }
+
         // 💡 [핵심 차단 구역] 휠 조작(21, 22)을 '뗄 때'
         if (keyCode == 21 || keyCode == 22) {
             return true;
         }
 
-        if (keyCode == KeyEvent.KEYCODE_BACK) {
-            long held = System.currentTimeMillis() - backKeyDownTime;
-            if (themedContextMenu != null && themedContextMenu.isShowing()) {
-                if (held < BACK_LONG_PRESS_MS) {
-                    dismissThemedContextMenu();
-                }
-                return true;
+        if (themedContextMenu != null && themedContextMenu.isShowing()) {
+            if (isMediaSkipKey(keyCode)) {
+                return handleMediaSkipKeyUp(keyCode, event);
             }
-            if (held >= BACK_LONG_PRESS_MS) {
-                if (!backLongPressHandled) {
-                    showThemedContextMenu();
-                    backLongPressHandled = true;
-                }
-            } else {
-                clickFeedback();
-                handleBackShortPress();
+            if (isMediaPlayPauseKey(keyCode)) {
+                return handlePlayPauseKeyUp();
             }
-            return true;
         }
 
         if (currentScreenState == STATE_WIFI_KEYBOARD) {
             if (isMediaSkipKey(keyCode)) {
-                if (System.currentTimeMillis() - keyboardMediaSkipDownAt < MEDIA_SKIP_LONG_PRESS_MS) {
-                    if (isMediaNextKey(keyCode)) handleKeyboardMediaSpace();
-                    else handleKeyboardMediaDel();
+                if (isMediaPrevKey(keyCode)) {
+                    keyboardPrevDelRepeatActive = false;
+                    clockHandler.removeCallbacks(keyboardPrevDelRepeatRunnable);
+                    clockHandler.removeCallbacks(keyboardDelRepeatRunnable);
+                    long held = keyboardMediaSkipDownAt > 0
+                            ? System.currentTimeMillis() - keyboardMediaSkipDownAt : 0;
+                    if (held < MEDIA_SKIP_LONG_PRESS_MS) {
+                        handleKeyboardMediaDel();
+                    }
+                    keyboardMediaSkipDownAt = 0;
+                } else if (isMediaNextKey(keyCode)) {
+                    long held = keyboardMediaSkipDownAt > 0
+                            ? System.currentTimeMillis() - keyboardMediaSkipDownAt : 0;
+                    if (held < MEDIA_SKIP_LONG_PRESS_MS) {
+                        handleKeyboardMediaSpace();
+                    }
+                    keyboardMediaSkipDownAt = 0;
                 }
                 return true;
             }
             if (isMediaPlayPauseKey(keyCode)) {
+                // #region agent log
+                try {
+                    org.json.JSONObject d = new org.json.JSONObject();
+                    d.put("keyCode", keyCode);
+                    d.put("longHandled", keyboardPpLongHandled);
+                    d.put("heldMs", keyboardPpDownAt > 0
+                            ? System.currentTimeMillis() - keyboardPpDownAt : 0);
+                    DebugAgentLog.log(this, "MainActivity.onKeyUp",
+                            "keyboard pp up", "H3", d);
+                } catch (Exception ignored) {}
+                // #endregion
                 if (!keyboardPpLongHandled) {
                     clickFeedback();
                     handleKeyboardEnter();
                 }
+                keyboardPpDownAt = 0;
                 return true;
             }
         }
 
         if (keyCode == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE || keyCode == 85 || keyCode == 86) {
+            if (handlePlayPauseKeyUp()) return true;
             return true;
         }
         if (isMediaSkipKey(keyCode)) {
@@ -14926,12 +18763,24 @@ public class MainActivity extends Activity {
     }
 
     @Override
+    protected void onPause() {
+        super.onPause();
+        try {
+            persistPlaybackQueue();
+        } catch (Exception ignored) {}
+    }
+
+    @Override
     protected void onDestroy() {
+        try {
+            persistPlaybackQueue();
+        } catch (Exception ignored) {}
         super.onDestroy();
         clockHandler.removeCallbacks(clockTask);
         progressHandler.removeCallbacks(updateProgressTask);
         progressHandler.removeCallbacks(podcastGrowingEdgePoll);
         volumeHandler.removeCallbacks(hideVolumeTask);
+        volumeHandler.removeCallbacks(hideVolumeContextTask);
         soulseekUiHandler.removeCallbacksAndMessages(null);
         fastScrollHandler.removeCallbacksAndMessages(null);
 
@@ -14972,7 +18821,12 @@ public class MainActivity extends Activity {
             soulseekClient = null;
         }
 
-        unregisterReceiver(systemStatusReceiver);
+        try {
+            unregisterReceiver(systemStatusReceiver);
+        } catch (Exception ignored) {}
+        try {
+            unregisterReceiver(systemStatusReceiver);
+        } catch (Exception ignored) {}
         BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
         if (adapter != null && bluetoothA2dp != null) {
             adapter.closeProfileProxy(BluetoothProfile.A2DP, bluetoothA2dp);
@@ -15408,6 +19262,7 @@ public class MainActivity extends Activity {
             android.graphics.Bitmap blurredBg = applyGaussianBlur(sourceBg);
             ivPlayerBgBlur.setImageBitmap(blurredBg);
             if (sourceBg != blurredBg) sourceBg.recycle();
+            if (!playerAlbumBlurEnabled) ivPlayerBgBlur.setImageResource(0);
 
             // 메인 메뉴 배경도 연동하기 위해 파일 데이터를 byte[]로 변환해서 lastAlbumArtBytes에 집어넣습니다!
             java.io.File file = new java.io.File(imagePath);
@@ -15444,6 +19299,7 @@ public class MainActivity extends Activity {
         new Thread(new Runnable() {
             @Override
             public void run() {
+                ArtistSeparatorCatalog.maybeRefreshAsync(MainActivity.this);
                 try {
                     String query = java.net.URLEncoder.encode(cleanQuery, "UTF-8");
                     String urlString = "http://api.deezer.com/search?q=" + query;
@@ -16060,80 +19916,45 @@ public class MainActivity extends Activity {
                 return btn;
             }
 
-            LinearLayout layout;
-            if (convertView instanceof LinearLayout && "theme_item".equals(convertView.getTag())) {
-                layout = (LinearLayout) convertView;
+            FrameLayout themeRow;
+            if (convertView instanceof FrameLayout && "theme_home_row".equals(convertView.getTag())) {
+                themeRow = (FrameLayout) convertView;
             } else {
-                layout = new LinearLayout(MainActivity.this);
-                layout.setTag("theme_item");
-                layout.setOrientation(LinearLayout.VERTICAL);
-                layout.setFocusable(true);
-                layout.setSoundEffectsEnabled(false);
-                int hPad = (int) (10 * getResources().getDisplayMetrics().density);
-                layout.setPadding(hPad, 0, hPad, 0);
-                layout.setLayoutParams(new android.widget.AbsListView.LayoutParams(
+                themeRow = createHomeMenuRowShell();
+                themeRow.setTag("theme_home_row");
+                themeRow.setLayoutParams(new android.widget.AbsListView.LayoutParams(
                         android.widget.AbsListView.LayoutParams.MATCH_PARENT, y1RowHeightPx));
-                TextView tvMain = new TextView(MainActivity.this);
-                tvMain.setTag("main");
-                tvMain.setFocusable(false);
-                tvMain.setSingleLine(true);
-                tvMain.setEllipsize(TextUtils.TruncateAt.MARQUEE);
-                layout.addView(tvMain);
-                TextView tvSub = new TextView(MainActivity.this);
-                tvSub.setTag("sub");
-                tvSub.setFocusable(false);
-                tvSub.setSingleLine(true);
-                tvSub.setVisibility(View.GONE);
-                layout.addView(tvSub);
             }
-            final TextView tvMain = (TextView) layout.findViewWithTag("main");
-            final TextView tvSub = (TextView) layout.findViewWithTag("sub");
-            tvMain.setText(row.prefix + row.title);
-            if (row.subtitle != null && !row.subtitle.isEmpty()) {
-                tvSub.setVisibility(View.VISIBLE);
-                tvSub.setText(row.subtitle);
-                ThemeManager.applyThemedTextStyle(tvSub, ThemeManager.getTextColorSecondary());
-            } else {
-                tvSub.setVisibility(View.GONE);
-            }
-            final boolean active = row.active;
-            tvMain.setTypeface(ThemeManager.getCustomFont(), android.graphics.Typeface.BOLD);
-            if (active) {
-                tvMain.setTypeface(null, android.graphics.Typeface.BOLD);
-                tvMain.setTextColor(0xFF00FF00);
-            } else {
-                ThemeManager.applyThemedTextStyle(tvMain, y1RowTextColorNormal(Y1_ROW_ITEM));
-            }
-            layout.setOnClickListener(new View.OnClickListener() {
+            final TextView label = (TextView) themeRow.getTag(HOME_MENU_TAG_LABEL);
+            final ImageView arrow = (ImageView) themeRow.getTag(HOME_MENU_TAG_ARROW);
+            label.setText(row.prefix + row.title);
+            applyY1ListRowStyle(themeRow, themeRow.hasFocus(), label, null, arrow, Y1_ROW_HOME);
+            themeRow.setOnClickListener(new View.OnClickListener() {
                 @Override public void onClick(View v) {
                     clickFeedback();
                     onThemeBrowserRowClick(row);
                 }
             });
-            bindThemeRowFocus(layout, position, row, Y1_ROW_ITEM);
-            return layout;
+            bindThemeRowFocus(themeRow, position, row, Y1_ROW_HOME);
+            return themeRow;
         }
 
         private void bindThemeRowFocus(final View v, final int position, final ThemeBrowser.Row row, final int rowKind) {
             v.setOnFocusChangeListener(new View.OnFocusChangeListener() {
                 @Override
                 public void onFocusChange(View view, boolean hasFocus) {
-                    int rowW = y1ActiveRowWidthPx();
-                    v.setBackground(getY1RowBackground(hasFocus, rowW, rowKind));
-                    if (rowKind == Y1_ROW_ITEM && v instanceof LinearLayout) {
-                        TextView tvMain = (TextView) ((LinearLayout) v).findViewWithTag("main");
-                        if (tvMain != null && !row.active) {
-                            ThemeManager.applyThemedTextStyle(tvMain, hasFocus
-                                    ? y1RowTextColorSelected(rowKind) : y1RowTextColorNormal(rowKind));
-                        }
-                        if (tvMain != null) {
-                            tvMain.setSelected(hasFocus);
-                            if (hasFocus) enableMarquee(tvMain);
-                        }
+                    if (v instanceof FrameLayout && "theme_home_row".equals(v.getTag())) {
+                        TextView label = (TextView) v.getTag(HOME_MENU_TAG_LABEL);
+                        ImageView arrow = (ImageView) v.getTag(HOME_MENU_TAG_ARROW);
+                        applyY1ListRowStyle(v, hasFocus, label, null, arrow, rowKind);
                     } else if (v instanceof Button) {
+                        int rowW = y1ActiveRowWidthPx();
+                        v.setBackground(getY1RowBackground(hasFocus, rowW, rowKind));
                         ThemeManager.applyThemedTextStyle((Button) v, hasFocus
                                 ? y1RowTextColorSelected(rowKind) : y1RowTextColorNormal(rowKind));
                     } else if (v instanceof LinearLayout && row.kind == ThemeBrowser.KIND_FILTER) {
+                        int rowW = y1ActiveRowWidthPx();
+                        v.setBackground(getY1RowBackground(hasFocus, rowW, rowKind));
                         TextView tvTitle = (TextView) ((LinearLayout) v).findViewWithTag("title");
                         if (tvTitle != null) {
                             ThemeManager.applyThemedTextStyle(tvTitle, hasFocus
@@ -16154,198 +19975,93 @@ public class MainActivity extends Activity {
         }
     }
 
-    private class MusicQueueListAdapter extends android.widget.BaseAdapter {
-        private static final int TYPE_BACK = 0;
-        private static final int TYPE_TRACK = 1;
-
-        private java.util.List<File> snapshotQueue() {
-            return new ArrayList<File>(playback.musicPlaylist());
-        }
-
-        @Override public int getViewTypeCount() { return 2; }
-        @Override
-        public int getItemViewType(int position) {
-            return position == 0 ? TYPE_BACK : TYPE_TRACK;
-        }
-        @Override public int getCount() {
-            return snapshotQueue().size() + 1;
-        }
-        @Override public Object getItem(int position) { return position; }
-        @Override public long getItemId(int position) { return position; }
-
-        @Override
-        public View getView(final int position, View convertView, android.view.ViewGroup parent) {
-            try {
-                return buildQueueRowView(position, convertView);
-            } catch (Exception e) {
-                Button err = createListButton("…");
-                err.setEnabled(false);
-                return err;
-            }
-        }
-
-        private void applyMusicQueueListRowParams(View row) {
-            row.setLayoutParams(new android.widget.AbsListView.LayoutParams(
-                    android.widget.AbsListView.LayoutParams.MATCH_PARENT, y1RowHeightPx));
-        }
-
-        private View buildQueueRowView(final int position, View convertView) {
-            if (position == 0) {
-                Button btn;
-                if (convertView instanceof Button) {
-                    btn = (Button) convertView;
-                } else {
-                    btn = createListButton(getString(R.string.common_back_short));
-                    applyMusicQueueListRowParams(btn);
-                }
-                btn.setOnClickListener(new View.OnClickListener() {
-                    @Override
-                    public void onClick(View v) {
-                        clickFeedback();
-                        if (musicQueueMoveFrom >= 0) {
-                            musicQueueMoveFrom = -1;
-                            refreshMusicQueueList();
-                        } else {
-                            setMusicQueueListVisible(false);
-                            changeScreen(musicQueueReturnScreen);
-                        }
-                    }
-                });
-                return btn;
-            }
-
-            final int queueIdx = position - 1;
-            java.util.List<File> playlist = snapshotQueue();
-            if (queueIdx < 0 || queueIdx >= playlist.size()) {
-                View empty = new View(MainActivity.this);
-                applyMusicQueueListRowParams(empty);
-                return empty;
-            }
-            LinearLayout layout;
-            if (convertView instanceof LinearLayout && "queue_row".equals(convertView.getTag())) {
-                layout = (LinearLayout) convertView;
-            } else {
-                layout = createRearrangeListRow(null, "", null);
-                layout.setTag("queue_row");
-            }
-            applyMusicQueueListRowParams(layout);
-            layout.setOnFocusChangeListener(new View.OnFocusChangeListener() {
-                @Override
-                public void onFocusChange(View v, boolean hasFocus) {
-                    if (!(v instanceof LinearLayout)) return;
-                    LinearLayout row = (LinearLayout) v;
-                    boolean moving = musicQueueMoveFrom == queueIdx;
-                    boolean nowPlaying = isMusicQueueNowPlayingSlot(queueIdx);
-                    bindRearrangeRowAdornment(row, moving, hasFocus && !nowPlaying);
-                    int rowW = y1ActiveRowWidthPx();
-                    row.setBackground(getY1RowBackground(hasFocus, rowW, Y1_ROW_MENU));
-                    TextView tvLeft = (TextView) row.findViewWithTag(TAG_REARRANGE_LABEL);
-                    if (tvLeft != null) {
-                        ThemeManager.applyThemedTextStyle(tvLeft, hasFocus
-                                ? y1RowTextColorSelected(Y1_ROW_MENU) : y1RowTextColorNormal(Y1_ROW_MENU));
-                        tvLeft.setSelected(hasFocus);
-                        if (hasFocus) enableMarquee(tvLeft);
-                    }
-                    if (hasFocus) musicQueueEditorFocus = position;
-                }
-            });
-            layout.setOnClickListener(new View.OnClickListener() {
-                @Override
-                public void onClick(View v) {
-                    clickFeedback();
-                    if (isMusicQueueNowPlayingSlot(queueIdx)) return;
-                    if (musicQueueMoveFrom < 0) {
-                        if (canPickMusicQueueMoveFrom(queueIdx)) {
-                            musicQueueMoveFrom = queueIdx;
-                            refreshMusicQueueList();
-                        }
-                    } else if (musicQueueMoveFrom == queueIdx) {
-                        musicQueueMoveFrom = -1;
-                        refreshMusicQueueList();
-                    } else if (canDropMusicQueueMoveAt(queueIdx)) {
-                        applyMusicQueueMove(musicQueueMoveFrom, queueIdx);
-                    }
-                }
-            });
-
-            final TextView tvLeft = (TextView) layout.findViewWithTag(TAG_REARRANGE_LABEL);
-            final File track = playlist.get(queueIdx);
-            if (tvLeft == null) return layout;
-            final boolean nowPlaying = isMusicQueueNowPlayingSlot(queueIdx);
-            final boolean moving = musicQueueMoveFrom == queueIdx;
-            String num = String.format(Locale.US, "%02d · ", queueIdx + 1);
-            tvLeft.setText(num + musicTrackLabel(track));
-            tvLeft.setTypeface(ThemeManager.getCustomFont(), android.graphics.Typeface.BOLD);
-            if (nowPlaying) {
-                tvLeft.setTypeface(null, android.graphics.Typeface.BOLD);
-                tvLeft.setTextColor(0xFF00FF00);
-            } else {
-                ThemeManager.applyThemedTextStyle(tvLeft, layout.hasFocus()
-                        ? y1RowTextColorSelected(Y1_ROW_MENU) : y1RowTextColorNormal(Y1_ROW_MENU));
-            }
-            bindRearrangeRowAdornment(layout, moving, layout.hasFocus() && !nowPlaying);
-            int rowW = y1ActiveRowWidthPx();
-            layout.setBackground(getY1RowBackground(layout.hasFocus(), rowW, Y1_ROW_MENU));
-            return layout;
-        }
-    }
     private class SongListAdapter extends android.widget.BaseAdapter {
         private List<SongItem> items;
+        private final boolean reorderable;
 
-        public SongListAdapter(List<SongItem> items) { this.items = items; }
+        public SongListAdapter(List<SongItem> items) {
+            this(items, false);
+        }
 
-        @Override public int getCount() { return items.size(); }
-        @Override public Object getItem(int position) { return items.get(position); }
+        public SongListAdapter(List<SongItem> items, boolean reorderable) {
+            this.items = items;
+            this.reorderable = reorderable;
+        }
+
+        private SongItem songAt(int position) {
+            if (reorderable) {
+                if (position < 0 || position >= virtualSongList.size()) {
+                    return new SongItem(new File(""), "", "", "", "");
+                }
+                File f = virtualSongList.get(position);
+                SongItem si = findSongItem(f);
+                return si != null ? si : new SongItem(f, f.getName(), "", "", "");
+            }
+            return items.get(position);
+        }
+
+        @Override public int getCount() {
+            return reorderable ? virtualSongList.size() : items.size();
+        }
+        @Override public Object getItem(int position) { return songAt(position); }
         @Override public long getItemId(int position) { return position; }
 
         @Override
         public View getView(final int position, View convertView, android.view.ViewGroup parent) {
-            final Button btn;
+            return buildTwoLineSongRowView(position, convertView, reorderable);
+        }
 
-            // 🚀 핵심 로직: 화면 밖으로 밀려난 기존 버튼(convertView)을 가져와서 재활용합니다!
-            if (convertView == null) {
-                btn = createListButton(""); // 처음 화면에 보이는 개수만큼만 새로 생성
-
-                // 🚀 [버그 해결 1] 리스트뷰 전용 레이아웃 파라미터(규격)로 강제 변환합니다! (튕김 원천 차단)
-                btn.setLayoutParams(new android.widget.AbsListView.LayoutParams(
-                        android.widget.AbsListView.LayoutParams.MATCH_PARENT,
-                        android.widget.AbsListView.LayoutParams.WRAP_CONTENT
-                ));
+        private View buildTwoLineSongRowView(final int position, View convertView, final boolean numbered) {
+            final SongItem song = songAt(position);
+            FrameLayout row;
+            if (convertView instanceof FrameLayout && "two_line_song_row".equals(convertView.getTag())) {
+                row = (FrameLayout) convertView;
             } else {
-                btn = (Button) convertView; // 나머지는 새로 만들지 않고 돌려쓰기!
+                row = MoveRibbonRows.createLibraryMoveRow(MainActivity.this, y1LibraryRowHeightPx);
+                row.setTag("two_line_song_row");
+                row.setFocusable(true);
+                row.setSoundEffectsEnabled(false);
+                row.setLayoutParams(new android.widget.AbsListView.LayoutParams(
+                        android.widget.AbsListView.LayoutParams.MATCH_PARENT, y1LibraryRowHeightPx + 2));
             }
-
-            final SongItem song = items.get(position);
-            btn.setText("🎵 " + song.title); // 버튼 껍데기에 새 노래 이름만 덧칠합니다.
-
-            // 포커스와 클릭 이벤트 재부여
-            final int rowKind = Y1_ROW_ITEM;
-            final int rowW = y1ActiveRowWidthPx();
-            btn.setBackground(getY1RowBackground(false, rowW, rowKind));
-            ThemeManager.applyThemedTextStyle(btn, y1RowTextColorNormal(rowKind));
-            btn.setSelected(false);
-            btn.setOnFocusChangeListener(new View.OnFocusChangeListener() {
+            final boolean nowPlaying = isPlaylistViewNowPlayingSlot(position);
+            final boolean playing = nowPlaying && !isPausedByHand && playback.isMusicActive();
+            row.setOnFocusChangeListener(new View.OnFocusChangeListener() {
                 @Override
                 public void onFocusChange(View v, boolean hasFocus) {
-                    btn.setBackground(getY1RowBackground(hasFocus, rowW, rowKind));
-                    ThemeManager.applyThemedTextStyle(btn, hasFocus
-                            ? y1RowTextColorSelected(rowKind) : y1RowTextColorNormal(rowKind));
-                    btn.setSelected(hasFocus);
+                    MoveRibbonRows.bindLibraryMoveRow(MainActivity.this, row,
+                            numbered ? String.format(Locale.US, "%02d · %s", position + 1, song.title)
+                                    : song.title,
+                            songSubtitleLine(song), false, hasFocus, nowPlaying, playing,
+                            y1ActiveRowWidthPx(), y1LibraryRowHeightPx);
                     if (hasFocus) showFastScrollLetter(song.title);
                 }
             });
-
-            btn.setOnClickListener(new View.OnClickListener() {
+            row.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View v) {
                     if (System.currentTimeMillis() < suppressListClickUntil) return;
                     clickFeedback();
+                    if (playlistMoveFrom >= 0) return;
                     playTrackList(virtualSongList, position,
                             "PLAYLIST".equals(virtualQueryType) ? virtualQueryValue : null);
                 }
             });
-
-            return btn;
+            MoveRibbonRows.bindLibraryMoveRow(MainActivity.this, row,
+                    numbered ? String.format(Locale.US, "%02d · %s", position + 1, song.title)
+                            : song.title,
+                    songSubtitleLine(song), false, row.hasFocus(), nowPlaying, playing,
+                    y1ActiveRowWidthPx(), y1LibraryRowHeightPx);
+            return row;
         }
+
+        private View buildSimpleSongRowView(final int position, View convertView) {
+            return buildTwoLineSongRowView(position, convertView, false);
+        }
+
+        private View buildPlaylistSongRowView(final int position, View convertView) {
+            return buildTwoLineSongRowView(position, convertView, true);
+        }
+
     }
 }

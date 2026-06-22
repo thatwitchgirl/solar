@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Build a Solar launcher ROM from stock Rockbox-Y1 type-A or type-B base firmware.
-# Usage: build-rom.sh <a|b> --apk PATH [output.zip]
+# Build a Solar launcher ROM from Y1 type-A/B or Y2 ATA base firmware.
+# Usage: build-rom.sh <a|b|y2> --apk PATH [output.zip]
 set -euo pipefail
 
 TYPE=""
@@ -20,9 +20,9 @@ source "$SCRIPT_DIR/solar-repo.sh"
 
 usage() {
     cat >&2 <<EOF
-usage: $0 <a|b> (--apk PATH | [--solar-tag TAG] [--solar-apk-url URL]) [output.zip]
+usage: $0 <a|b|y2> (--apk PATH | [--solar-tag TAG] [--solar-apk-url URL]) [output.zip]
 
-  a|b                 Type A (firmware 2.0.0+) or Type B (firmware before 2.0.0)
+  a|b|y2              Y1 type A (2.0.0+), Y1 type B (pre-2.0.0), or Y2 ATA (MT6582)
   --apk PATH          Local signed app-release.apk (CI / local builds)
   --solar-tag         GitHub release tag on ${SOLAR_GITHUB_REPO} (default: latest)
   --solar-apk-url     Direct APK download URL (skips GitHub HTML lookup)
@@ -33,7 +33,7 @@ EOF
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
-        a|b)
+        a|b|y2)
             TYPE="$1"
             shift
             ;;
@@ -90,13 +90,26 @@ require_cmd() {
     command -v "$1" >/dev/null 2>&1 || die "missing required command: $1"
 }
 
-if [ "$TYPE" = "a" ]; then
-    BASE_URL="https://github.com/rockbox-y1/rockbox/releases/download/type-a-base/rom.zip"
-    OUTPUT="${OUTPUT:-$REPO_ROOT/rom.zip}"
-else
-    BASE_URL="https://github.com/rockbox-y1/rockbox/releases/download/type-b-base/rom.zip"
-    OUTPUT="${OUTPUT:-$REPO_ROOT/rom_type_b.zip}"
-fi
+case "$TYPE" in
+    a)
+        BASE_URL="https://github.com/rockbox-y1/rockbox/releases/download/type-a-base/rom.zip"
+        OUTPUT="${OUTPUT:-$REPO_ROOT/rom.zip}"
+        SCATTER_FILE="MT6572_Android_scatter.txt"
+        ;;
+    b)
+        BASE_URL="https://github.com/rockbox-y1/rockbox/releases/download/type-b-base/rom.zip"
+        OUTPUT="${OUTPUT:-$REPO_ROOT/rom_type_b.zip}"
+        SCATTER_FILE="MT6572_Android_scatter.txt"
+        ;;
+    y2)
+        BASE_URL="https://github.com/y1-community/y2-ata-rom/releases/download/y2-ata/rom.zip"
+        OUTPUT="${OUTPUT:-$REPO_ROOT/rom_y2.zip}"
+        SCATTER_FILE="MT6582_Android_scatter.txt"
+        ;;
+    *)
+        die "unknown type: $TYPE"
+        ;;
+esac
 
 require_cmd curl
 require_cmd unzip
@@ -155,9 +168,9 @@ audit_rom_contents() {
     local user_mount="$3"
     local errors=0
 
-    echo "==> Auditing ROM contents"
+    echo "==> Auditing ROM contents (type ${TYPE}, scatter ${SCATTER_FILE})"
 
-    for required in boot.img lk.bin logo.bin recovery.img system.img userdata.img MT6572_Android_scatter.txt; do
+    for required in boot.img lk.bin logo.bin recovery.img system.img userdata.img "$SCATTER_FILE"; do
         if [ ! -f "$base_dir/$required" ]; then
             echo "audit fail: missing $required in ROM archive" >&2
             errors=$((errors + 1))
@@ -212,8 +225,8 @@ audit_rom_contents() {
         errors=$((errors + 1))
     fi
 
-    if [ -f "$user_mount/com.innioasis.y1.apk" ]; then
-        echo "audit fail: com.innioasis.y1.apk present in userdata" >&2
+    if find "$user_mount" -maxdepth 1 -name 'com.innioasis.*.apk' 2>/dev/null | grep -q .; then
+        echo "audit fail: stock Innioasis launcher APK present in userdata" >&2
         errors=$((errors + 1))
     fi
 
@@ -308,8 +321,13 @@ sudo chown root:root "$MOUNT_SYS/usr/keylayout/Stock.kl" "$MOUNT_SYS/usr/keylayo
 
 echo "==> Patching userdata partition"
 sudo rm -rf "$MOUNT_USER/org.rockbox"
-sudo rm -f "$MOUNT_USER/com.innioasis.y1.apk"
+while IFS= read -r apk; do
+    [ -n "$apk" ] || continue
+    echo "  removing userdata/$(basename "$apk")"
+    sudo rm -f "$apk"
+done < <(find "$MOUNT_USER" -maxdepth 1 -name 'com.innioasis.*.apk' 2>/dev/null || true)
 sudo rm -f "$MOUNT_USER/data/com.innioasis.y1.apk"
+sudo rm -f "$MOUNT_USER/data/com.innioasis.y2.apk"
 sudo rm -f "$MOUNT_USER"/*_launcher.apk
 sudo rm -f "$MOUNT_USER/data/*_launcher_initialized"
 sudo rm -f "$MOUNT_USER/data/initialized"

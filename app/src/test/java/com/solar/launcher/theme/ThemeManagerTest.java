@@ -1,8 +1,53 @@
 package com.solar.launcher.theme;
 
+import org.json.JSONObject;
 import org.junit.Test;
 
 public class ThemeManagerTest {
+    @Test
+    public void setThemeByFolderPath_resolvesAssetAliasToDefault() throws Exception {
+        ThemeManager.availableThemes.clear();
+        ThemeManager.availableThemes.add(new ThemeManager.ThemeEntry(
+                "/storage/sdcard0/Themes/Default", "Default", "Aura", new JSONObject()));
+        ThemeManager.availableThemes.add(new ThemeManager.ThemeEntry(
+                "/storage/sdcard0/Themes/Other", "Other", "Other", new JSONObject()));
+        ThemeManager.setThemeByFolderPath("asset://themes/default");
+        if (ThemeManager.getCurrentThemeIndex() != 0) {
+            throw new AssertionError("asset alias should select Default");
+        }
+    }
+
+    @Test
+    public void setThemeByFolderPath_resolvesFolderNameWhenPathMoved() throws Exception {
+        ThemeManager.availableThemes.clear();
+        ThemeManager.availableThemes.add(new ThemeManager.ThemeEntry(
+                "/mnt/new/Themes/Default", "Default", "Aura", new JSONObject()));
+        ThemeManager.setThemeByFolderPath("/storage/sdcard0/Themes/Default");
+        if (ThemeManager.getCurrentThemeIndex() != 0) {
+            throw new AssertionError("folder name should match Default");
+        }
+    }
+
+    @Test
+    public void legacyStockDefaultTitle_detectsCircular() {
+        if (!ThemeManager.isLegacyStockDefaultTitle("Circular")) {
+            throw new AssertionError("Circular is legacy stock Default");
+        }
+        if (ThemeManager.isLegacyStockDefaultTitle("Aura")) {
+            throw new AssertionError("Aura is not legacy");
+        }
+    }
+
+    @Test
+    public void persistPathForTheme_builtinUsesThemesDefaultDir() {
+        ThemeManager.ThemeEntry builtIn = new ThemeManager.ThemeEntry(
+                "asset://themes/default", "Default", "Aura", new JSONObject());
+        String path = ThemeManager.persistPathForTheme(builtIn);
+        if (path.isEmpty() || path.indexOf("Default") < 0) {
+            throw new AssertionError("persist path: " + path);
+        }
+    }
+
     @Test
     public void getCurrentTheme_neverEmpty() {
         ThemeManager.availableThemes.clear();
@@ -28,6 +73,38 @@ public class ThemeManagerTest {
         if (ThemeManager.wifiSignalIndex(-100) != 0) throw new AssertionError("weak");
         if (ThemeManager.wifiSignalIndex(-77) != 1) throw new AssertionError("mid");
         if (ThemeManager.wifiSignalIndex(-55) != 2) throw new AssertionError("strong");
+    }
+
+    @Test
+    public void pickSolarLogotypeAsset_contrastAware() {
+        String onWhite = ThemeManager.pickSolarLogotypeAsset(0xFFFFFFFF);
+        if (!onWhite.contains("colour") && !onWhite.contains("black")) {
+            throw new AssertionError("white bg: " + onWhite);
+        }
+        String onDark = ThemeManager.pickSolarLogotypeAsset(0xFF050505);
+        if (!onDark.contains("colour")) throw new AssertionError("dark bg: " + onDark);
+        String onOrange = ThemeManager.pickSolarLogotypeAsset(0xFFF0A830);
+        if (!onOrange.contains("black")) throw new AssertionError("clash bg: " + onOrange);
+    }
+
+    @Test
+    public void podcastsHomeIconPrefersSolarConfig() throws Exception {
+        JSONObject root = new JSONObject();
+        root.put("homePageConfig", new JSONObject().put("audiobooks", "Audiobooks_YS.png"));
+        root.put("solarConfig", new JSONObject().put("appPodcasts", "custom_podcasts.png"));
+        ThemeManager.availableThemes.clear();
+        ThemeManager.availableThemes.add(new ThemeManager.ThemeEntry("/tmp", "t", "t", root));
+        if (!ThemeManager.hasThemeSolarConfigKey("appPodcasts")) {
+            throw new AssertionError("appPodcasts should be set");
+        }
+        root.getJSONObject("solarConfig").remove("appPodcasts");
+        ThemeManager.availableThemes.set(0, new ThemeManager.ThemeEntry("/tmp", "t", "t", root));
+        if (ThemeManager.getSolarAppIcon("Podcasts") != null) {
+            throw new AssertionError("unset appPodcasts should not resolve solar icon");
+        }
+        if (ThemeManager.hasThemeSolarConfigKey("appPodcasts")) {
+            throw new AssertionError("empty appPodcasts should not count as set");
+        }
     }
 
     @Test

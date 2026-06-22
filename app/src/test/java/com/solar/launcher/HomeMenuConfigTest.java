@@ -21,29 +21,91 @@ public class HomeMenuConfigTest {
     }
 
     @Test
+    public void stockHomeOrder_matchesY1Layout() {
+        List<String> stock = HomeMenuConfig.STOCK_Y1_HOME_ORDER;
+        if (stock.size() != 8) throw new AssertionError("stock size " + stock.size());
+        if (!HomeMenuConfig.ID_NOW_PLAYING.equals(stock.get(0))) throw new AssertionError("now playing");
+        if (!HomeMenuConfig.ID_MUSIC.equals(stock.get(1))) throw new AssertionError("music");
+        if (!HomeMenuConfig.ID_VIDEOS.equals(stock.get(2))) throw new AssertionError("videos");
+        if (!HomeMenuConfig.ID_AUDIOBOOKS.equals(stock.get(3))) throw new AssertionError("audiobooks");
+        if (!HomeMenuConfig.ID_PHOTOS.equals(stock.get(4))) throw new AssertionError("photos");
+        if (!HomeMenuConfig.ID_FM.equals(stock.get(5))) throw new AssertionError("fm");
+        if (!HomeMenuConfig.ID_BLUETOOTH.equals(stock.get(6))) throw new AssertionError("bluetooth");
+        if (!HomeMenuConfig.ID_SETTINGS.equals(stock.get(7))) throw new AssertionError("settings");
+    }
+
+    @Test
     public void defaultOrder_matchesY1StockLayout() {
         List<HomeMenuConfig.Entry> visible = HomeMenuConfig.loadVisible(prefs);
-        if (visible.size() != 10) throw new AssertionError("default size " + visible.size());
+        if (visible.size() != 8) throw new AssertionError("default size " + visible.size());
         if (!HomeMenuConfig.ID_NOW_PLAYING.equals(visible.get(0).id)) {
             throw new AssertionError("now playing position");
         }
         if (!HomeMenuConfig.ID_MUSIC.equals(visible.get(1).id)) {
             throw new AssertionError("music position");
         }
-        if (!HomeMenuConfig.ID_VIDEOS.equals(visible.get(2).id)) {
-            throw new AssertionError("videos position");
-        }
-        if (!HomeMenuConfig.ID_PHOTOS.equals(visible.get(3).id)) {
-            throw new AssertionError("photos position");
-        }
-        if (!HomeMenuConfig.ID_FM.equals(visible.get(4).id)) {
+        if (!HomeMenuConfig.ID_FM.equals(visible.get(2).id)) {
             throw new AssertionError("fm position");
         }
-        if (!HomeMenuConfig.ID_BLUETOOTH.equals(visible.get(5).id)) {
+        if (!HomeMenuConfig.ID_BLUETOOTH.equals(visible.get(3).id)) {
             throw new AssertionError("bluetooth position");
         }
-        if (!HomeMenuConfig.ID_SETTINGS.equals(visible.get(6).id)) {
+        if (!HomeMenuConfig.ID_SETTINGS.equals(visible.get(4).id)) {
             throw new AssertionError("settings position");
+        }
+    }
+
+    @Test
+    public void migrateHomePrefs_renormalizesStockOrder() {
+        HomeMenuConfig.saveOrder(prefs, Arrays.asList(
+                HomeMenuConfig.ID_SOULSEEK, HomeMenuConfig.ID_FM, HomeMenuConfig.ID_MUSIC));
+        HomeMenuConfig.migrateHomePrefsIfNeeded(prefs);
+        List<String> home = HomeMenuConfig.loadHomeOrderIds(prefs);
+        if (!HomeMenuConfig.ID_MUSIC.equals(home.get(0))) {
+            throw new AssertionError("music should lead stock block");
+        }
+        if (!HomeMenuConfig.ID_FM.equals(home.get(1))) {
+            throw new AssertionError("fm should follow music when coming-soon off");
+        }
+        if (!HomeMenuConfig.ID_SOULSEEK.equals(home.get(home.size() - 1))) {
+            throw new AssertionError("solar extras trail");
+        }
+    }
+
+    @Test
+    public void comingSoonOffByDefault() {
+        List<String> ids = HomeMenuConfig.loadHomeOrderIds(prefs);
+        if (ids.contains(HomeMenuConfig.ID_VIDEOS)) throw new AssertionError("videos default on");
+        if (ids.contains(HomeMenuConfig.ID_PHOTOS)) throw new AssertionError("photos default on");
+        if (ids.contains(HomeMenuConfig.ID_AUDIOBOOKS)) throw new AssertionError("audiobooks default on");
+        List<HomeMenuConfig.Entry> editor = HomeMenuConfig.loadEditorCatalogEntries();
+        boolean hasVideos = false;
+        for (HomeMenuConfig.Entry e : editor) {
+            if (HomeMenuConfig.ID_VIDEOS.equals(e.id)) hasVideos = true;
+        }
+        if (!hasVideos) throw new AssertionError("videos missing from editor catalog");
+    }
+
+    @Test
+    public void migrateHomePrefs_disablesComingSoon() {
+        HomeMenuConfig.saveOrder(prefs, Arrays.asList(
+                HomeMenuConfig.ID_MUSIC, HomeMenuConfig.ID_VIDEOS, HomeMenuConfig.ID_SETTINGS));
+        HomeMenuConfig.migrateHomePrefsIfNeeded(prefs);
+        if (HomeMenuConfig.isShortcutEnabled(prefs, HomeMenuConfig.ID_VIDEOS)) {
+            throw new AssertionError("videos should be off after migrate");
+        }
+    }
+
+    @Test
+    public void normalizeOrder_enforcesFixedLayout() {
+        HomeMenuConfig.saveOrder(prefs, Arrays.asList(
+                HomeMenuConfig.ID_SOULSEEK, HomeMenuConfig.ID_MUSIC, HomeMenuConfig.ID_SETTINGS));
+        List<String> home = HomeMenuConfig.loadHomeOrderIds(prefs);
+        if (!HomeMenuConfig.ID_MUSIC.equals(home.get(0))) {
+            throw new AssertionError("music should lead in fixed order");
+        }
+        if (!HomeMenuConfig.ID_SOULSEEK.equals(home.get(home.size() - 1))) {
+            throw new AssertionError("soulseek should trail solar extras");
         }
     }
 
@@ -135,8 +197,7 @@ public class HomeMenuConfigTest {
         List<String> ids = HomeMenuConfig.loadHomeOrderIds(prefs);
         if (ids.contains(HomeMenuConfig.ID_APPS)) throw new AssertionError("apps default");
         if (ids.contains(HomeMenuConfig.ID_THEMES)) throw new AssertionError("themes default");
-        if (!ids.contains(HomeMenuConfig.ID_VIDEOS)) throw new AssertionError("videos default on");
-        if (!ids.contains(HomeMenuConfig.ID_PHOTOS)) throw new AssertionError("photos default on");
+        if (ids.contains(HomeMenuConfig.ID_VIDEOS)) throw new AssertionError("videos default");
         HomeMenuConfig.setVisible(prefs, HomeMenuConfig.ID_THEMES, true);
         if (!HomeMenuConfig.isVisible(prefs, HomeMenuConfig.ID_THEMES)) {
             throw new AssertionError("themes toggle");
@@ -208,38 +269,42 @@ public class HomeMenuConfigTest {
     }
 
     @Test
-    public void editorHomeEntries_ignoresConnectivity() {
-        HomeMenuConfig.hideFromHome(prefs, HomeMenuConfig.ID_FM);
-        List<HomeMenuConfig.Entry> editor = HomeMenuConfig.loadEditorHomeEntries(prefs);
-        List<HomeMenuConfig.Entry> offlineLive = HomeMenuConfig.loadVisibleForDisplay(prefs, false, false);
-        if (editor.size() <= offlineLive.size()) {
-            throw new AssertionError("editor should include home-order items regardless of connectivity");
+    public void editorCatalogEntries_followFixedOrder() {
+        List<HomeMenuConfig.Entry> editor = HomeMenuConfig.loadEditorCatalogEntries();
+        if (editor.size() < 11) throw new AssertionError("catalog too small");
+        if (!HomeMenuConfig.ID_AUDIOBOOKS.equals(editor.get(3).id)) {
+            throw new AssertionError("audiobooks slot in editor");
         }
-        boolean fmInMoreEditor = false;
-        for (HomeMenuConfig.Entry e : HomeMenuConfig.loadEditorMoreEntries(prefs)) {
-            if (HomeMenuConfig.ID_FM.equals(e.id)) fmInMoreEditor = true;
-        }
-        if (!fmInMoreEditor) throw new AssertionError("fm should appear in more editor list");
     }
 
     @Test
-    public void toggleAndReorderRoundTrip() {
+    public void toggleThemesOnHome() {
         HomeMenuConfig.setVisible(prefs, HomeMenuConfig.ID_THEMES, true);
         if (!HomeMenuConfig.isVisible(prefs, HomeMenuConfig.ID_THEMES)) {
             throw new AssertionError("themes not visible");
         }
-        List<String> ids = new ArrayList<String>(HomeMenuConfig.loadHomeOrderIds(prefs));
-        int soulseek = ids.indexOf(HomeMenuConfig.ID_SOULSEEK);
-        int themes = ids.indexOf(HomeMenuConfig.ID_THEMES);
-        if (soulseek < 0 || themes < 0) throw new AssertionError("missing ids");
-        HomeMenuConfig.move(prefs, themes, soulseek);
-        ids = HomeMenuConfig.loadHomeOrderIds(prefs);
-        if (ids.indexOf(HomeMenuConfig.ID_THEMES) != soulseek) {
-            throw new AssertionError("reorder failed");
-        }
         HomeMenuConfig.setVisible(prefs, HomeMenuConfig.ID_SETTINGS, false);
         if (!HomeMenuConfig.isVisible(prefs, HomeMenuConfig.ID_SETTINGS)) {
             throw new AssertionError("settings must stay visible");
+        }
+    }
+
+    @Test
+    public void loadHomeDisplayIds_matchesVisibleHomeOrderWhenOnline() {
+        HomeMenuConfig.setMoreEnabled(prefs, true);
+        HomeMenuConfig.hideFromHome(prefs, HomeMenuConfig.ID_FM);
+        List<String> display = HomeMenuConfig.loadHomeDisplayIds(prefs, true, true, true);
+        List<HomeMenuConfig.Entry> visible = HomeMenuConfig.loadVisibleForDisplay(prefs, true, true);
+        if (display.size() != visible.size() + 1) {
+            throw new AssertionError("display size " + display.size() + " visible " + visible.size());
+        }
+        for (int i = 0; i < visible.size(); i++) {
+            if (!visible.get(i).id.equals(display.get(i))) {
+                throw new AssertionError("order mismatch at " + i);
+            }
+        }
+        if (!HomeMenuConfig.ID_MORE.equals(display.get(display.size() - 1))) {
+            throw new AssertionError("more tile last");
         }
     }
 
@@ -251,7 +316,10 @@ public class HomeMenuConfigTest {
             Object v = map.get(key);
             return v instanceof String ? (String) v : def;
         }
-        @Override public int getInt(String key, int def) { return def; }
+        @Override public int getInt(String key, int def) {
+            Object v = map.get(key);
+            return v instanceof Integer ? (Integer) v : def;
+        }
         @Override public long getLong(String key, long def) { return def; }
         @Override public float getFloat(String key, float def) { return def; }
         @Override public boolean getBoolean(String key, boolean def) {

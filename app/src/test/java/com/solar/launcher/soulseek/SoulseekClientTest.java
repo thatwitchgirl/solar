@@ -103,9 +103,29 @@ public class SoulseekClientTest {
     }
 
     @Test
-    public void isFlacFile_detectsExtension() {
-        assertTrue(SoulseekClient.Result.isFlacFile("music/track.FLAC"));
-        assertFalse(SoulseekClient.Result.isFlacFile("music/track.mp3"));
+    public void overBitrateThreshold_usesWireBitrate() {
+        SoulseekClient.Result r320 = new SoulseekClient.Result("a", "a.mp3", 4 * 1024 * 1024, 320, 180, true, true, 0);
+        SoulseekClient.Result r192 = new SoulseekClient.Result("b", "b.mp3", 3 * 1024 * 1024, 192, 180, true, true, 0);
+        SoulseekClient.Result rFlac = new SoulseekClient.Result("c", "c.flac", 20 * 1024 * 1024, 900, 180, true, true, 0);
+        assertFalse(r320.isOverBitrateThreshold());
+        assertFalse(r192.isOverBitrateThreshold());
+        assertTrue(rFlac.isOverBitrateThreshold());
+    }
+
+    @Test
+    public void overBitrateThreshold_estimatesFromSizeAndDuration() {
+        long size = 40L * 1024 * 1024;
+        int duration = 600;
+        SoulseekClient.Result r = new SoulseekClient.Result("a", "big.mp3", size, 0, duration, true, true, 0);
+        assertTrue(r.isOverBitrateThreshold());
+    }
+
+    @Test
+    public void overBitrateThreshold_treatsLosslessExtensionAsHighWhenUnknown() {
+        SoulseekClient.Result flac = new SoulseekClient.Result("a", "music/track.FLAC", 10 * 1024 * 1024, 0, 0, true, true, 0);
+        SoulseekClient.Result mp3 = new SoulseekClient.Result("b", "music/track.mp3", 3 * 1024 * 1024, 0, 0, true, true, 0);
+        assertTrue(flac.isOverBitrateThreshold());
+        assertFalse(mp3.isOverBitrateThreshold());
     }
 
     @Test

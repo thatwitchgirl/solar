@@ -38,6 +38,7 @@ public class ThemeManager {
 
     private static String themesRootPath = PATH_THEMES;
     private static ThemeEntry bundledFallback;
+    private static Context assetContext;
 
     public static class ThemeEntry {
         public final String folderPath;
@@ -62,7 +63,6 @@ public class ThemeManager {
     private static final Map<String, Bitmap> scaledRowBitmapCache = new HashMap<>();
     private static Typeface cachedFont;
     private static String cachedFontKey = "";
-    private static int buttonRadiusOverride = Integer.MIN_VALUE;
     private static boolean statusBarMatchItemText = true;
 
     /** ponytail: external Themes/ with filesDir fallback when sdcard missing (emulator). */
@@ -85,6 +85,7 @@ public class ThemeManager {
 
     /** Extract bundled Default → themes root; load in-memory fallback if copy fails. */
     public static void ensureBundledDefault(Context ctx) {
+        assetContext = ctx.getApplicationContext();
         themesRootPath = resolveThemesRoot(ctx);
         try {
             File dest = new File(themesRootPath, BUILTIN_DEFAULT_FOLDER);
@@ -92,9 +93,121 @@ public class ThemeManager {
             if (!config.isFile() || config.length() == 0) {
                 if (!dest.exists()) dest.mkdirs();
                 copyAssetTree(ctx.getAssets(), BUNDLED_ASSET_DIR, dest);
+            } else if (isLegacyStockDefaultTheme(readConfigJson(config))) {
+                copyAssetTree(ctx.getAssets(), BUNDLED_ASSET_DIR, dest);
+            } else {
+                syncBundledSolarAssets(ctx, dest);
+                syncBundledThemeBlocks(ctx, dest);
+                copyMissingBundledAssets(ctx, dest);
             }
         } catch (Exception ignored) {}
         ensureBundledFallback(ctx);
+    }
+
+    /** Copy solarConfig assets + keys into an existing Default folder (legacy Circular installs). */
+    private static void syncBundledSolarAssets(Context ctx, File destDir) {
+        try {
+            byte[] raw = readAllFromAsset(ctx.getAssets(), BUNDLED_ASSET_DIR + "/config.json");
+            JSONObject bundled = new JSONObject(new String(raw, "UTF-8"));
+            JSONObject solar = bundled.optJSONObject("solarConfig");
+            if (solar == null) return;
+            java.util.Iterator<String> keys = solar.keys();
+            while (keys.hasNext()) {
+                String ref = solar.optString(keys.next(), "").trim();
+                if (ref.isEmpty() || ref.contains("://") || ref.startsWith("#")) continue;
+                String base = new File(ref.replace('\\', '/')).getName();
+                File out = new File(destDir, base);
+                if (!out.isFile() || out.length() == 0) {
+                    try {
+                        copyAsset(ctx.getAssets(), BUNDLED_ASSET_DIR + "/" + ref.replace('\\', '/'), out);
+                    } catch (Exception e) {
+                        copyAsset(ctx.getAssets(), BUNDLED_ASSET_DIR + "/" + base, out);
+                    }
+                }
+            }
+            File config = new File(destDir, "config.json");
+            JSONObject destRoot = new JSONObject(new String(readAll(config), "UTF-8"));
+            JSONObject destSolar = destRoot.optJSONObject("solarConfig");
+            boolean changed = false;
+            if (destSolar == null) {
+                destSolar = new JSONObject();
+                changed = true;
+            }
+            keys = solar.keys();
+            while (keys.hasNext()) {
+                String k = keys.next();
+                if (!destSolar.has(k)) {
+                    destSolar.put(k, solar.opt(k));
+                    changed = true;
+                }
+            }
+            if (changed) {
+                destRoot.put("solarConfig", destSolar);
+                OutputStream fos = new FileOutputStream(config);
+                fos.write(destRoot.toString(2).getBytes("UTF-8"));
+                fos.close();
+            }
+        } catch (Exception ignored) {}
+    }
+
+    /** Merge missing Y1 config blocks from bundled Aura into an existing Default folder. */
+    private static void syncBundledThemeBlocks(Context ctx, File destDir) {
+        try {
+            byte[] raw = readAllFromAsset(ctx.getAssets(), BUNDLED_ASSET_DIR + "/config.json");
+            JSONObject bundled = new JSONObject(new String(raw, "UTF-8"));
+            File config = new File(destDir, "config.json");
+            JSONObject destRoot = new JSONObject(new String(readAll(config), "UTF-8"));
+            boolean changed = false;
+            for (String block : new String[]{"itemConfig", "menuConfig", "homePageConfig", "statusConfig"}) {
+                JSONObject src = bundled.optJSONObject(block);
+                if (src == null) continue;
+                JSONObject dst = destRoot.optJSONObject(block);
+                if (dst == null) {
+                    destRoot.put(block, new JSONObject(src.toString()));
+                    changed = true;
+                    continue;
+                }
+                java.util.Iterator<String> keys = src.keys();
+                while (keys.hasNext()) {
+                    String k = keys.next();
+                    String v = src.optString(k, "").trim();
+                    if (v.isEmpty()) continue;
+                    if (!dst.has(k) || dst.optString(k, "").trim().isEmpty()) {
+                        dst.put(k, src.opt(k));
+                        changed = true;
+                    }
+                }
+            }
+            if (changed) {
+                OutputStream fos = new FileOutputStream(config);
+                fos.write(destRoot.toString(2).getBytes("UTF-8"));
+                fos.close();
+            }
+        } catch (Exception ignored) {}
+    }
+
+    /** Copy bundled theme files that are missing or empty on disk (post-OTA / partial SD). */
+    private static void copyMissingBundledAssets(Context ctx, File destDir) {
+        try {
+            copyMissingAssetTree(ctx.getAssets(), BUNDLED_ASSET_DIR, destDir);
+        } catch (Exception ignored) {}
+    }
+
+    private static void copyMissingAssetTree(AssetManager am, String assetDir, File destDir)
+            throws Exception {
+        String[] names = am.list(assetDir);
+        if (names == null) return;
+        for (String name : names) {
+            String childAsset = assetDir + "/" + name;
+            File out = new File(destDir, name);
+            String[] sub = am.list(childAsset);
+            if (sub != null && sub.length > 0) {
+                if (!out.exists()) out.mkdirs();
+                copyMissingAssetTree(am, childAsset, out);
+            } else if (!out.isFile() || out.length() == 0) {
+                copyAsset(am, childAsset, out);
+            }
+        }
     }
 
     private static void ensureBundledFallback(Context ctx) {
@@ -102,8 +215,14 @@ public class ThemeManager {
         try {
             byte[] data = readAllFromAsset(ctx.getAssets(), BUNDLED_ASSET_DIR + "/config.json");
             JSONObject json = new JSONObject(new String(data, "UTF-8"));
+            String title = "Aura";
+            JSONObject info = json.optJSONObject("theme_info");
+            if (info != null) {
+                String t = info.optString("title", "").trim();
+                if (!t.isEmpty()) title = t;
+            }
             bundledFallback = new ThemeEntry("asset://" + BUNDLED_ASSET_DIR,
-                    BUILTIN_DEFAULT_FOLDER, "Default", json);
+                    BUILTIN_DEFAULT_FOLDER, title, json);
         } catch (Exception ignored) {}
     }
 
@@ -157,8 +276,9 @@ public class ThemeManager {
         if (currentThemeIndex >= availableThemes.size()) currentThemeIndex = 0;
     }
 
-    /** Rescan theme folders without clearing bitmap/font caches (theme picker refresh). */
+    /** Rescan theme folders; clears stale bitmap cache so home icons match the active theme. */
     public static void rescanInstalled(Context ctx) {
+        bitmapCache.clear();
         if (ctx != null) themesRootPath = resolveThemesRoot(ctx);
         String prevFolder = availableThemes.isEmpty() ? BUILTIN_DEFAULT_FOLDER
                 : availableThemes.get(Math.min(currentThemeIndex, availableThemes.size() - 1)).folderName;
@@ -223,6 +343,42 @@ public class ThemeManager {
         }
     }
 
+    private static JSONObject readConfigJson(File config) {
+        try {
+            if (config == null || !config.isFile()) return new JSONObject();
+            return new JSONObject(new String(readAll(config), "UTF-8"));
+        } catch (Exception e) {
+            return new JSONObject();
+        }
+    }
+
+    /** Stock Y1 ROM shipped Circular as Themes/Default before Solar Aura. */
+    static boolean isLegacyStockDefaultTheme(JSONObject json) {
+        if (json == null) return true;
+        JSONObject info = json.optJSONObject("theme_info");
+        String title = info != null ? info.optString("title", "").trim() : "";
+        return isLegacyStockDefaultTitle(title);
+    }
+
+    static boolean isLegacyStockDefaultTitle(String title) {
+        if (title == null || title.isEmpty()) return true;
+        return "Circular".equalsIgnoreCase(title) || "Default".equalsIgnoreCase(title);
+    }
+
+    private static String displayNameForBuiltinDefault(JSONObject json, String parsedDisplay) {
+        JSONObject info = json != null ? json.optJSONObject("theme_info") : null;
+        String title = info != null ? info.optString("title", "").trim() : "";
+        if (title.isEmpty() && parsedDisplay != null) title = parsedDisplay.trim();
+        if (!isLegacyStockDefaultTitle(title)) {
+            return !title.isEmpty() ? title : BUILTIN_DEFAULT_FOLDER;
+        }
+        if (bundledFallback != null && bundledFallback.displayName != null
+                && !bundledFallback.displayName.isEmpty()) {
+            return bundledFallback.displayName;
+        }
+        return "Aura";
+    }
+
     private static ThemeEntry parseFolder(File folder) {
         try {
             byte[] data = readAll(new File(folder, "config.json"));
@@ -235,7 +391,9 @@ public class ThemeManager {
                 if (info != null) display = info.optString("title", "");
             }
             if (display.isEmpty()) display = folder.getName();
-            if (BUILTIN_DEFAULT_FOLDER.equalsIgnoreCase(folder.getName())) display = "Default";
+            if (BUILTIN_DEFAULT_FOLDER.equalsIgnoreCase(folder.getName())) {
+                display = displayNameForBuiltinDefault(json, display);
+            }
             return new ThemeEntry(folder.getAbsolutePath(), folder.getName(), display, json);
         } catch (Exception e) {
             return null;
@@ -260,16 +418,67 @@ public class ThemeManager {
     }
 
     public static void setThemeByFolderPath(String path) {
-        if (path == null) return;
-        if ("default".equals(path)) {
-            path = new File(themesRootPath, BUILTIN_DEFAULT_FOLDER).getAbsolutePath();
+        int idx = findThemeIndexForPath(path);
+        if (idx >= 0) setThemeIndex(idx);
+    }
+
+    /** Resolve saved path, asset alias, or folder name to a theme list index. */
+    public static int findThemeIndexForPath(String path) {
+        if (path == null || path.isEmpty()) return -1;
+        String normalized = path.trim();
+        if ("default".equalsIgnoreCase(normalized) || normalized.startsWith("asset://")) {
+            return findBuiltInDefaultIndex();
         }
         for (int i = 0; i < availableThemes.size(); i++) {
-            if (path.equals(availableThemes.get(i).folderPath)) {
+            if (normalized.equals(availableThemes.get(i).folderPath)) return i;
+        }
+        String folder = new File(normalized).getName();
+        if (!folder.isEmpty()) {
+            for (int i = 0; i < availableThemes.size(); i++) {
+                if (folder.equalsIgnoreCase(availableThemes.get(i).folderName)) return i;
+            }
+        }
+        return -1;
+    }
+
+    public static int findBuiltInDefaultIndex() {
+        for (int i = 0; i < availableThemes.size(); i++) {
+            if (isBuiltInDefault(availableThemes.get(i))) return i;
+        }
+        return availableThemes.isEmpty() ? -1 : 0;
+    }
+
+    /** Disk path to persist when applying a theme (Default always uses Themes/Default). */
+    public static String persistPathForTheme(ThemeEntry theme) {
+        if (theme == null) return "";
+        if (isBuiltInDefault(theme)) {
+            return new File(themesRootPath, BUILTIN_DEFAULT_FOLDER).getAbsolutePath();
+        }
+        return theme.folderPath != null ? theme.folderPath : "";
+    }
+
+    public static void ensureActiveThemeOrFallback(Context ctx) {
+        if (ctx != null) themesRootPath = resolveThemesRoot(ctx);
+        ThemeEntry cur = getCurrentTheme();
+        if (cur == null) {
+            resetToBuiltinDefault();
+            return;
+        }
+        if (cur.folderPath != null && cur.folderPath.startsWith("asset://")) return;
+        File cfg = new File(cur.folderPath, "config.json");
+        if (!cfg.isFile() || cfg.length() == 0) {
+            resetToBuiltinDefault();
+        }
+    }
+
+    public static void resetToBuiltinDefault() {
+        for (int i = 0; i < availableThemes.size(); i++) {
+            if (isBuiltInDefault(availableThemes.get(i))) {
                 setThemeIndex(i);
                 return;
             }
         }
+        setThemeIndex(0);
     }
 
     public static int getCurrentThemeIndex() {
@@ -282,7 +491,7 @@ public class ThemeManager {
             try {
                 JSONObject stub = new JSONObject();
                 stub.put("homePageConfig", new JSONObject());
-                return new ThemeEntry("", BUILTIN_DEFAULT_FOLDER, "Default", stub);
+                return new ThemeEntry("", BUILTIN_DEFAULT_FOLDER, "Aura", stub);
             } catch (Exception e) {
                 throw new IllegalStateException("no theme");
             }
@@ -335,14 +544,15 @@ public class ThemeManager {
         return statusBarMatchItemText;
     }
 
-    /** ponytail: statusConfig.statusBarColor with alpha; transparent when unset (wallpaper shows through) */
+    /** ponytail: statusConfig.statusBarColor with alpha; dark fallback when unset on non-Y1 themes */
     public static int getStatusBarBackgroundColor() {
         JSONObject status = getCurrentTheme().root.optJSONObject("statusConfig");
         if (status != null) {
             int c = parseColorOpt(status, "statusBarColor");
             if (c != Integer.MIN_VALUE) return c;
         }
-        return 0x00000000;
+        if (hasY1Blocks(getCurrentTheme().root)) return 0x00000000;
+        return 0xE6121212;
     }
 
     /** solarConfig.statusBarTextColor if set; else item text when match on, else Y1 statusConfig chain. */
@@ -440,24 +650,28 @@ public class ThemeManager {
         return 0x44FFFFFF;
     }
 
-    public static void setButtonRadiusOverride(int dp) {
-        buttonRadiusOverride = dp;
-    }
-
-    public static void clearButtonRadiusOverride() {
-        buttonRadiusOverride = Integer.MIN_VALUE;
-    }
-
-    public static boolean hasButtonRadiusOverride() {
-        return buttonRadiusOverride >= 0;
-    }
-
     private static JSONObject solarBlock(JSONObject root) {
         return root != null ? root.optJSONObject("solarConfig") : null;
     }
 
     private static JSONObject solarBlock() {
-        return solarBlock(getCurrentTheme().root);
+        JSONObject solar = solarBlock(getCurrentTheme().root);
+        if (bundledFallback != null) {
+            JSONObject bundled = solarBlock(bundledFallback.root);
+            if (bundled != null) {
+                try {
+                    if (solar == null) return bundled;
+                    JSONObject merged = new JSONObject(solar.toString());
+                    java.util.Iterator<String> keys = bundled.keys();
+                    while (keys.hasNext()) {
+                        String k = keys.next();
+                        if (!merged.has(k)) merged.put(k, bundled.opt(k));
+                    }
+                    return merged;
+                } catch (Exception ignored) {}
+            }
+        }
+        return solar;
     }
 
     private static Integer colorFromSolarThen(String solarKey, JSONObject legacy, String legacyKey) {
@@ -589,6 +803,148 @@ public class ThemeManager {
         return lum > 140 ? 0xFF000000 : 0xFFFFFFFF;
     }
 
+    /** Fixed neutral panel for hold-Back context menus — not theme dialogConfig art. */
+    public static int getContextMenuPanelColor() {
+        return 0xEE252528;
+    }
+
+    /** WCAG relative luminance (sRGB), 0..1 */
+    public static double relativeLuminance(int argb) {
+        double r = channelLinear((argb >> 16) & 0xFF);
+        double g = channelLinear((argb >> 8) & 0xFF);
+        double b = channelLinear(argb & 0xFF);
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    }
+
+    private static double channelLinear(int c) {
+        double s = c / 255.0;
+        return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+    }
+
+    public static double contrastRatio(int fg, int bg) {
+        double l1 = relativeLuminance(fg);
+        double l2 = relativeLuminance(bg);
+        double lighter = Math.max(l1, l2);
+        double darker = Math.min(l1, l2);
+        return (lighter + 0.05) / (darker + 0.05);
+    }
+
+    /** Representative brand orange from colour logotype — contrast probe for wordmark variant. */
+    public static final int SOLAR_BRAND_ORANGE = 0xFFF5A020;
+
+    /** Pick landscape SOLAR logotype asset path for inline attribution on {@code backgroundArgb}. */
+    public static String pickSolarLogotypeAsset(int backgroundArgb) {
+        int bg = backgroundArgb | 0xFF000000;
+        if (contrastRatio(SOLAR_BRAND_ORANGE, bg) >= 3.0) {
+            return "logo/solar_logotype_colour_full_res.png";
+        }
+        return relativeLuminance(bg) > 0.45
+                ? "logo/solar_logotype_black_full_res.png"
+                : "logo/solar_logotype_white_full_res.png";
+    }
+
+    /** ponytail: min 3:1 for menu labels on neutral panel; fix light-on-light themes */
+    public static int ensureReadableOnBackground(int textColor, int backgroundColor) {
+        int fg = textColor | 0xFF000000;
+        int bg = (backgroundColor | 0xFF000000);
+        if (contrastRatio(fg, bg) >= 3.0) return textColor;
+        return relativeLuminance(bg) > 0.45 ? 0xFF1A1A1A : 0xFFE8E8E8;
+    }
+
+    /** Selected row text — only adjust when selection uses a solid fill, not a theme bitmap. */
+    public static int textOnRowSelection(int selectedColor) {
+        return textOnRowSelection(selectedColor, false);
+    }
+
+    public static int textOnRowSelection(int selectedColor, boolean menuRows) {
+        if (usesThemedSelectionBitmap(menuRows)) return selectedColor;
+        if (hasY1Blocks(getCurrentTheme().root)) return selectedColor;
+        return ensureReadableOnBackground(selectedColor, getRowSelectionFillColor());
+    }
+
+    /** Y1 themes decorate selected rows with PNG assets, not solid progressColor fills. */
+    public static boolean usesThemedSelectionBitmap(boolean menuRows) {
+        ThemeEntry t = getCurrentTheme();
+        if (menuRows) {
+            JSONObject menu = t.root.optJSONObject("menuConfig");
+            if (menu != null) {
+                String path = menu.optString("menuItemSelectedBackground", "").trim();
+                if (!path.isEmpty() && getThemeBitmap(path) != null) return true;
+            }
+        }
+        JSONObject item = t.root.optJSONObject("itemConfig");
+        if (item != null) {
+            String path = item.optString("itemSelectedBackground", "").trim();
+            if (!path.isEmpty() && getThemeBitmap(path) != null) return true;
+        }
+        return false;
+    }
+
+    public static int contextMenuMutedText(int themeHintColor) {
+        int muted = withAlpha(themeHintColor, 0xBB);
+        return ensureReadableOnBackground(muted, getContextMenuPanelColor());
+    }
+
+    /** Greyscale / neutral theme colours (black, white, grey) with negligible hue. */
+    public static boolean isAchromaticColor(int argb) {
+        int r = (argb >> 16) & 0xFF;
+        int g = (argb >> 8) & 0xFF;
+        int b = argb & 0xFF;
+        int max = Math.max(r, Math.max(g, b));
+        int min = Math.min(r, Math.min(g, b));
+        return (max - min) <= 24;
+    }
+
+    /**
+     * Context quick menu without row PNG decoration: selected/unselected theme colours
+     * can collapse to the same grey/white on the neutral panel — dim unselected from selected.
+     */
+    public static boolean needsContextMenuUnselectedDimming(int themeNormal, int themeSelected,
+            boolean menuRows) {
+        if (usesThemedSelectionBitmap(menuRows)) return false;
+        int normal = themeNormal | 0xFF000000;
+        int selected = themeSelected | 0xFF000000;
+        if (!isAchromaticColor(normal) || !isAchromaticColor(selected)) return false;
+        return contrastRatio(normal, selected) < 2.0;
+    }
+
+    /** Unselected label/icon colour on the hold-Back context panel. */
+    public static int contextMenuTextNormal(int themeNormal, int themeSelected, int panelBg,
+            boolean menuRows) {
+        int readableNormal = ensureReadableOnBackground(themeNormal, panelBg);
+        if (!needsContextMenuUnselectedDimming(themeNormal, themeSelected, menuRows)) {
+            return readableNormal;
+        }
+        int selectedOnPanel = ensureReadableOnBackground(themeSelected | 0xFF000000, panelBg);
+        for (float mix = 0.45f; mix <= 0.72f; mix += 0.09f) {
+            int dimmed = ensureReadableOnBackground(blendTowardBackground(selectedOnPanel, panelBg, mix),
+                    panelBg);
+            if (contrastRatio(dimmed, selectedOnPanel) >= 1.5) return dimmed;
+        }
+        return readableNormal;
+    }
+
+    public static int contextMenuTextSelected(int themeSelected, boolean menuRows) {
+        return textOnRowSelection(themeSelected, menuRows);
+    }
+
+    private static int blendTowardBackground(int color, int background, float amount) {
+        amount = Math.max(0f, Math.min(1f, amount));
+        int ca = color | 0xFF000000;
+        int ba = background | 0xFF000000;
+        int a = (color >>> 24) & 0xFF;
+        int cr = (ca >> 16) & 0xFF;
+        int cg = (ca >> 8) & 0xFF;
+        int cb = ca & 0xFF;
+        int br = (ba >> 16) & 0xFF;
+        int bg = (ba >> 8) & 0xFF;
+        int bb = ba & 0xFF;
+        int r = (int) (cr + (br - cr) * amount);
+        int g = (int) (cg + (bg - cg) * amount);
+        int b = (int) (cb + (bb - cb) * amount);
+        return (a << 24) | (r << 16) | (g << 8) | b;
+    }
+
     public static void applyThemedTextStyle(TextView tv, int fillColor) {
         if (tv == null) return;
         tv.setTextColor(fillColor);
@@ -602,7 +958,6 @@ public class ThemeManager {
     }
 
     public static int getButtonRadius() {
-        if (buttonRadiusOverride >= 0) return buttonRadiusOverride;
         ThemeEntry t = getCurrentTheme();
         JSONObject solar = solarBlock(t.root);
         if (solar != null && solar.has("button_radius")) return solar.optInt("button_radius", 10);
@@ -672,6 +1027,30 @@ public class ThemeManager {
         Bitmap bmp = getThemeBitmap(dialog.optString("dialogBackground", ""));
         if (bmp == null) return null;
         return new BitmapDrawable(res, bmp);
+    }
+
+    public static int getDialogBackgroundColor() {
+        JSONObject dialog = getCurrentTheme().root.optJSONObject("dialogConfig");
+        if (dialog != null) {
+            int c = parseColorOpt(dialog, "dialogBackgroundColor");
+            if (c != Integer.MIN_VALUE) return c;
+        }
+        return 0xE6000000;
+    }
+
+    public static Drawable getDialogOptionRowBackgroundScaled(android.content.res.Resources res,
+            boolean selected, int widthPx, int heightPx) {
+        if (widthPx <= 0 || heightPx <= 0) return null;
+        JSONObject dialog = getCurrentTheme().root.optJSONObject("dialogConfig");
+        if (dialog == null) return null;
+        String path = selected
+                ? dialog.optString("dialogOptionSelectedBackground", "")
+                : dialog.optString("dialogOptionBackground", "");
+        if (path.isEmpty()) return null;
+        Bitmap bmp = getThemeBitmap(path);
+        if (bmp == null) return null;
+        Bitmap scaled = cachedScaledRowBitmap("dialog", selected, widthPx, heightPx, bmp);
+        return new BitmapDrawable(res, scaled);
     }
 
     public static Bitmap centerCropBitmap(Bitmap src, int targetW, int targetH) {
@@ -750,30 +1129,119 @@ public class ThemeManager {
         return null;
     }
 
-    public static Bitmap getThemeBitmap(String relativePath) {
-        if (relativePath == null || relativePath.isEmpty()) return null;
-        ThemeEntry t = getCurrentTheme();
-        String cacheKey = t.folderPath + ":" + relativePath;
-        if (bitmapCache.containsKey(cacheKey)) return bitmapCache.get(cacheKey);
-        File f = resolveThemeAssetFile(t.folderPath, relativePath);
-        if (f == null) return null;
+    /** Max decode side for solarConfig icons (matches y1_setting_icon_max at ~2x density). */
+    private static final int SOLAR_CONFIG_ICON_MAX_PX = 292;
+
+    static Bitmap decodeBitmapFileMaxSide(String path, int maxSide) {
+        if (path == null || maxSide <= 0) return null;
         try {
-            Bitmap bmp = BitmapFactory.decodeFile(f.getAbsolutePath());
-            if (bmp != null) bitmapCache.put(cacheKey, bmp);
-            return bmp;
+            BitmapFactory.Options bounds = new BitmapFactory.Options();
+            bounds.inJustDecodeBounds = true;
+            BitmapFactory.decodeFile(path, bounds);
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null;
+            int sample = 1;
+            while (Math.max(bounds.outWidth, bounds.outHeight) / sample > maxSide) sample *= 2;
+            BitmapFactory.Options opts = new BitmapFactory.Options();
+            opts.inSampleSize = sample;
+            return BitmapFactory.decodeFile(path, opts);
         } catch (Exception e) {
             return null;
         }
     }
 
+    private static Bitmap decodeBundledThemeAsset(String relativePath, int maxSide) {
+        if (assetContext == null || relativePath == null || relativePath.isEmpty()) return null;
+        String norm = relativePath.trim().replace('\\', '/');
+        while (norm.startsWith("./")) norm = norm.substring(2);
+        String[] candidates = {
+                BUNDLED_ASSET_DIR + "/" + norm,
+                BUNDLED_ASSET_DIR + "/" + new File(norm).getName()
+        };
+        AssetManager am = assetContext.getAssets();
+        for (String assetPath : candidates) {
+            Bitmap bmp = decodeAssetStreamMaxSide(am, assetPath, maxSide);
+            if (bmp != null) return bmp;
+        }
+        return null;
+    }
+
+    private static Bitmap decodeAssetStreamMaxSide(AssetManager am, String assetPath, int maxSide) {
+        InputStream in = null;
+        try {
+            BitmapFactory.Options bounds = new BitmapFactory.Options();
+            bounds.inJustDecodeBounds = true;
+            in = am.open(assetPath);
+            BitmapFactory.decodeStream(in, null, bounds);
+            in.close();
+            in = null;
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null;
+            int sample = 1;
+            if (maxSide > 0) {
+                while (Math.max(bounds.outWidth, bounds.outHeight) / sample > maxSide) sample *= 2;
+            }
+            BitmapFactory.Options opts = new BitmapFactory.Options();
+            opts.inSampleSize = sample;
+            in = am.open(assetPath);
+            return BitmapFactory.decodeStream(in, null, opts);
+        } catch (Exception e) {
+            return null;
+        } finally {
+            if (in != null) {
+                try { in.close(); } catch (Exception ignored) {}
+            }
+        }
+    }
+
+    private static Bitmap decodeBitmapFile(String path) {
+        try {
+            return BitmapFactory.decodeFile(path);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** Disk path, asset:// theme folder, or bundled Aura fallback for built-in Default. */
+    private static Bitmap decodeThemeBitmapForEntry(ThemeEntry entry, String relativePath, int maxSide) {
+        if (entry == null || relativePath == null || relativePath.isEmpty()) return null;
+        Bitmap bmp = null;
+        String folderPath = entry.folderPath;
+        if (folderPath != null && folderPath.startsWith("asset://")) {
+            bmp = decodeBundledThemeAsset(relativePath, maxSide);
+        } else {
+            File f = resolveThemeAssetFile(folderPath, relativePath);
+            if (f != null && f.isFile()) {
+                bmp = maxSide > 0
+                        ? decodeBitmapFileMaxSide(f.getAbsolutePath(), maxSide)
+                        : decodeBitmapFile(f.getAbsolutePath());
+            }
+        }
+        if (bmp == null && isBuiltInDefault(entry)) {
+            bmp = decodeBundledThemeAsset(relativePath, maxSide);
+        }
+        return bmp;
+    }
+
+    public static Bitmap getThemeBitmap(String relativePath) {
+        if (relativePath == null || relativePath.isEmpty()) return null;
+        ThemeEntry t = getCurrentTheme();
+        String cacheKey = t.folderPath + ":" + relativePath;
+        if (bitmapCache.containsKey(cacheKey)) return bitmapCache.get(cacheKey);
+        Bitmap bmp = decodeThemeBitmapForEntry(t, relativePath, 0);
+        if (bmp != null) bitmapCache.put(cacheKey, bmp);
+        return bmp;
+    }
+
     public static Bitmap getCustomIcon(String iconFileName, Context context, int defaultResId) {
         Bitmap themed = getThemeBitmap(iconFileName);
         if (themed != null) return themed;
-        File iconFile = new File(getCurrentTheme().folderPath, iconFileName);
-        if (iconFile.isFile()) {
-            try {
-                return BitmapFactory.decodeFile(iconFile.getAbsolutePath());
-            } catch (Exception ignored) {}
+        ThemeEntry t = getCurrentTheme();
+        if (t.folderPath != null && !t.folderPath.startsWith("asset://")) {
+            File iconFile = new File(t.folderPath, iconFileName);
+            if (iconFile.isFile()) {
+                try {
+                    return BitmapFactory.decodeFile(iconFile.getAbsolutePath());
+                } catch (Exception ignored) {}
+            }
         }
         return BitmapFactory.decodeResource(context.getResources(), defaultResId);
     }
@@ -794,6 +1262,14 @@ public class ThemeManager {
         return "app" + suffix;
     }
 
+    /** True when the active theme's config.json sets {@code solarConfig.{key}} (not bundled merge). */
+    public static boolean hasThemeSolarConfigKey(String key) {
+        if (key == null || key.isEmpty()) return false;
+        JSONObject solar = solarBlock(getCurrentTheme().root);
+        if (solar == null) return false;
+        return !solar.optString(key, "").trim().isEmpty();
+    }
+
     /**
      * solarConfig icon by key — theme asset filename; null if unset.
      * Soulseek keys: {@code appSoulseek} (home + Settings → Soulseek row),
@@ -805,7 +1281,19 @@ public class ThemeManager {
         if (solar == null || key == null || key.isEmpty()) return null;
         String path = solar.optString(key, "").trim();
         if (path.isEmpty()) return null;
-        return getThemeBitmap(path);
+        ThemeEntry t = getCurrentTheme();
+        String cacheKey = t.folderPath + ":solar:" + key;
+        if (bitmapCache.containsKey(cacheKey)) return bitmapCache.get(cacheKey);
+        Bitmap bmp = null;
+        File f = resolveThemeAssetFile(t.folderPath, path);
+        if (f != null) {
+            bmp = decodeBitmapFileMaxSide(f.getAbsolutePath(), SOLAR_CONFIG_ICON_MAX_PX);
+        }
+        if (bmp == null) {
+            bmp = decodeBundledThemeAsset(path, SOLAR_CONFIG_ICON_MAX_PX);
+        }
+        if (bmp != null) bitmapCache.put(cacheKey, bmp);
+        return bmp;
     }
 
     /** solarConfig app{Name} — theme asset for Solar-only apps; null if unset */
@@ -823,6 +1311,19 @@ public class ThemeManager {
         }
         if (path.isEmpty()) return null;
         return getThemeBitmap(path);
+    }
+
+    /**
+     * Home preview for Solar-only shortcuts: {@code solarConfig.app{Name}} when set;
+     * Podcasts falls back to stock {@code homePageConfig.audiobooks}.
+     */
+    public static Bitmap getSolarAppHomeIcon(Context context, String appName, int defaultResId) {
+        Bitmap solar = getSolarAppIcon(appName);
+        if (solar != null) return solar;
+        if ("Podcasts".equals(appName)) {
+            return getHomeIcon(context, "audiobooks", defaultResId);
+        }
+        return null;
     }
 
     /** homePageConfig key with stock drawable fallback */
@@ -855,13 +1356,7 @@ public class ThemeManager {
 
     public static Bitmap getThemeEntryBitmap(ThemeEntry entry, String relativePath) {
         if (entry == null || relativePath == null || relativePath.isEmpty()) return null;
-        File f = resolveThemeAssetFile(entry.folderPath, relativePath);
-        if (f == null || !f.isFile()) return null;
-        try {
-            return BitmapFactory.decodeFile(f.getAbsolutePath());
-        } catch (Exception e) {
-            return null;
-        }
+        return decodeThemeBitmapForEntry(entry, relativePath, 0);
     }
 
     /** Installed-theme wallpaper candidates (480×360 Y1 assets). */
@@ -1486,6 +1981,28 @@ public class ThemeManager {
             alphaProgress.put("playerConfig", new JSONObject().put("progressColor", "#8044ff00"));
             availableThemes.set(0, new ThemeEntry("/tmp", "alphap", "alphap", alphaProgress));
             if ((getProgressColor() >>> 24) != 0x80) throw new AssertionError("alpha progressColor");
+            int panel = getContextMenuPanelColor();
+            if (ensureReadableOnBackground(0xFFE8E8E8, panel) != 0xFFE8E8E8) {
+                throw new AssertionError("context menu keep readable text");
+            }
+            int fixed = ensureReadableOnBackground(0xFF555555, panel);
+            if (contrastRatio(fixed, panel) < 3.0) throw new AssertionError("context menu fix contrast");
+            if ((fixed & 0xFFFFFF) == 0x555555) throw new AssertionError("context menu fix applied");
+            if (!isAchromaticColor(0xFFFFFFFF) || !isAchromaticColor(0xFF888888)) {
+                throw new AssertionError("achromatic detect");
+            }
+            if (isAchromaticColor(0xFFFF0000)) throw new AssertionError("achromatic red");
+            if (!needsContextMenuUnselectedDimming(0xFFFFFFFF, 0xFFFEFEFE, false)) {
+                throw new AssertionError("near-white needs dimming");
+            }
+            if (needsContextMenuUnselectedDimming(0xFFFF0000, 0xFF0000FF, false)) {
+                throw new AssertionError("colour theme skip dimming");
+            }
+            int dim = contextMenuTextNormal(0xFFFFFFFF, 0xFFFFFFFF, panel, false);
+            int selOnPanel = ensureReadableOnBackground(0xFFFFFFFF, panel);
+            if (contrastRatio(dim, selOnPanel) < 1.5) {
+                throw new AssertionError("context menu dim contrast");
+            }
         } catch (AssertionError e) {
             throw e;
         } catch (Exception e) {

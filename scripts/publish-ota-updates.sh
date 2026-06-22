@@ -61,6 +61,14 @@ def sort_key(item):
 
 entries.sort(key=sort_key, reverse=True)
 
+max_nightlies = int(os.environ.get("SOLAR_OTA_MAX_NIGHTLIES", "12"))
+stable = [e for e in entries if not e[3]]
+nightly = [e for e in entries if e[3]]
+if len(nightly) > max_nightlies:
+    nightly = nightly[:max_nightlies]
+entries = nightly + stable
+entries.sort(key=sort_key, reverse=True)
+
 lines = [
     '<?xml version="1.0" encoding="utf-8"?>',
     f'<solar-updates base="{base}">',
@@ -93,7 +101,7 @@ push_update_repo() {
   cd "$dir"
   git config user.name "thesolarproject"
   git config user.email "anonymous@local"
-  git add -A updates.xml solar-*.apk 2>/dev/null || git add updates.xml
+  git add -A updates.xml solar-*.apk artist-separators.csv 2>/dev/null || git add updates.xml artist-separators.csv
   if git diff --staged --quiet; then
     echo "No OTA changes to push"
     return 0
@@ -102,10 +110,48 @@ push_update_repo() {
   git push "https://x-access-token:${PAT}@github.com/${UPDATE_REPO}.git" HEAD:main
 }
 
+copy_artist_separator_catalog() {
+  local dest="$1"
+  local src="$ROOT/catalog/artist-separators.csv"
+  if [[ -f "$src" ]]; then
+    cp "$src" "$dest/artist-separators.csv"
+    echo "copied artist-separators.csv"
+  fi
+}
+
+push_catalog() {
+  echo "== Push artist-separators.csv to github.com/${UPDATE_REPO} =="
+  clone_update_repo "$WORK/repo"
+  copy_artist_separator_catalog "$WORK/repo"
+  cd "$WORK/repo"
+  git config user.name "thesolarproject"
+  git config user.email "anonymous@local"
+  git add artist-separators.csv
+  if git diff --staged --quiet; then
+    echo "No catalog changes to push"
+    return 0
+  fi
+  git commit -m "Update artist separator exceptions catalog."
+  git push "https://x-access-token:${PAT}@github.com/${UPDATE_REPO}.git" HEAD:main
+}
+
+reset_catalog() {
+  echo "== Reset OTA catalog in github.com/${UPDATE_REPO} =="
+  clone_update_repo "$WORK/repo"
+  rm -f "$WORK/repo"/solar-*.apk "$WORK/repo"/updates.xml 2>/dev/null || true
+  cat > "$WORK/repo/updates.xml" <<EOF
+<?xml version="1.0" encoding="utf-8"?>
+<solar-updates base="${PAGES_BASE}">
+</solar-updates>
+EOF
+  push_update_repo "$WORK/repo" "Reset OTA catalog."
+}
+
 sync_from_releases() {
   echo "== Sync APKs from github.com/${SOURCE_REPO} releases =="
   clone_update_repo "$WORK/repo"
   rm -f "$WORK/repo"/solar-*.apk "$WORK/repo/updates.xml" 2>/dev/null || true
+  copy_artist_separator_catalog "$WORK/repo"
   auth_curl "https://api.github.com/repos/${SOURCE_REPO}/releases?per_page=100" \
     > "$WORK/releases.json"
   python3 - "$WORK/repo" "$WORK/releases.json" <<'PY'
@@ -146,12 +192,15 @@ add_release() {
   [[ -f "$apk" ]] || { echo "Missing APK: $apk" >&2; exit 1; }
   clone_update_repo "$WORK/repo"
   cp "$apk" "$WORK/repo/$(apk_name_for_tag "$tag")"
+  copy_artist_separator_catalog "$WORK/repo"
   write_updates_xml "$WORK/repo"
   push_update_repo "$WORK/repo" "OTA: ${tag} (${version_name})."
 }
 
 usage() {
   echo "Usage: $0 sync-from-releases" >&2
+  echo "       $0 reset" >&2
+  echo "       $0 push-catalog" >&2
   echo "       $0 add --apk PATH --tag TAG --version-name NAME --version-code N [--nightly]" >&2
   exit 1
 }
@@ -159,6 +208,12 @@ usage() {
 case "${1:-}" in
   sync-from-releases)
     sync_from_releases
+    ;;
+  reset)
+    reset_catalog
+    ;;
+  push-catalog)
+    push_catalog
     ;;
   add)
     shift
