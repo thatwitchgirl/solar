@@ -1315,6 +1315,7 @@ public class MainActivity extends Activity {
         try { isFullWidthMenus = prefs.getBoolean("full_width_menus", false); } catch (Exception e) {}
         try { playerAlbumBlurEnabled = prefs.getBoolean(PREF_PLAYER_ALBUM_BLUR, false); } catch (Exception e) {}
         try { migrateBackgroundPrefs(); } catch (Exception e) {}
+        try { HomeMenuConfig.migrateHomePrefsIfNeeded(prefs); } catch (Exception e) {}
         try { restorePlaybackQueue(); } catch (Exception e) {}
         try { scheduleStartupMountRetry(); } catch (Exception e) {}
         try { scheduleStartupUpdateNudge(); } catch (Exception e) {}
@@ -3138,18 +3139,20 @@ public class MainActivity extends Activity {
         containerSettingsItems.postDelayed(new Runnable() {
             @Override
             public void run() {
-                int idx = Math.max(1, targetFocusIndex);
+                int idx = Math.max(0, targetFocusIndex);
                 View target = null;
                 for (int i = idx; i < containerSettingsItems.getChildCount(); i++) {
                     View v = containerSettingsItems.getChildAt(i);
-                    if (v != null && v.isFocusable()) {
+                    if (v == null || !v.isFocusable()) continue;
+                    Object tag = v.getTag();
+                    if (tag instanceof String && ((String) tag).startsWith("home.shortcut.")) {
                         target = v;
                         idx = i;
                         break;
                     }
                 }
                 if (target == null) {
-                    for (int i = 1; i < containerSettingsItems.getChildCount(); i++) {
+                    for (int i = 0; i < containerSettingsItems.getChildCount(); i++) {
                         View v = containerSettingsItems.getChildAt(i);
                         if (v != null && v.isFocusable()) {
                             target = v;
@@ -4213,9 +4216,23 @@ public class MainActivity extends Activity {
         final boolean online = ConnectivityHelper.isOnline(this);
         final boolean onLan = ConnectivityHelper.hasLocalNetwork(this);
         homeMenuEntries = HomeMenuConfig.loadVisibleForDisplay(prefs, online, onLan);
+        final boolean showNowPlaying = shouldShowNowPlayingHome();
+        if (showNowPlaying) {
+            boolean hasNowPlaying = false;
+            for (HomeMenuConfig.Entry e : homeMenuEntries) {
+                if (HomeMenuConfig.ID_NOW_PLAYING.equals(e.id)) {
+                    hasNowPlaying = true;
+                    break;
+                }
+            }
+            if (!hasNowPlaying) {
+                HomeMenuConfig.Entry np = HomeMenuConfig.find(HomeMenuConfig.ID_NOW_PLAYING);
+                if (np != null) homeMenuEntries.add(0, np);
+            }
+        }
         java.util.Iterator<HomeMenuConfig.Entry> homeIt = homeMenuEntries.iterator();
         while (homeIt.hasNext()) {
-            if (HomeMenuConfig.ID_NOW_PLAYING.equals(homeIt.next().id) && !shouldShowNowPlayingHome()) {
+            if (HomeMenuConfig.ID_NOW_PLAYING.equals(homeIt.next().id) && !showNowPlaying) {
                 homeIt.remove();
             }
         }
@@ -4447,7 +4464,26 @@ public class MainActivity extends Activity {
     }
 
     private boolean shouldShowNowPlayingHome() {
-        return playback.hasAnyQueue();
+        boolean show = playback.hasAnyQueue()
+                || playback.isMusicActive() || playback.isPodcastActive();
+        if (!show) {
+            try {
+                show = mediaPlayer != null && mediaPlayer.isPlaying();
+            } catch (Exception ignored) {}
+        }
+        // #region agent log
+        try {
+            org.json.JSONObject d = new org.json.JSONObject();
+            d.put("show", show);
+            d.put("queueSize", playback.unifiedQueue().size());
+            d.put("musicActive", playback.isMusicActive());
+            d.put("podcastActive", playback.isPodcastActive());
+            d.put("screen", currentScreenState);
+            d.put("npVisible", nowPlayingHomeMenuVisible);
+            DebugAgentLog.log(this, "MainActivity.shouldShowNowPlayingHome", "gate", "H1-H3", d);
+        } catch (Exception ignored) {}
+        // #endregion
+        return show;
     }
 
     private void syncNowPlayingHomeVisibility() {
@@ -4701,6 +4737,7 @@ public class MainActivity extends Activity {
         applyStatusBarTheme();
         if (state == STATE_MENU) {
             isPickingBackground = false;
+            buildHomeMenu();
             requestFirstHomeMenuFocus();
             updateHomeMenuPreview(focusedHomeMenuIndex);
         }
@@ -5865,7 +5902,7 @@ public class MainActivity extends Activity {
         layout.setTag(rowKey);
         layout.setSoundEffectsEnabled(false);
         layout.setOrientation(LinearLayout.HORIZONTAL);
-        layout.setFocusable(true);
+        applySettingsRowFocusability(layout);
         layout.setGravity(android.view.Gravity.CENTER_VERTICAL);
         int hPad = (int) (10 * getResources().getDisplayMetrics().density);
         layout.setPadding(hPad, 0, hPad, 0);
@@ -5873,6 +5910,7 @@ public class MainActivity extends Activity {
         layout.setBackground(getY1RowBackground(false, rowW, Y1_ROW_MENU));
 
         TextView tvLeft = new TextView(this);
+        tvLeft.setFocusable(false);
         tvLeft.setTypeface(ThemeManager.getCustomFont(), android.graphics.Typeface.BOLD);
         tvLeft.setText(title);
         ThemeManager.applyThemedTextStyle(tvLeft, ThemeManager.getSettingMenuTextColorNormal());
@@ -5884,6 +5922,7 @@ public class MainActivity extends Activity {
         layout.addView(tvLeft);
 
         final TextView tvRight = new TextView(this);
+        tvRight.setFocusable(false);
         if (isFullWidthMenus && !submenu) {
             tvRight.setTag("inline_state");
             tvRight.setTypeface(ThemeManager.getCustomFont(), android.graphics.Typeface.BOLD);
@@ -6751,7 +6790,7 @@ public class MainActivity extends Activity {
         layout.setTag(rowKey != null ? rowKey : iconKey);
         layout.setSoundEffectsEnabled(false);
         layout.setOrientation(LinearLayout.HORIZONTAL);
-        layout.setFocusable(true);
+        applySettingsRowFocusability(layout);
         layout.setGravity(android.view.Gravity.CENTER_VERTICAL);
         int hPad = (int) (10 * getResources().getDisplayMetrics().density);
         layout.setPadding(hPad, 0, hPad, 0);
@@ -6759,6 +6798,7 @@ public class MainActivity extends Activity {
         layout.setBackground(getY1RowBackground(false, rowW, Y1_ROW_MENU));
 
         TextView tvLeft = new TextView(this);
+        tvLeft.setFocusable(false);
         tvLeft.setTypeface(ThemeManager.getCustomFont(), android.graphics.Typeface.BOLD);
         tvLeft.setText(getString(labelResId));
         ThemeManager.applyThemedTextStyle(tvLeft, ThemeManager.getSettingMenuTextColorNormal());
@@ -6778,6 +6818,7 @@ public class MainActivity extends Activity {
 
         LinearLayout labelCol = new LinearLayout(this);
         labelCol.setOrientation(LinearLayout.VERTICAL);
+        labelCol.setFocusable(false);
         labelCol.setLayoutParams(new LinearLayout.LayoutParams(
                 0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f));
         labelCol.addView(tvLeft);
@@ -6785,6 +6826,7 @@ public class MainActivity extends Activity {
         layout.addView(labelCol);
 
         TextView tvRight = new TextView(this);
+        tvRight.setFocusable(false);
         tvRight.setTypeface(ThemeManager.getCustomFont(), android.graphics.Typeface.BOLD);
         final boolean showArrow = "〉 ".contentEquals(rightText) || ">".equals(String.valueOf(rightText).trim());
         if (!showArrow) {
@@ -6922,14 +6964,6 @@ public class MainActivity extends Activity {
             String hint = homeShortcutConnectivityHint(id);
             if (hint != null) {
                 stateText = hint;
-            } else if (SettingsScreens.HOME.equals(settingsSubScreenKey)) {
-                if (HomeMenuConfig.ID_THEMES.equals(id) || HomeMenuConfig.ID_GET_THEMES.equals(id)) {
-                    stateText = getString(R.string.home_screen_preview_themes);
-                } else if (HomeMenuConfig.ID_VIDEOS.equals(id)) {
-                    stateText = getString(R.string.home_screen_preview_videos);
-                } else if (HomeMenuConfig.ID_PHOTOS.equals(id)) {
-                    stateText = getString(R.string.home_screen_preview_photos);
-                }
             }
         }
         if (SettingsScreens.LIBRARY_BROWSE.equals(settingsSubScreenKey)) {
@@ -7167,6 +7201,14 @@ public class MainActivity extends Activity {
         }
     }
 
+    private void applySettingsRowFocusability(LinearLayout layout) {
+        if (layout == null) return;
+        layout.setFocusable(true);
+        layout.setClickable(true);
+        layout.setFocusableInTouchMode(true);
+        layout.setDescendantFocusability(android.view.ViewGroup.FOCUS_BLOCK_DESCENDANTS);
+    }
+
     private boolean isViewDescendantOf(View view, View ancestor) {
         if (view == null || ancestor == null) return false;
         View p = view;
@@ -7174,6 +7216,50 @@ public class MainActivity extends Activity {
             if (p == ancestor) return true;
             if (!(p.getParent() instanceof View)) return false;
             p = (View) p.getParent();
+        }
+        return false;
+    }
+
+    /** Wheel up/down in settings lists — walks {@link #containerSettingsItems} rows directly. */
+    private boolean moveSettingsListFocus(int delta) {
+        if (containerSettingsItems == null || delta == 0) return false;
+        View focused = getCurrentFocus();
+        int currentIdx = -1;
+        for (int i = 0; i < containerSettingsItems.getChildCount(); i++) {
+            View row = containerSettingsItems.getChildAt(i);
+            if (row == focused || isViewDescendantOf(focused, row)) {
+                currentIdx = i;
+                break;
+            }
+        }
+        if (currentIdx < 0) return false;
+        int step = delta < 0 ? -1 : 1;
+        for (int i = currentIdx + step; i >= 0 && i < containerSettingsItems.getChildCount(); i += step) {
+            View next = containerSettingsItems.getChildAt(i);
+            if (next == null || next.getVisibility() != View.VISIBLE || !next.isEnabled()
+                    || !next.isFocusable()) {
+                continue;
+            }
+            if (!next.requestFocus()) continue;
+            if (containerSettingsItems.getParent() instanceof android.widget.ScrollView) {
+                ((android.widget.ScrollView) containerSettingsItems.getParent())
+                        .requestChildFocus(containerSettingsItems, next);
+            }
+            if (SettingsScreens.HOME.equals(settingsSubScreenKey)) {
+                homeScreenEditorFocusIndex = i;
+            }
+            lastSettingsFocusIndex = i;
+            // #region agent log
+            try {
+                org.json.JSONObject d = new org.json.JSONObject();
+                d.put("from", currentIdx);
+                d.put("to", i);
+                d.put("delta", delta);
+                d.put("rowKey", next.getTag() != null ? next.getTag().toString() : "");
+                DebugAgentLog.log(this, "MainActivity.moveSettingsListFocus", "settings wheel", "H1", d);
+            } catch (Exception ignored) {}
+            // #endregion
+            return true;
         }
         return false;
     }
@@ -11919,25 +12005,14 @@ public class MainActivity extends Activity {
     }
 
     private String homeShortcutEditorState(String id) {
-        if (HomeMenuConfig.isVisible(prefs, id)) {
-            return stateOnOff(true);
-        }
-        if (HomeMenuConfig.isInMore(prefs, id)) {
-            return getString(R.string.home_screen_in_more);
-        }
-        return getString(R.string.home_screen_off);
+        return stateOnOff(HomeMenuConfig.isShortcutEnabled(prefs, id));
     }
 
     private void onHomeShortcutEditorClick(final HomeMenuConfig.Entry entry) {
         if (entry.required) return;
         clickFeedback();
-        if (HomeMenuConfig.isVisible(prefs, entry.id)) {
-            HomeMenuConfig.hideFromHome(prefs, entry.id);
-        } else if (HomeMenuConfig.isInMore(prefs, entry.id)) {
-            HomeMenuConfig.setVisible(prefs, entry.id, true);
-        } else {
-            HomeMenuConfig.setShortcutEnabled(prefs, entry.id, true);
-        }
+        boolean on = HomeMenuConfig.isShortcutEnabled(prefs, entry.id);
+        HomeMenuConfig.setShortcutEnabled(prefs, entry.id, !on);
         buildHomeMenu();
         buildHomeScreenEditorUI();
     }
@@ -11970,8 +12045,7 @@ public class MainActivity extends Activity {
         createCategoryHeader(getString(R.string.home_screen_shortcuts));
 
         for (final HomeMenuConfig.Entry entry : HomeMenuConfig.loadEditorCatalogEntries()) {
-            final LinearLayout row = createSettingRow(RowKeys.homeShortcut(entry.id), entry.labelResId,
-                    homeShortcutEditorState(entry.id));
+            final LinearLayout row = createSettingsRow(RowKeys.homeShortcut(entry.id), entry.labelResId, false);
             if (!entry.required) {
                 row.setOnClickListener(new View.OnClickListener() {
                     @Override
@@ -11986,8 +12060,7 @@ public class MainActivity extends Activity {
 
         createCategoryHeader(getString(R.string.home_screen_options));
 
-        LinearLayout btnMoreTile = createSettingRow(RowKeys.HOME_MORE, R.string.home_screen_more,
-                stateOnOff(HomeMenuConfig.isMoreEnabled(prefs)));
+        LinearLayout btnMoreTile = createSettingsRow(RowKeys.HOME_MORE, R.string.home_screen_more, false);
         btnMoreTile.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -17462,6 +17535,7 @@ public class MainActivity extends Activity {
                         if (!isPausedByHand) {
                             mp.start();
                         }
+                        syncNowPlayingHomeVisibility();
                         updatePlayerUI();
                     } catch (Exception ignored) {}
                 }
@@ -18382,6 +18456,19 @@ public class MainActivity extends Activity {
                     && (keyCode == 21 || keyCode == 22)) {
                 dispatchThemeListKey(keyCode);
                 clickFeedback();
+                return true;
+            }
+            if (currentScreenState == STATE_SETTINGS && (keyCode == 21 || keyCode == 22)) {
+                if (!isFocusValidForCurrentScreen() && containerSettingsItems != null
+                        && containerSettingsItems.getChildCount() > 0) {
+                    for (int i = 0; i < containerSettingsItems.getChildCount(); i++) {
+                        View row = containerSettingsItems.getChildAt(i);
+                        if (row != null && row.isFocusable() && row.requestFocus()) break;
+                    }
+                }
+                if (moveSettingsListFocus(keyCode == 21 ? -1 : 1)) {
+                    clickFeedback();
+                }
                 return true;
             }
             if (currentScreenState == STATE_MENU && (keyCode == 21 || keyCode == 22)) {

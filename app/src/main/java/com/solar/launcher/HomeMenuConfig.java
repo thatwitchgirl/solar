@@ -14,6 +14,9 @@ public final class HomeMenuConfig {
     public static final String PREF_ORDER = "home_menu_order";
     public static final String PREF_MORE_ORDER = "home_more_order";
     public static final String PREF_MORE_ENABLED = "home_more_enabled";
+    public static final String PREF_HOME_SCHEMA = "home_menu_schema";
+
+    private static final int HOME_SCHEMA = 2;
 
     public static final String ID_NOW_PLAYING = "now_playing";
     public static final String ID_MUSIC = "music";
@@ -36,8 +39,8 @@ public final class HomeMenuConfig {
 
     /** Stock Y1 home order for equivalent items, then Solar-only shortcuts. */
     private static final String DEFAULT_ORDER = String.join(",",
-            ID_NOW_PLAYING, ID_MUSIC, ID_VIDEOS, ID_AUDIOBOOKS, ID_PHOTOS, ID_FM, ID_BLUETOOTH,
-            ID_SETTINGS, ID_PC_UPLOAD, ID_PODCASTS, ID_SOULSEEK);
+            ID_NOW_PLAYING, ID_MUSIC, ID_FM, ID_BLUETOOTH, ID_SETTINGS,
+            ID_PC_UPLOAD, ID_PODCASTS, ID_SOULSEEK);
 
     /** Fixed home / More menu order — not user-reorderable. */
     private static final List<String> FIXED_HOME_ORDER = Arrays.asList(
@@ -76,7 +79,24 @@ public final class HomeMenuConfig {
     }
 
     private static final Set<String> OPT_IN = new HashSet<String>(Arrays.asList(
-            ID_APPS, ID_THEMES));
+            ID_APPS, ID_THEMES, ID_VIDEOS, ID_PHOTOS, ID_AUDIOBOOKS));
+
+    private static final Set<String> COMING_SOON = new HashSet<String>(Arrays.asList(
+            ID_VIDEOS, ID_PHOTOS, ID_AUDIOBOOKS));
+
+    public static boolean isComingSoon(String id) {
+        return id != null && COMING_SOON.contains(migrateId(id));
+    }
+
+    /** One-time: coming-soon shortcuts default off for existing installs. */
+    public static void migrateHomePrefsIfNeeded(SharedPreferences prefs) {
+        if (prefs == null) return;
+        if (prefs.getInt(PREF_HOME_SCHEMA, 1) >= HOME_SCHEMA) return;
+        for (String id : COMING_SOON) {
+            setShortcutEnabled(prefs, id, false);
+        }
+        prefs.edit().putInt(PREF_HOME_SCHEMA, HOME_SCHEMA).commit();
+    }
 
     public static final class Entry {
         public final String id;

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Emit release tag and metadata for CI from branch + app/build.gradle.
-# main: stable tag v{versionName}; nightly: nightly-{run_number}
+# main: stable tag v{versionName}; nightly: tag matches versionName in app/build.gradle
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -34,11 +34,11 @@ SHORT_SHA="$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo unkn
 
 if [ "$BRANCH" = "nightly" ]; then
     CHANNEL="nightly"
-    [ -n "$BUILD_NUM" ] || BUILD_NUM="$(date +%Y%m%d%H%M)"
-    TAG="nightly-${BUILD_NUM}"
-    VERSION_NAME="nightly-${BUILD_NUM}"
-    VERSION_CODE="$BUILD_NUM"
-    apply_gradle_version "$VERSION_NAME" "$VERSION_CODE"
+    VERSION_NAME="$(sed -n 's/.*versionName "\([^"]*\)".*/\1/p' "$GRADLE" | head -1)"
+    VERSION_CODE="$(sed -n 's/.*versionCode \([0-9]*\).*/\1/p' "$GRADLE" | head -1)"
+    [[ "$VERSION_NAME" == nightly-* ]] || die "nightly builds require versionName nightly-N in app/build.gradle"
+    [ -n "$VERSION_CODE" ] || die "could not read versionCode"
+    TAG="$VERSION_NAME"
 elif [ "$BRANCH" = "main" ]; then
     CHANNEL="stable"
     VERSION_NAME="$(sed -n 's/.*versionName "\([^"]*\)".*/\1/p' "$GRADLE" | head -1)"

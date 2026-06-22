@@ -23,30 +23,45 @@ public class HomeMenuConfigTest {
     @Test
     public void defaultOrder_matchesY1StockLayout() {
         List<HomeMenuConfig.Entry> visible = HomeMenuConfig.loadVisible(prefs);
-        if (visible.size() != 11) throw new AssertionError("default size " + visible.size());
+        if (visible.size() != 8) throw new AssertionError("default size " + visible.size());
         if (!HomeMenuConfig.ID_NOW_PLAYING.equals(visible.get(0).id)) {
             throw new AssertionError("now playing position");
         }
         if (!HomeMenuConfig.ID_MUSIC.equals(visible.get(1).id)) {
             throw new AssertionError("music position");
         }
-        if (!HomeMenuConfig.ID_VIDEOS.equals(visible.get(2).id)) {
-            throw new AssertionError("videos position");
-        }
-        if (!HomeMenuConfig.ID_AUDIOBOOKS.equals(visible.get(3).id)) {
-            throw new AssertionError("audiobooks position");
-        }
-        if (!HomeMenuConfig.ID_PHOTOS.equals(visible.get(4).id)) {
-            throw new AssertionError("photos position");
-        }
-        if (!HomeMenuConfig.ID_FM.equals(visible.get(5).id)) {
+        if (!HomeMenuConfig.ID_FM.equals(visible.get(2).id)) {
             throw new AssertionError("fm position");
         }
-        if (!HomeMenuConfig.ID_BLUETOOTH.equals(visible.get(6).id)) {
+        if (!HomeMenuConfig.ID_BLUETOOTH.equals(visible.get(3).id)) {
             throw new AssertionError("bluetooth position");
         }
-        if (!HomeMenuConfig.ID_SETTINGS.equals(visible.get(7).id)) {
+        if (!HomeMenuConfig.ID_SETTINGS.equals(visible.get(4).id)) {
             throw new AssertionError("settings position");
+        }
+    }
+
+    @Test
+    public void comingSoonOffByDefault() {
+        List<String> ids = HomeMenuConfig.loadHomeOrderIds(prefs);
+        if (ids.contains(HomeMenuConfig.ID_VIDEOS)) throw new AssertionError("videos default on");
+        if (ids.contains(HomeMenuConfig.ID_PHOTOS)) throw new AssertionError("photos default on");
+        if (ids.contains(HomeMenuConfig.ID_AUDIOBOOKS)) throw new AssertionError("audiobooks default on");
+        List<HomeMenuConfig.Entry> editor = HomeMenuConfig.loadEditorCatalogEntries();
+        boolean hasVideos = false;
+        for (HomeMenuConfig.Entry e : editor) {
+            if (HomeMenuConfig.ID_VIDEOS.equals(e.id)) hasVideos = true;
+        }
+        if (!hasVideos) throw new AssertionError("videos missing from editor catalog");
+    }
+
+    @Test
+    public void migrateHomePrefs_disablesComingSoon() {
+        HomeMenuConfig.saveOrder(prefs, Arrays.asList(
+                HomeMenuConfig.ID_MUSIC, HomeMenuConfig.ID_VIDEOS, HomeMenuConfig.ID_SETTINGS));
+        HomeMenuConfig.migrateHomePrefsIfNeeded(prefs);
+        if (HomeMenuConfig.isShortcutEnabled(prefs, HomeMenuConfig.ID_VIDEOS)) {
+            throw new AssertionError("videos should be off after migrate");
         }
     }
 
@@ -151,9 +166,7 @@ public class HomeMenuConfigTest {
         List<String> ids = HomeMenuConfig.loadHomeOrderIds(prefs);
         if (ids.contains(HomeMenuConfig.ID_APPS)) throw new AssertionError("apps default");
         if (ids.contains(HomeMenuConfig.ID_THEMES)) throw new AssertionError("themes default");
-        if (!ids.contains(HomeMenuConfig.ID_VIDEOS)) throw new AssertionError("videos default on");
-        if (!ids.contains(HomeMenuConfig.ID_PHOTOS)) throw new AssertionError("photos default on");
-        if (!ids.contains(HomeMenuConfig.ID_AUDIOBOOKS)) throw new AssertionError("audiobooks default on");
+        if (ids.contains(HomeMenuConfig.ID_VIDEOS)) throw new AssertionError("videos default");
         HomeMenuConfig.setVisible(prefs, HomeMenuConfig.ID_THEMES, true);
         if (!HomeMenuConfig.isVisible(prefs, HomeMenuConfig.ID_THEMES)) {
             throw new AssertionError("themes toggle");
@@ -272,7 +285,10 @@ public class HomeMenuConfigTest {
             Object v = map.get(key);
             return v instanceof String ? (String) v : def;
         }
-        @Override public int getInt(String key, int def) { return def; }
+        @Override public int getInt(String key, int def) {
+            Object v = map.get(key);
+            return v instanceof Integer ? (Integer) v : def;
+        }
         @Override public long getLong(String key, long def) { return def; }
         @Override public float getFloat(String key, float def) { return def; }
         @Override public boolean getBoolean(String key, boolean def) {
