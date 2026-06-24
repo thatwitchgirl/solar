@@ -10,5 +10,7 @@ public class SolarApplication extends Application {
     public void onCreate() {
         super.onCreate();
         TlsHelper.init(this);
+        com.solar.launcher.theme.ActiveThemeEngine.init(this);
+        Y1InputKeys.selfCheckWheelMapping();
     }
 }

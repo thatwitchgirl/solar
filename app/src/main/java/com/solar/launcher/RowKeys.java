@@ -19,6 +19,7 @@ public final class RowKeys {
     public static final String SCREEN_TIMEOUT = "settings.screen_timeout";
     public static final String FULL_WIDTH = "settings.full_width";
     public static final String POWER_OFF = "settings.power_off";
+    public static final String SWITCH_ROCKBOX = "settings.switch_rockbox";
     public static final String WEB_SERVER = "settings.web_server";
     public static final String WIFI_SETUP = "settings.wifi_setup";
     public static final String SOULSEEK = "settings.soulseek";
@@ -34,6 +35,8 @@ public final class RowKeys {
     public static final String LIB_ALBUM_SUB = "library.album_sub";
     public static final String LIB_GUEST_SUB = "library.guest_sub";
     public static final String ABOUT = "settings.about";
+    public static final String DEBUG = "settings.debug";
+    public static final String DEBUG_JJ_THEMES = "settings.debug.jj_themes";
     public static final String SYSTEM_UPDATE = "settings.system_update";
     public static final String BLUETOOTH_SETUP = "settings.bluetooth_setup";
     public static final String BRIGHTNESS = "settings.brightness";

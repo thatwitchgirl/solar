@@ -506,6 +506,7 @@ public class ThemeManager {
     // --- colors ---
 
     public static int getTextColorPrimary() {
+        if (ActiveThemeEngine.isJjMode()) return JjThemeManager.getTextColorPrimary();
         ThemeEntry t = getCurrentTheme();
         JSONObject item = t.root.optJSONObject("itemConfig");
         if (item != null) {
@@ -521,6 +522,7 @@ public class ThemeManager {
     }
 
     public static int getTextColorSecondary() {
+        if (ActiveThemeEngine.isJjMode()) return JjThemeManager.getTextColorSecondary();
         JSONObject dialog = getCurrentTheme().root.optJSONObject("dialogConfig");
         if (dialog != null) {
             int c = parseColorOpt(dialog, "dialogTextColor");
@@ -530,6 +532,7 @@ public class ThemeManager {
     }
 
     public static int getOverlayBackgroundColor() {
+        if (ActiveThemeEngine.isJjMode()) return JjThemeManager.getOverlayBackgroundColor();
         JSONObject menu = getCurrentTheme().root.optJSONObject("menuConfig");
         if (menu != null) {
             int c = parseColorOpt(menu, "menuBackgroundColor");
@@ -548,6 +551,7 @@ public class ThemeManager {
 
     /** ponytail: statusConfig.statusBarColor with alpha; dark fallback when unset on non-Y1 themes */
     public static int getStatusBarBackgroundColor() {
+        if (ActiveThemeEngine.isJjMode()) return JjThemeManager.getStatusBarBackgroundColor();
         JSONObject status = getCurrentTheme().root.optJSONObject("statusConfig");
         if (status != null) {
             int c = parseColorOpt(status, "statusBarColor");
@@ -597,6 +601,7 @@ public class ThemeManager {
 
     /** ponytail: menuBackgroundColor is overlay tint only — never an unselected row fill on Y1 themes */
     public static int getListButtonNormalBg() {
+        if (ActiveThemeEngine.isJjMode()) return JjThemeManager.getListButtonNormalBg();
         if (hasY1Blocks(getCurrentTheme().root)) return 0x00000000;
         JSONObject menu = getCurrentTheme().root.optJSONObject("menuConfig");
         if (menu != null) {
@@ -622,10 +627,12 @@ public class ThemeManager {
     }
 
     public static int getListButtonFocusedBg() {
+        if (ActiveThemeEngine.isJjMode()) return JjThemeManager.getListButtonFocusedBg();
         return getRowSelectionFillColor();
     }
 
     public static int getListButtonFocusedTextColor() {
+        if (ActiveThemeEngine.isJjMode()) return JjThemeManager.getListButtonFocusedTextColor();
         JSONObject item = getCurrentTheme().root.optJSONObject("itemConfig");
         if (item != null) {
             int c = parseColorOpt(item, "itemSelectedTextColor");
@@ -960,6 +967,7 @@ public class ThemeManager {
     }
 
     public static int getButtonRadius() {
+        if (ActiveThemeEngine.isJjMode()) return JjThemeManager.getButtonRadius();
         ThemeEntry t = getCurrentTheme();
         JSONObject solar = solarBlock(t.root);
         if (solar != null && solar.has("button_radius")) return solar.optInt("button_radius", 10);
@@ -1071,6 +1079,7 @@ public class ThemeManager {
     }
 
     public static Typeface getCustomFont() {
+        if (ActiveThemeEngine.isJjMode()) return JjThemeManager.getCustomFont();
         ThemeEntry t = getCurrentTheme();
         String fontKey = t.folderPath;
         String fontFile = t.root.optString("fontFamily", "");

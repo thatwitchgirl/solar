@@ -51,6 +51,8 @@ import com.solar.launcher.soulseek.SoulseekShareIndex;
 import com.solar.launcher.soulseek.SoulseekSharePolicy;
 import com.solar.launcher.soulseek.SoulseekSearchRanking;
 import com.solar.launcher.soulseek.SoulseekSearchSuggestions;
+import com.solar.launcher.theme.ActiveThemeEngine;
+import com.solar.launcher.theme.JjThemeManager;
 import com.solar.launcher.theme.ThemeBrowser;
 import com.solar.launcher.theme.ThemeDownloader;
 import com.solar.launcher.theme.ThemeManager;
@@ -332,6 +334,7 @@ public class MainActivity extends Activity {
     private ImageView ivMenuPreview, ivAlbumArt, ivPlayerBgBlur, ivPauseOverlay;
 
     private FrameLayout menuListHost;
+    private FrameLayout jjHomeOverlay;
     private android.widget.ScrollView menuScroll;
     private LinearLayout containerHomeMenuItems;
     private List<HomeMenuConfig.Entry> homeMenuEntries = new ArrayList<HomeMenuConfig.Entry>();
@@ -1236,12 +1239,14 @@ public class MainActivity extends Activity {
             @Override
             public void run() {
                 ThemeManager.ensureBundledDefault(MainActivity.this);
-                ThemeManager.loadAllThemes(MainActivity.this);
-                String savedPath = prefs != null ? prefs.getString("app_theme_path", null) : null;
-                if (savedPath != null) {
-                    ThemeManager.setThemeByFolderPath(savedPath);
+                ActiveThemeEngine.loadThemes(MainActivity.this);
+                if (!ActiveThemeEngine.isJjMode()) {
+                    String savedPath = prefs != null ? prefs.getString("app_theme_path", null) : null;
+                    if (savedPath != null) {
+                        ThemeManager.setThemeByFolderPath(savedPath);
+                    }
+                    ThemeManager.ensureActiveThemeOrFallback(MainActivity.this);
                 }
-                ThemeManager.ensureActiveThemeOrFallback(MainActivity.this);
                 runOnUiThreadSafe(new Runnable() {
                     @Override
                     public void run() {
@@ -1363,7 +1368,7 @@ public class MainActivity extends Activity {
         ensurePrivilegedPermissionsAsync();
 
         ThemeManager.ensureBundledDefault(this);
-        ThemeManager.loadAllThemes(this);
+        ActiveThemeEngine.loadThemes(this);
         try {
             String savedPath = prefs.getString("app_theme_path", null);
             if (savedPath != null) {
@@ -2572,6 +2577,8 @@ public class MainActivity extends Activity {
             if (currentScreenState == STATE_SETTINGS) {
                 if (SettingsScreens.ABOUT.equals(settingsSubScreenKey)) {
                     buildAboutUI();
+                } else if (SettingsScreens.DEBUG.equals(settingsSubScreenKey)) {
+                    buildDebugUI();
                 } else {
                     applyAllSettingsRowStyles();
                 }
@@ -2931,10 +2938,14 @@ public class MainActivity extends Activity {
                     themeBrowserOnlineRows.isEmpty() ? null : themeBrowserOnlineRows,
                     themeBrowserText()));
         } else {
-            themeBrowserRows.addAll(ThemeBrowser.buildInstalledRows(
-                    ThemeManager.availableThemes, ThemeManager.getCurrentThemeIndex(),
-                    ConnectivityHelper.isOnline(this), themeListPageCapacityRows(),
-                    themeBrowserText()));
+            if (ActiveThemeEngine.isJjMode()) {
+                themeBrowserRows.addAll(ActiveThemeEngine.buildJjInstalledRows(themeBrowserText()));
+            } else {
+                themeBrowserRows.addAll(ThemeBrowser.buildInstalledRows(
+                        ThemeManager.availableThemes, ThemeManager.getCurrentThemeIndex(),
+                        ConnectivityHelper.isOnline(this), themeListPageCapacityRows(),
+                        themeBrowserText()));
+            }
         }
     }
 
@@ -3098,7 +3109,11 @@ public class MainActivity extends Activity {
                 cycleThemeFilter();
                 break;
             case ThemeBrowser.KIND_INSTALLED:
-                if (row.themeIndex >= 0 && row.themeIndex < ThemeManager.availableThemes.size()) {
+                if (ActiveThemeEngine.isJjMode()) {
+                    if (row.themeIndex >= 0 && row.themeIndex < JjThemeManager.availableThemes.size()) {
+                        applyJjThemeSelection(row.themeIndex);
+                    }
+                } else if (row.themeIndex >= 0 && row.themeIndex < ThemeManager.availableThemes.size()) {
                     ThemeManager.ThemeEntry theme = ThemeManager.availableThemes.get(row.themeIndex);
                     applyThemeWithIntegrityCheck(row.themeIndex, theme, null);
                 }
@@ -3205,7 +3220,7 @@ public class MainActivity extends Activity {
         if (theme == null || theme.folderName == null) return;
         if (ThemeManager.isBuiltInDefault(theme)) return;
         if (!ThemeDownloader.deleteInstalledTheme(theme.folderName)) return;
-        ThemeManager.loadAllThemes(this);
+        ActiveThemeEngine.loadThemes(this);
         Toast.makeText(this, getString(R.string.theme_removed, theme.name), Toast.LENGTH_SHORT).show();
         rebuildThemeBrowserRows();
         refreshThemeBrowserList();
@@ -3342,6 +3357,10 @@ public class MainActivity extends Activity {
             buildAboutUI();
             return true;
         }
+        if (SettingsScreens.DEBUG.equals(settingsSubScreenKey)) {
+            buildAboutUI();
+            return true;
+        }
         if (SettingsScreens.ABOUT.equals(settingsSubScreenKey)) {
             setSettingsAboutFullWidth(false);
             restoreSettingsPreviewPane();
@@ -3405,11 +3424,9 @@ public class MainActivity extends Activity {
         return false;
     }
 
-    // ponytail: Y1 wheel key→move mapping may change if driver remaps axes
+    // ponytail: unified Rockbox.kl — wheel is 19/20; legacy Stock used 21/22.
     private int mapWheelToMenuMove(int keyCode) {
-        if (keyCode == 21) return -1;
-        if (keyCode == 22) return 1;
-        return 0;
+        return Y1InputKeys.wheelMenuDelta(keyCode);
     }
 
     private void restoreHomeScreenEditorFocus(final int targetFocusIndex) {
@@ -3822,10 +3839,10 @@ public class MainActivity extends Activity {
     }
 
     private void dispatchThemeListKey(int keyCode) {
-        if (keyCode == 21) {
+        if (Y1InputKeys.isWheelUp(keyCode)) {
             listThemes.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_UP));
             listThemes.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_UP));
-        } else if (keyCode == 22) {
+        } else if (Y1InputKeys.isWheelDown(keyCode)) {
             listThemes.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_DOWN));
             listThemes.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_DOWN));
         }
@@ -4038,7 +4055,7 @@ public class MainActivity extends Activity {
                                 });
                     }
                     if (gen != themeDownloadGen) return;
-                    ThemeManager.loadAllThemes();
+                    ActiveThemeEngine.loadThemes(MainActivity.this);
                     final String toastName = variant.displayName(entry.name);
                     final String path = new File(ThemeManager.PATH_THEMES, installFolder).getAbsolutePath();
                     int index = -1;
@@ -4100,7 +4117,7 @@ public class MainActivity extends Activity {
                         });
                     }
                     if (gen != themeDownloadGen) return;
-                    ThemeManager.loadAllThemes();
+                    ActiveThemeEngine.loadThemes(MainActivity.this);
                     final String installPath = new File(ThemeManager.PATH_THEMES,
                             ThemeDownloader.installedFolderForEntry(entry)).getAbsolutePath();
                     final String themeName = entry.name;
@@ -4152,7 +4169,7 @@ public class MainActivity extends Activity {
                 try {
                     if (ThemeManager.isBuiltInDefault(theme)) {
                         ThemeManager.ensureBundledDefault(MainActivity.this);
-                        ThemeManager.loadAllThemes(MainActivity.this);
+                        ActiveThemeEngine.loadThemes(MainActivity.this);
                         resolvedIndex = ThemeManager.findBuiltInDefaultIndex();
                         if (resolvedIndex >= 0 && resolvedIndex < ThemeManager.availableThemes.size()) {
                             resolvedTheme = ThemeManager.availableThemes.get(resolvedIndex);
@@ -4980,6 +4997,16 @@ public class MainActivity extends Activity {
 
     /** Index-driven home menu move — wheel keys must not rely on View focus on API 17. */
     private boolean moveHomeMenuFocus(int delta) {
+        if (ActiveThemeEngine.isJjMode() && jjHomeOverlay != null) {
+            int total = jjHomeOverlay.getChildCount();
+            if (total == 0 || delta == 0) return false;
+            int next = focusedHomeMenuIndex + delta;
+            if (next < 0 || next >= total) return false;
+            focusedHomeMenuIndex = next;
+            View child = jjHomeOverlay.getChildAt(next);
+            if (child != null) child.requestFocus();
+            return true;
+        }
         if (containerHomeMenuItems == null || delta == 0) return false;
         int total = containerHomeMenuItems.getChildCount();
         if (total == 0) return false;
@@ -5079,6 +5106,15 @@ public class MainActivity extends Activity {
 
     private void buildHomeMenu() {
         if (containerHomeMenuItems == null) return;
+        if (ActiveThemeEngine.isJjMode()) {
+            buildJjHomeMenu();
+            return;
+        }
+        if (menuScroll != null) menuScroll.setVisibility(View.VISIBLE);
+        if (jjHomeOverlay != null && menuListHost != null) {
+            menuListHost.removeView(jjHomeOverlay);
+            jjHomeOverlay = null;
+        }
         final int buildGen = ++homeMenuBuildGen;
         containerHomeMenuItems.removeAllViews();
         final boolean online = ConnectivityHelper.isOnline(this);
@@ -5132,6 +5168,92 @@ public class MainActivity extends Activity {
         }
         scrollHomeMenuToIndex(focusedHomeMenuIndex);
         nowPlayingHomeMenuVisible = shouldShowNowPlayingHome();
+    }
+
+    /** JJ experimental home: absolute {@code main_menu[]} layout from active JJ theme. */
+    private void buildJjHomeMenu() {
+        final int buildGen = ++homeMenuBuildGen;
+        containerHomeMenuItems.removeAllViews();
+        if (menuScroll != null) menuScroll.setVisibility(View.GONE);
+        if (jjHomeOverlay != null && menuListHost != null) {
+            menuListHost.removeView(jjHomeOverlay);
+            jjHomeOverlay = null;
+        }
+        if (menuListHost == null) return;
+
+        float density = getResources().getDisplayMetrics().density;
+        jjHomeOverlay = new FrameLayout(this);
+        jjHomeOverlay.setFocusable(false);
+        menuListHost.addView(jjHomeOverlay, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+
+        JjThemeManager.ThemeData theme = JjThemeManager.getCurrentTheme();
+        int panelH = menuListHeightPx > 0 ? menuListHeightPx
+                : (int) getResources().getDimension(R.dimen.y1_menu_height);
+        applyMenuPanelBackground(menuListHost, y1RowWidthPx, panelH,
+                (int) getResources().getDimension(R.dimen.y1_menu_height));
+
+        final List<JjThemeManager.MenuElement> elements = theme.menuElements;
+        int focusIdx = 0;
+        for (int i = 0; i < elements.size(); i++) {
+            final JjThemeManager.MenuElement el = elements.get(i);
+            if (!"button".equals(el.type)) continue;
+            final int rowIdx = i;
+            Button btn = createListButton(el.textNormal != null && !el.textNormal.isEmpty()
+                    ? el.textNormal : " ");
+            int w = el.width > 0 ? (int) (el.width * density) : y1ActiveRowWidthPx();
+            int h = el.height > 0 ? (int) (el.height * density) : y1RowHeightPx;
+            FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(w, h);
+            lp.leftMargin = (int) (el.x * density);
+            lp.topMargin = (int) (el.y * density);
+            final String homeId = mapJjActionToHomeId(el.action);
+            btn.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    clickFeedback();
+                    if (homeId != null) onHomeMenuActivate(homeId);
+                }
+            });
+            btn.setOnFocusChangeListener(new View.OnFocusChangeListener() {
+                @Override
+                public void onFocusChange(View v, boolean hasFocus) {
+                    if (hasFocus) {
+                        focusedHomeMenuIndex = rowIdx;
+                        updateStatusBarTitle();
+                    }
+                }
+            });
+            jjHomeOverlay.addView(btn, lp);
+            if (el.focusIndex > 0 && focusIdx == 0) {
+                focusIdx = rowIdx;
+            }
+        }
+        if (buildGen != homeMenuBuildGen) return;
+        if (jjHomeOverlay.getChildCount() > 0) {
+            int child = Math.min(focusedHomeMenuIndex, jjHomeOverlay.getChildCount() - 1);
+            if (child < 0) child = 0;
+            jjHomeOverlay.getChildAt(child).requestFocus();
+        }
+    }
+
+    private String mapJjActionToHomeId(String action) {
+        if (action == null) return null;
+        if ("OPEN_PLAYER".equals(action)) return HomeMenuConfig.ID_NOW_PLAYING;
+        if ("OPEN_BROWSER".equals(action)) return HomeMenuConfig.ID_MUSIC;
+        if ("OPEN_BLUETOOTH".equals(action)) return HomeMenuConfig.ID_BLUETOOTH;
+        if ("OPEN_SETTINGS".equals(action)) return HomeMenuConfig.ID_SETTINGS;
+        if ("OPEN_WEBSERVER".equals(action)) return HomeMenuConfig.ID_PC_UPLOAD;
+        return null;
+    }
+
+    private void applyJjThemeSelection(int index) {
+        ActiveThemeEngine.applyJjThemeIndex(this, index);
+        JjThemeManager.ThemeData theme = JjThemeManager.availableThemes.get(index);
+        Toast.makeText(this, getString(R.string.toast_theme_applied, theme.name), Toast.LENGTH_SHORT).show();
+        applyThemeToMainMenu();
+        rebuildHomeMenuIfVisible();
+        rebuildThemeBrowserRows();
+        refreshThemeBrowserList();
     }
 
     private void addHomeMenuRow(final HomeMenuConfig.Entry entry, final int idx) {
@@ -5802,6 +5924,8 @@ public class MainActivity extends Activity {
                 openThemeVariantBrowser(themeVariantEntry);
             } else if (SettingsScreens.ABOUT.equals(settingsSubScreenKey)) {
                 buildAboutUI();
+            } else if (SettingsScreens.DEBUG.equals(settingsSubScreenKey)) {
+                buildDebugUI();
             } else if (SettingsScreens.SYSTEM_UPDATE.equals(settingsSubScreenKey)) {
                 buildUpdateSettingsUI();
             } else {
@@ -8946,6 +9070,7 @@ public class MainActivity extends Activity {
         if (RowKeys.BUTTON_SOUND.equals(rowKey)) return stateOnOff(isSoundEffectEnabled);
         if (RowKeys.BUTTON_VIBRATE.equals(rowKey)) return stateOnOff(isVibrationEnabled);
         if (RowKeys.SCREEN_OFF_CTRL.equals(rowKey)) return stateOnOff(isScreenOffControlEnabled);
+        if (RowKeys.DEBUG_JJ_THEMES.equals(rowKey)) return stateOnOff(ActiveThemeEngine.isJjMode());
         if (RowKeys.APP_THEME.equals(rowKey)) return ThemeManager.getCurrentTheme().name;
         if (RowKeys.STATUS_BAR_LEFT.equals(rowKey)) {
             return statusBarShowsTitle ? getString(R.string.settings_status_title) : getString(R.string.common_clock);
@@ -14015,40 +14140,50 @@ public class MainActivity extends Activity {
             }
         });
         containerSettingsItems.addView(btnPowerOff);
-        // 🚀 [추가] 락박스(Rockbox) OS로 재부팅하는 버튼
-       /* LinearLayout btnRockbox = createSettingRow("Reboot to Rockbox", "〉 ");
-        btnRockbox.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                clickFeedback();
-                new AlertDialog.Builder(MainActivity.this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-                        .setTitle(getString(R.string.dialog_rockbox_title))
-                        .setMessage(getString(R.string.dialog_rockbox_message))
-                        .setPositiveButton("Reboot", new DialogInterface.OnClickListener() {
-                            public void onClick(DialogInterface dialog, int which) {
-                                try {
-                                    Toast.makeText(MainActivity.this, getString(R.string.dialog_rockbox_rebooting), Toast.LENGTH_SHORT)
-                                            .show();
-
-                                    // 💡 락박스 진입 명령어 실행 (기기 파티션 구조에 따라 다를 수 있습니다)
-                                    // 기본적으로 대부분의 듀얼 부팅 기기는 아래 명령어 중 하나를 사용합니다.
-                                    Runtime.getRuntime().exec(new String[] { "su", "-c", "reboot alternate" });
-
-                                    // 만약 위 명령어로 일반 안드로이드 재부팅이 된다면, 아래 명령어의 주석(//)을 해제하고 시도해 보세요.
-                                    // Runtime.getRuntime().exec(new String[]{"su", "-c", "reboot recovery"});
-
-                                } catch (Exception e) {
-                                    Toast.makeText(MainActivity.this, getString(R.string.dialog_rockbox_failed),
-                                            Toast.LENGTH_SHORT).show();
-                                }
-                            }
-                        })
-                        .setNegativeButton("Cancel", null)
-                        .show();
-            }
-        });
-        containerSettingsItems.addView(btnRockbox);
-        */
+        if (LauncherSwitch.isRockboxInstalled(this)) {
+            LinearLayout btnRockbox = createSettingsRow(RowKeys.SWITCH_ROCKBOX, R.string.settings_switch_rockbox, true);
+            btnRockbox.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    clickFeedback();
+                    if (!LauncherSwitch.isRockboxInstalled(MainActivity.this)) {
+                        Toast.makeText(MainActivity.this, getString(R.string.dialog_rockbox_unavailable),
+                                Toast.LENGTH_SHORT).show();
+                        return;
+                    }
+                    new AlertDialog.Builder(MainActivity.this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                            .setTitle(getString(R.string.dialog_rockbox_title))
+                            .setMessage(getString(R.string.dialog_rockbox_message))
+                            .setPositiveButton(getString(R.string.settings_switch_rockbox),
+                                    new DialogInterface.OnClickListener() {
+                                        public void onClick(DialogInterface dialog, int which) {
+                                            Toast.makeText(MainActivity.this,
+                                                    getString(R.string.dialog_rockbox_rebooting),
+                                                    Toast.LENGTH_SHORT).show();
+                                            new Thread(new Runnable() {
+                                                @Override
+                                                public void run() {
+                                                    final boolean ok = LauncherSwitch.switchToRockbox();
+                                                    runOnUiThread(new Runnable() {
+                                                        @Override
+                                                        public void run() {
+                                                            if (!ok) {
+                                                                Toast.makeText(MainActivity.this,
+                                                                        getString(R.string.dialog_rockbox_failed),
+                                                                        Toast.LENGTH_SHORT).show();
+                                                            }
+                                                        }
+                                                    });
+                                                }
+                                            }, "SwitchRockbox").start();
+                                        }
+                                    })
+                            .setNegativeButton("Cancel", null)
+                            .show();
+                }
+            });
+            containerSettingsItems.addView(btnRockbox);
+        }
         LinearLayout btnServerMenu = createSettingsRow(RowKeys.WEB_SERVER, R.string.settings_web_server, true);
         btnServerMenu.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -17655,6 +17790,16 @@ public class MainActivity extends Activity {
         containerSettingsItems.addView(content, new LinearLayout.LayoutParams(
                 rowW, LinearLayout.LayoutParams.WRAP_CONTENT));
 
+        Button btnDebug = createListButton(getString(R.string.settings_sub_debug));
+        btnDebug.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                clickFeedback();
+                buildDebugUI();
+            }
+        });
+        containerSettingsItems.addView(btnDebug);
+
         if (BuildConfig.FEATURE_OTA_UPDATE) {
             final Button otaProbe = createListButton(getString(R.string.update_checking));
             otaProbe.setEnabled(false);
@@ -17706,6 +17851,35 @@ public class MainActivity extends Activity {
                 });
             }
         }, "AboutOtaProbe").start();
+    }
+
+    private void buildDebugUI() {
+        setSettingsAboutFullWidth(true);
+        setSettingsSubScreen(SettingsScreens.DEBUG);
+        updateStatusBarTitle();
+        updateScreenBackground(STATE_SETTINGS);
+        containerSettingsItems.removeAllViews();
+
+        final LinearLayout btnJjThemes = createSettingsRow(RowKeys.DEBUG_JJ_THEMES,
+                R.string.settings_debug_jj_themes, false);
+        btnJjThemes.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                clickFeedback();
+                boolean enable = !ActiveThemeEngine.isJjMode();
+                ActiveThemeEngine.setJjMode(MainActivity.this, enable);
+                ActiveThemeEngine.loadThemes(MainActivity.this);
+                refreshSettingsPreview(RowKeys.DEBUG_JJ_THEMES);
+                Toast.makeText(MainActivity.this,
+                        enable ? R.string.settings_debug_jj_themes_hint : R.string.settings_sub_themes,
+                        Toast.LENGTH_LONG).show();
+                applyThemeToMainMenu();
+                rebuildHomeMenuIfVisible();
+            }
+        });
+        containerSettingsItems.addView(btnJjThemes);
+        refreshSettingsPreview(RowKeys.DEBUG_JJ_THEMES);
+        btnJjThemes.requestFocus();
     }
 
     private void replaceAboutOtaPlaceholder(Button placeholder, Button replacement, boolean showUnavailable) {
@@ -25621,8 +25795,8 @@ public class MainActivity extends Activity {
     /** Called from MediaSessionShim (API 21+) for screen-off transport keys. */
     public boolean handleMediaSessionKey(int keyCode) {
         if (!isScreenOffControlEnabled) return false;
-        if (keyCode == 21) { adjustVolume(false); clickFeedback(); return true; }
-        if (keyCode == 22) { adjustVolume(true); clickFeedback(); return true; }
+        if (Y1InputKeys.isVolumeDownKey(keyCode)) { adjustVolume(false); clickFeedback(); return true; }
+        if (Y1InputKeys.isVolumeUpKey(keyCode)) { adjustVolume(true); clickFeedback(); return true; }
         if (keyCode == KeyEvent.KEYCODE_MEDIA_PREVIOUS || keyCode == 88
                 || keyCode == KeyEvent.KEYCODE_MEDIA_NEXT || keyCode == 87) {
             return false;
@@ -26070,7 +26244,7 @@ public class MainActivity extends Activity {
 
     private boolean handleThemedContextMenuKeyDown(int keyCode, KeyEvent event) {
         if (themedContextMenu == null || !themedContextMenu.isShowing()) return false;
-        if (keyCode == 21 || keyCode == 22) {
+        if (Y1InputKeys.isWheelKey(keyCode)) {
             if (contextMenuInQueueTier && contextQueueMoveFrom >= 0
                     && themedContextMenu.focusZone() == ThemedContextMenu.FocusZone.TIER_CONTENT) {
                 int delta = mapWheelToMenuMove(keyCode);
@@ -26086,20 +26260,20 @@ public class MainActivity extends Activity {
                 }
             }
             if (isContextVolumeQuickBarFocused()) {
-                adjustVolume(keyCode == 22);
+                adjustVolume(Y1InputKeys.isWheelDown(keyCode));
                 refreshContextMediaSlidersUi();
                 clickFeedback();
                 return true;
             }
             if (isContextBrightnessQuickBarFocused()) {
-                adjustContextBrightness(keyCode == 22);
+                adjustContextBrightness(Y1InputKeys.isWheelDown(keyCode));
                 clickFeedback();
                 return true;
             }
             if (contextMenuInVolumeSlider && audioManager != null
                     && (themedContextMenu.isVolumeOnlyMode()
                     || themedContextMenu.focusZone() == ThemedContextMenu.FocusZone.SLIDER)) {
-                adjustVolume(keyCode == 22);
+                adjustVolume(Y1InputKeys.isWheelDown(keyCode));
                 refreshContextVolumeSliderUi();
                 clickFeedback();
                 return true;
@@ -26110,14 +26284,14 @@ public class MainActivity extends Activity {
                 return true;
             }
         }
-        if (keyCode == 21) {
+        if (Y1InputKeys.isWheelUp(keyCode)) {
             themedContextMenu.moveFocus(-1);
             syncContextVolumeSliderWithFocus();
             if (contextMenuInQueueTier) contextQueueFocusIndex = themedContextMenu.focusIndex();
             clickFeedback();
             return true;
         }
-        if (keyCode == 22) {
+        if (Y1InputKeys.isWheelDown(keyCode)) {
             themedContextMenu.moveFocus(1);
             syncContextVolumeSliderWithFocus();
             if (contextMenuInQueueTier) contextQueueFocusIndex = themedContextMenu.focusIndex();
@@ -26159,15 +26333,15 @@ public class MainActivity extends Activity {
             }
 
             if (isScreenOffControlEnabled && currentScreenState == STATE_PLAYER) {
-                if (keyCode == 21) {
-                    // 🚀 방어막: 곡 넘김 직후 0.3초(300ms) 안에는 볼륨 조절을 차단합니다!
+                if (Y1InputKeys.isVolumeDownKey(keyCode) || Y1InputKeys.isWheelUp(keyCode)) {
+                    // Block volume briefly after track change.
                     if (System.currentTimeMillis() - lastTrackChangeTime > 300) {
                         adjustVolume(false);
                         clickFeedback();
                     }
                     return true;
                 }
-                if (keyCode == 22) {
+                if (Y1InputKeys.isVolumeUpKey(keyCode) || Y1InputKeys.isWheelDown(keyCode)) {
                     if (System.currentTimeMillis() - lastTrackChangeTime > 300) {
                         adjustVolume(true);
                         clickFeedback();
@@ -26225,13 +26399,13 @@ public class MainActivity extends Activity {
                 }
                 return true;
             }
-            if (keyCode == 21) {
+            if (Y1InputKeys.isWheelUp(keyCode)) {
                 keyboardIndex = (keyboardIndex - 1 + KEYBOARD_CHARS.length) % KEYBOARD_CHARS.length;
                 updateKeyboardUI();
                 clickFeedback();
                 return true;
             }
-            if (keyCode == 22) {
+            if (Y1InputKeys.isWheelDown(keyCode)) {
                 keyboardIndex = (keyboardIndex + 1) % KEYBOARD_CHARS.length;
                 updateKeyboardUI();
                 clickFeedback();
@@ -26254,7 +26428,7 @@ public class MainActivity extends Activity {
         if (currentScreenState == STATE_PLAYER) {
             if (themedContextMenu != null && themedContextMenu.isShowing()
                     && !contextMenuVolumeOnly
-                    && (keyCode == 21 || keyCode == 22)) {
+                    && Y1InputKeys.isWheelKey(keyCode)) {
                 // #region agent log
                 try {
                     org.json.JSONObject d = new org.json.JSONObject();
@@ -26267,7 +26441,7 @@ public class MainActivity extends Activity {
                 // #endregion
                 return true;
             }
-            if (keyCode == 21) {
+            if (Y1InputKeys.isWheelUp(keyCode)) {
                 if (playerScrubCursorActive) {
                     movePlayerScrubCursor(-MEDIA_SCRUB_STEP_MS);
                 } else {
@@ -26276,7 +26450,7 @@ public class MainActivity extends Activity {
                 clickFeedback();
                 return true;
             }
-            if (keyCode == 22) {
+            if (Y1InputKeys.isWheelDown(keyCode)) {
                 if (playerScrubCursorActive) {
                     movePlayerScrubCursor(MEDIA_SCRUB_STEP_MS);
                 } else {
@@ -26289,13 +26463,13 @@ public class MainActivity extends Activity {
         }
 
         if (currentScreenState == STATE_BRIGHTNESS) {
-            if (keyCode == 21) {
+            if (Y1InputKeys.isWheelUp(keyCode)) {
                 currentSystemBrightness = Math.max(10, currentSystemBrightness - 15);
                 updateBrightness(currentSystemBrightness);
                 clickFeedback();
                 return true;
             }
-            if (keyCode == 22) {
+            if (Y1InputKeys.isWheelDown(keyCode)) {
                 currentSystemBrightness = Math.min(255, currentSystemBrightness + 15);
                 updateBrightness(currentSystemBrightness);
                 clickFeedback();
@@ -26353,13 +26527,13 @@ public class MainActivity extends Activity {
                     }
                 }
 
-                if (keyCode == 21) {
+                if (Y1InputKeys.isWheelUp(keyCode)) {
                     listVirtualSongs.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_UP));
                     listVirtualSongs.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_UP));
                     clickFeedback();
                     return true;
                 }
-                if (keyCode == 22) {
+                if (Y1InputKeys.isWheelDown(keyCode)) {
                     listVirtualSongs.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_DOWN));
                     listVirtualSongs.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_DOWN));
                     clickFeedback();
@@ -26367,12 +26541,12 @@ public class MainActivity extends Activity {
                 }
             }
             if (currentScreenState == STATE_SETTINGS && isThemeListActive()
-                    && (keyCode == 21 || keyCode == 22)) {
+                    && Y1InputKeys.isWheelKey(keyCode)) {
                 dispatchThemeListKey(keyCode);
                 clickFeedback();
                 return true;
             }
-            if (currentScreenState == STATE_SETTINGS && (keyCode == 21 || keyCode == 22)) {
+            if (currentScreenState == STATE_SETTINGS && Y1InputKeys.isWheelKey(keyCode)) {
                 // #region agent log
                 if (isConversationThreadActive()) {
                     try {
@@ -26385,13 +26559,13 @@ public class MainActivity extends Activity {
                 }
                 // #endregion
                 if (isConversationThreadActive()) {
-                    if (moveConversationListFocus(keyCode == 21 ? -1 : 1)) {
+                    if (moveConversationListFocus(Y1InputKeys.isWheelUp(keyCode) ? -1 : 1)) {
                         clickFeedback();
                     }
                     return true;
                 }
                 if (isReachBrowseListActive()) {
-                    if (moveReachBrowseListFocus(keyCode == 21 ? -1 : 1)) {
+                    if (moveReachBrowseListFocus(Y1InputKeys.isWheelUp(keyCode) ? -1 : 1)) {
                         clickFeedback();
                     }
                     return true;
@@ -26403,14 +26577,14 @@ public class MainActivity extends Activity {
                         if (row != null && row.isFocusable() && row.requestFocus()) break;
                     }
                 }
-                if (moveSettingsListFocus(keyCode == 21 ? -1 : 1)) {
+                if (moveSettingsListFocus(Y1InputKeys.isWheelUp(keyCode) ? -1 : 1)) {
                     clickFeedback();
                 }
                 return true;
             }
-            if (currentScreenState == STATE_MENU && (keyCode == 21 || keyCode == 22)) {
+            if (currentScreenState == STATE_MENU && Y1InputKeys.isWheelKey(keyCode)) {
                 if (!isFocusValidForCurrentScreen()) requestFirstHomeMenuFocus();
-                if (moveHomeMenuFocus(keyCode == 21 ? -1 : 1)) clickFeedback();
+                if (moveHomeMenuFocus(Y1InputKeys.isWheelUp(keyCode) ? -1 : 1)) clickFeedback();
                 return true;
             }
             if ((currentScreenState == STATE_BROWSER || currentScreenState == STATE_PODCASTS
@@ -26428,7 +26602,7 @@ public class MainActivity extends Activity {
                 c = getCurrentFocus();
             }
             if (c != null) {
-                if (keyCode == 21) { // 휠 위로 돌릴 때 (UP)
+                if (Y1InputKeys.isWheelUp(keyCode)) { // wheel up
                     // 🚀 [점프 완벽 차단] 좌표 검색(focusSearch)을 버리고 리스트 순서(Index)를 직접 조작합니다!
                     android.view.ViewGroup parent = (android.view.ViewGroup) c.getParent();
                     if (parent instanceof LinearLayout) {
@@ -26452,7 +26626,7 @@ public class MainActivity extends Activity {
                     clickFeedback();
                     return true;
                 }
-                if (keyCode == 22) { // 휠 아래로 돌릴 때 (DOWN)
+                if (Y1InputKeys.isWheelDown(keyCode)) { // wheel down
                     android.view.ViewGroup parent = (android.view.ViewGroup) c.getParent();
                     if (parent instanceof LinearLayout) {
                         int index = parent.indexOfChild(c);
@@ -26543,14 +26717,14 @@ public class MainActivity extends Activity {
             return true;
         }
 
-        if (currentScreenState == STATE_WIFI_KEYBOARD && keyCode == 21) {
+        if (currentScreenState == STATE_WIFI_KEYBOARD && Y1InputKeys.isWheelUp(keyCode)) {
             keyboardPrevDelRepeatActive = false;
             clockHandler.removeCallbacks(keyboardPrevDelRepeatRunnable);
             clockHandler.removeCallbacks(keyboardDelRepeatRunnable);
         }
 
-        // 💡 [핵심 차단 구역] 휠 조작(21, 22)을 '뗄 때'
-        if (keyCode == 21 || keyCode == 22) {
+        // Block wheel key-up while context menu is open.
+        if (Y1InputKeys.isWheelKey(keyCode)) {
             return true;
         }
 
@@ -27050,11 +27224,11 @@ public class MainActivity extends Activity {
                         MainActivity.instance.clickFeedback();
                     }
                     // 🔊 혹시 기기가 휠 조작(21, 22)을 미디어 신호로 보내줄 경우를 대비한 방어 코드
-                    else if (keyCode == 21) {
+                    else if (Y1InputKeys.isVolumeDownKey(keyCode)) {
                         MainActivity.instance.adjustVolume(false);
                         MainActivity.instance.clickFeedback();
                     }
-                    else if (keyCode == 22) {
+                    else if (Y1InputKeys.isVolumeUpKey(keyCode)) {
                         MainActivity.instance.adjustVolume(true);
                         MainActivity.instance.clickFeedback();
                     }

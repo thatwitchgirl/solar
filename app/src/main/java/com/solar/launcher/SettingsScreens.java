@@ -21,6 +21,7 @@ public final class SettingsScreens {
     public static final String DEEZER_ACCOUNT = "settings.deezer.account";
     public static final String DEEZER_CONNECTION = "settings.deezer.connection";
     public static final String ABOUT = "settings.about";
+    public static final String DEBUG = "settings.debug";
     public static final String SYSTEM_UPDATE = "settings.system_update";
     public static final String HOME = "settings.home";
     public static final String HOME_ARRANGE = "settings.home.arrange";
@@ -57,6 +58,7 @@ public final class SettingsScreens {
         if (DEEZER_ACCOUNT.equals(key)) return R.string.settings_sub_deezer_account;
         if (DEEZER_CONNECTION.equals(key)) return R.string.settings_sub_deezer_connection;
         if (ABOUT.equals(key)) return R.string.settings_sub_about;
+        if (DEBUG.equals(key)) return R.string.settings_sub_debug;
         if (SYSTEM_UPDATE.equals(key)) return R.string.settings_sub_system_update;
         if (HOME.equals(key)) return R.string.settings_sub_home;
         if (HOME_ARRANGE.equals(key)) return R.string.settings_sub_home_arrange;

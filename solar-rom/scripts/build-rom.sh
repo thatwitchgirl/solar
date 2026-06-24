@@ -298,21 +298,36 @@ audit_rom_contents() {
         errors=$((errors + 1))
     fi
 
-    if [ -f "$sys_mount/etc/init.d/99Y1ButtonScript" ] || [ -f "$sys_mount/etc/init.d/99Y1LauncherInit.sh" ]; then
-        echo "audit fail: legacy init.d scripts still present" >&2
+    if [ -f "$sys_mount/etc/init.d/99Y1LauncherInit.sh" ]; then
+        echo "audit fail: legacy 99Y1LauncherInit.sh still present" >&2
         errors=$((errors + 1))
     fi
 
-    if [ -f "$sys_mount/app/org.rockbox.apk" ]; then
-        echo "audit fail: org.rockbox.apk still present" >&2
+    if [ ! -f "$sys_mount/app/org.rockbox.apk" ]; then
+        echo "audit fail: org.rockbox.apk missing (launcher switch requires Rockbox)" >&2
         errors=$((errors + 1))
     fi
 
-    if [ ! -f "$sys_mount/usr/keylayout/Generic.kl" ] || [ ! -f "$sys_mount/usr/keylayout/Stock.kl" ]; then
+    if [ ! -f "$sys_mount/lib/librockbox.so" ]; then
+        echo "audit fail: librockbox.so missing" >&2
+        errors=$((errors + 1))
+    fi
+
+    if [ ! -f "$sys_mount/etc/solar/switch-to-stock.sh" ]; then
+        echo "audit fail: /system/etc/solar/switch-to-stock.sh missing" >&2
+        errors=$((errors + 1))
+    fi
+
+    if [ ! -f "$sys_mount/etc/init.d/99Y1ButtonScript" ]; then
+        echo "audit fail: 99Y1ButtonScript missing (Back+Play Rockbox gesture)" >&2
+        errors=$((errors + 1))
+    fi
+
+    if [ ! -f "$sys_mount/usr/keylayout/Generic.kl" ] || [ ! -f "$sys_mount/usr/keylayout/Rockbox.kl" ]; then
         echo "audit fail: keylayout files missing" >&2
         errors=$((errors + 1))
-    elif ! cmp -s "$sys_mount/usr/keylayout/Generic.kl" "$sys_mount/usr/keylayout/Stock.kl"; then
-        echo "audit fail: Generic.kl is not identical to Stock.kl" >&2
+    elif ! cmp -s "$sys_mount/usr/keylayout/Generic.kl" "$sys_mount/usr/keylayout/Rockbox.kl"; then
+        echo "audit fail: Generic.kl is not identical to Rockbox.kl (unified keymap)" >&2
         errors=$((errors + 1))
     fi
 
@@ -343,11 +358,6 @@ audit_rom_contents() {
 
     if find "$user_mount" -maxdepth 1 -name 'com.innioasis.*.apk' 2>/dev/null | grep -q .; then
         echo "audit fail: stock Innioasis launcher APK present in userdata" >&2
-        errors=$((errors + 1))
-    fi
-
-    if [ -d "$user_mount/org.rockbox" ]; then
-        echo "audit fail: /data/org.rockbox still present" >&2
         errors=$((errors + 1))
     fi
 
@@ -420,11 +430,8 @@ else
     done
 fi
 
-sudo rm -f "$MOUNT_SYS/app/org.rockbox.apk"
-sudo rm -f "$MOUNT_SYS/lib/librockbox.so"
-sudo rm -f "$MOUNT_SYS/etc/init.d/99Y1ButtonScript"
+# Keep org.rockbox.apk + librockbox.so from base firmware for launcher switching.
 sudo rm -f "$MOUNT_SYS/etc/init.d/99Y1LauncherInit.sh"
-sudo rm -f "$MOUNT_SYS/etc/install-recovery.sh"
 
 sudo mkdir -p "$MOUNT_SYS/app" "$MOUNT_SYS/usr/keylayout"
 sudo cp "$STAGING_APK" "$MOUNT_SYS/app/$SYSTEM_APK_NAME"
@@ -445,15 +452,27 @@ sudo cp "$REPO_ROOT/solar-rom/system/99SolarInit.sh" "$MOUNT_SYS/etc/init.d/99So
 sudo chmod 755 "$MOUNT_SYS/etc/init.d/99SolarInit.sh"
 sudo chown root:root "$MOUNT_SYS/etc/init.d/99SolarInit.sh"
 
+echo "==> Install launcher switch scripts + unified Rockbox keymap"
+sudo mkdir -p "$MOUNT_SYS/etc/solar"
+sudo cp "$SCRIPT_DIR/switch-to-stock.sh" "$MOUNT_SYS/etc/solar/switch-to-stock.sh"
+sudo cp "$SCRIPT_DIR/switch-to-rockbox.sh" "$MOUNT_SYS/etc/solar/switch-to-rockbox.sh"
+sudo chmod 755 "$MOUNT_SYS/etc/solar/switch-to-stock.sh" "$MOUNT_SYS/etc/solar/switch-to-rockbox.sh"
+sudo chown root:root "$MOUNT_SYS/etc/solar/switch-to-stock.sh" "$MOUNT_SYS/etc/solar/switch-to-rockbox.sh"
+
+sudo cp "$REPO_ROOT/solar-rom/system/99Y1ButtonScript" "$MOUNT_SYS/etc/init.d/99Y1ButtonScript"
+sudo chmod 755 "$MOUNT_SYS/etc/init.d/99Y1ButtonScript"
+sudo chown root:root "$MOUNT_SYS/etc/init.d/99Y1ButtonScript"
+
+[ -f "$SCRIPT_DIR/Rockbox.kl" ] || die "missing $SCRIPT_DIR/Rockbox.kl"
 sudo cp "$SCRIPT_DIR/Stock.kl" "$MOUNT_SYS/usr/keylayout/Stock.kl"
-sudo cp "$SCRIPT_DIR/Stock.kl" "$MOUNT_SYS/usr/keylayout/Generic.kl"
-sudo chmod 644 "$MOUNT_SYS/usr/keylayout/Stock.kl" "$MOUNT_SYS/usr/keylayout/Generic.kl"
-sudo chown root:root "$MOUNT_SYS/usr/keylayout/Stock.kl" "$MOUNT_SYS/usr/keylayout/Generic.kl"
+sudo cp "$SCRIPT_DIR/Rockbox.kl" "$MOUNT_SYS/usr/keylayout/Rockbox.kl"
+sudo cp "$SCRIPT_DIR/Rockbox.kl" "$MOUNT_SYS/usr/keylayout/Generic.kl"
+sudo chmod 644 "$MOUNT_SYS/usr/keylayout/Stock.kl" "$MOUNT_SYS/usr/keylayout/Rockbox.kl" "$MOUNT_SYS/usr/keylayout/Generic.kl"
+sudo chown root:root "$MOUNT_SYS/usr/keylayout/Stock.kl" "$MOUNT_SYS/usr/keylayout/Rockbox.kl" "$MOUNT_SYS/usr/keylayout/Generic.kl"
 
 install_solar_boot_assets "$BASE_DIR" "$MOUNT_SYS"
 
 echo "==> Patching userdata partition"
-sudo rm -rf "$MOUNT_USER/org.rockbox"
 while IFS= read -r apk; do
     [ -n "$apk" ] || continue
     echo "  removing userdata/$(basename "$apk")"
