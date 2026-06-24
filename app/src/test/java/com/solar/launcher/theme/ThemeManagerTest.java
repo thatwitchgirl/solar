@@ -1,5 +1,7 @@
 package com.solar.launcher.theme;
 
+import com.solar.launcher.HomeMenuConfig;
+
 import org.json.JSONObject;
 import org.junit.Test;
 
@@ -142,7 +144,21 @@ public class ThemeManagerTest {
     }
 
     @Test
+    public void appMusicOverridesStock() throws Exception {
+        JSONObject root = new JSONObject();
+        root.put("homePageConfig", new JSONObject().put("music", "stock_music.png"));
+        root.put("solarConfig", new JSONObject().put("appMusic", "solar_music.png"));
+        ThemeManager.availableThemes.clear();
+        ThemeManager.availableThemes.add(new ThemeManager.ThemeEntry("/tmp", "t", "t", root));
+        ThemeManager.setThemeIndex(0);
+        if (!ThemeManager.hasThemeSolarConfigKey("appMusic")) {
+            throw new AssertionError("appMusic set");
+        }
+    }
+
+    @Test
     public void selfCheck() {
+        com.solar.launcher.theme.SolarTheming.selfCheck();
         ThemeManager.selfCheck();
     }
 }

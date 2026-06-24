@@ -5008,18 +5008,10 @@ public class MainActivity extends Activity {
     }
 
     private Bitmap resolveHomeMenuPreviewIconForId(String id) {
-        if (HomeMenuConfig.ID_THEMES.equals(id) || HomeMenuConfig.ID_GET_THEMES.equals(id)) {
-            Bitmap themed = ThemeManager.getSettingIcon("theme");
-            if (themed != null) return themed;
-        }
         HomeMenuConfig.Entry e = HomeMenuConfig.find(id);
         if (e == null) return null;
-        if (e.stockIconKey != null) {
-            return ThemeManager.getHomeIcon(this, e.stockIconKey, e.defaultResId);
-        }
-        if (e.solarAppName != null) {
-            return ThemeManager.getSolarAppHomeIcon(this, e.solarAppName, e.defaultResId);
-        }
+        Bitmap icon = ThemeManager.getHomeMenuIcon(this, e);
+        if (icon != null) return icon;
         return ThemeManager.getCustomIcon("icon_default_album.png", this, e.defaultResId);
     }
 
@@ -9385,23 +9377,11 @@ public class MainActivity extends Activity {
         }
 
         String solarKey = resolveSoulseekSolarConfigKey(rowKey);
-        Bitmap icon = ThemeManager.getSolarSettingsIcon(rowLabel(rowKey));
+        Bitmap icon = ThemeManager.getSettingsRowIcon(this, rowKey,
+                com.solar.launcher.theme.SolarTheming.englishSettingsRowLabel(this, rowKey),
+                solarKey, resolveSettingIconKey(rowKey), resolveSolarSettingAppName(rowKey));
         if (icon == null && isAppearancePreviewRow(rowKey)) {
             icon = ThemeManager.getSettingIcon("theme");
-        }
-        if (icon == null) {
-            icon = solarKey != null ? ThemeManager.getSolarConfigIcon(solarKey) : null;
-        }
-        if (icon == null) {
-            String solarApp = resolveSolarSettingAppName(rowKey);
-            icon = solarApp != null ? ThemeManager.getSolarAppIcon(solarApp) : null;
-        }
-        if (icon == null) {
-            String iconKey = resolveSettingIconKey(rowKey);
-            icon = iconKey != null ? ThemeManager.getSettingIcon(iconKey) : null;
-        }
-        if (icon == null && SettingsScreens.isHome(settingsSubScreenKey)) {
-            icon = resolveHomeMenuPreviewIconForSettings(rowKey);
         }
         if (icon == null && RowKeys.APP_THEME.equals(rowKey)) {
             Bitmap cover = ThemeManager.getScaledThemeCover(ThemeManager.getCurrentTheme(), y1ThemeCoverHeightPx);

@@ -1,5 +1,7 @@
 package com.solar.launcher.theme;
 
+import com.solar.launcher.HomeMenuConfig;
+
 import android.content.Context;
 import android.content.res.AssetManager;
 import android.os.Environment;
@@ -1244,6 +1246,58 @@ public class ThemeManager {
             }
         }
         return BitmapFactory.decodeResource(context.getResources(), defaultResId);
+    }
+
+    /**
+     * Home shortcut icon: {@code solarConfig.app*} (English label) → stock {@code homePageConfig}
+     * → drawable fallback for Y1 stock rows.
+     */
+    public static Bitmap getHomeMenuIcon(Context context, HomeMenuConfig.Entry entry) {
+        if (context == null || entry == null) return null;
+        if (HomeMenuConfig.ID_THEMES.equals(entry.id)
+                || HomeMenuConfig.ID_GET_THEMES.equals(entry.id)) {
+            Bitmap themes = getSolarAppIcon("Themes");
+            if (themes != null) return themes;
+            Bitmap themed = getSettingIcon("theme");
+            if (themed != null) return themed;
+            return android.graphics.BitmapFactory.decodeResource(
+                    context.getResources(), entry.defaultResId);
+        }
+        String enLabel = entry.englishLabel(context);
+        Bitmap solar = getSolarAppIcon(enLabel);
+        if (solar != null) return solar;
+        if (entry.solarAppName != null && !entry.solarAppName.equals(enLabel)) {
+            solar = getSolarAppIcon(entry.solarAppName);
+            if (solar != null) return solar;
+        }
+        if (entry.stockIconKey != null) {
+            return getHomeIcon(context, entry.stockIconKey, entry.defaultResId);
+        }
+        return getSolarAppHomeIcon(context, entry.solarAppName, entry.defaultResId);
+    }
+
+    /**
+     * Settings right-pane icon: {@code solarConfig.settings*} (English label) → Reach extras →
+     * {@code solarConfig.app*} → {@code settingConfig} → home shortcut preview.
+     */
+    public static Bitmap getSettingsRowIcon(Context context, String rowKey, String englishLabel,
+            String soulseekSolarKey, String settingIconKey, String solarAppName) {
+        Bitmap icon = getSolarSettingsIcon(englishLabel);
+        if (icon == null && soulseekSolarKey != null) {
+            icon = getSolarConfigIcon(soulseekSolarKey);
+        }
+        if (icon == null && solarAppName != null) {
+            icon = getSolarAppIcon(solarAppName);
+        }
+        if (icon == null && settingIconKey != null) {
+            icon = getSettingIcon(settingIconKey);
+        }
+        if (icon == null && rowKey != null && rowKey.startsWith("home.shortcut.")) {
+            HomeMenuConfig.Entry e = HomeMenuConfig.find(
+                    rowKey.substring("home.shortcut.".length()));
+            if (e != null) icon = getHomeMenuIcon(context, e);
+        }
+        return icon;
     }
 
     /** solarConfig key for a Solar-only app label, e.g. Podcasts → appPodcasts, Get Music → appGet_Music */
