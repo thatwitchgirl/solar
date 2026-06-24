@@ -1,7 +1,7 @@
 #!/system/bin/sh
 # Solar Y1 button script (patched from rockbox-y1).
 # 1. Restart Rockbox when prev+next held 10s while Rockbox is running.
-# 2. Back+Play held 10s toggles Solar ↔ Rockbox (no reboot, unified keymap).
+# 2. Back+Play held 10s toggles Solar ↔ Rockbox (no full restart, unified keymap).
 
 BOOT_COMPLETED=0
 while [ "$BOOT_COMPLETED" -ne 1 ]; do

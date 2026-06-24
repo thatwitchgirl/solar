@@ -1,5 +1,5 @@
 #!/system/bin/sh
-# Solar Y1 launcher switch — no reboot, unified Y1-Rockbox.kl, codec lib sync.
+# Solar Y1 launcher switch — no full restart; unified Y1-Rockbox.kl + codec lib sync.
 # Rockbox APK calls bare script → Solar. Solar calls with --rockbox → Rockbox.
 # ponytail: enable + start target launcher, then force-stop + disable the other (no clash).
 
