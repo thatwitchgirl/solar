@@ -64,7 +64,6 @@ import com.solar.launcher.podcast.PodcastResumeStore;
 import org.json.JSONObject;
 
 import android.app.Activity;
-import android.app.AlertDialog;
 import android.bluetooth.BluetoothA2dp;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
@@ -72,7 +71,6 @@ import android.bluetooth.BluetoothProfile;
 import android.content.BroadcastReceiver;
 import android.content.ComponentName;
 import android.content.Context;
-import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
@@ -786,6 +784,8 @@ public class MainActivity extends Activity {
     private final java.util.ArrayDeque<String> contextMenuTierStack = new java.util.ArrayDeque<String>();
     private boolean contextMenuInVolumeSlider = false;
     private boolean contextMenuVolumeOnly = false;
+    /** Blocks Back while a non-interactive please-wait overlay is up (Rockbox switch). */
+    private boolean contextMenuBlockingHint = false;
     private static final int VOLUME_CONTEXT_DISMISS_MS = 2000;
     private static final int CONTEXT_QUICK_VOLUME_INDEX = 6;
     private static final int CONTEXT_QUICK_BRIGHTNESS_INDEX = 5;
@@ -9761,6 +9761,7 @@ public class MainActivity extends Activity {
         contextMenuTierStack.clear();
         contextMenuInVolumeSlider = false;
         contextMenuVolumeOnly = false;
+        contextMenuBlockingHint = false;
         contextMenuInQueueTier = false;
         contextMenuQuickOnly = false;
         contextQueueEditPlaylist = false;
@@ -12076,6 +12077,7 @@ public class MainActivity extends Activity {
 
     private void handleContextMenuBackKeyUp() {
         if (themedContextMenu == null || !themedContextMenu.isShowing()) return;
+        if (contextMenuBlockingHint || themedContextMenu.isHintOnlyMode()) return;
         if (contextMenuVolumeOnly) {
             dismissThemedContextMenu();
             return;
@@ -13109,6 +13111,11 @@ public class MainActivity extends Activity {
             final String confirmLabel, final String cancelLabel,
             final Runnable onConfirm, final Runnable onCancel) {
         dismissThemedContextMenu();
+        contextMenuBlockingHint = false;
+        contextMenuTierStack.clear();
+        contextMenuQuickOnly = true;
+        contextMenuInVolumeSlider = false;
+        contextMenuVolumeOnly = false;
         String[] labels = new String[] { confirmLabel, cancelLabel };
         ViewGroup root = (ViewGroup) findViewById(android.R.id.content);
         int margin = (int) (10 * getResources().getDisplayMetrics().density);
@@ -13127,8 +13134,55 @@ public class MainActivity extends Activity {
                             onCancel.run();
                         }
                     }
-                }, y1RowHeightPx, panelW, false, true);
+                }, y1RowHeightPx, panelW, true, true);
+        themedContextMenu.focusOptionsList();
+        contextMenuOpenedAtMs = System.currentTimeMillis();
         clickFeedback();
+    }
+
+    /** Non-interactive please-wait panel (Hold-back hint style, no volume slider). */
+    private void showPleaseWaitOverlay(String message) {
+        dismissThemedContextMenu();
+        contextMenuBlockingHint = true;
+        contextMenuQuickOnly = true;
+        contextMenuInVolumeSlider = false;
+        contextMenuVolumeOnly = false;
+        ViewGroup root = (ViewGroup) findViewById(android.R.id.content);
+        int margin = (int) (10 * getResources().getDisplayMetrics().density);
+        int panelW = screenWidthPx > margin * 2 ? screenWidthPx - margin * 2 : y1ActiveRowWidthPx();
+        themedContextMenu.showHintOnly(root, message, y1RowHeightPx, panelW);
+        contextMenuOpenedAtMs = System.currentTimeMillis();
+    }
+
+    private void dismissPleaseWaitOverlay() {
+        contextMenuBlockingHint = false;
+        if (themedContextMenu != null && themedContextMenu.isHintOnlyMode()) {
+            themedContextMenu.dismiss();
+        }
+    }
+
+    private void launchRockboxSwitch() {
+        if (!LauncherSwitch.isRockboxInstalled(this)) {
+            Toast.makeText(this, getString(R.string.dialog_rockbox_unavailable), Toast.LENGTH_SHORT).show();
+            return;
+        }
+        showPleaseWaitOverlay(getString(R.string.dialog_rockbox_rebooting));
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                final boolean ok = LauncherSwitch.switchToRockbox();
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (!ok) {
+                            dismissPleaseWaitOverlay();
+                            Toast.makeText(MainActivity.this, getString(R.string.dialog_rockbox_failed),
+                                    Toast.LENGTH_SHORT).show();
+                        }
+                    }
+                });
+            }
+        }, "RockboxSwitch").start();
     }
 
     private boolean isSoulseekSharingRejectionMessage(String text) {
@@ -13610,37 +13664,42 @@ public class MainActivity extends Activity {
         }
         if (currentScreenState == STATE_WEBSERVER) {
             if (isServerRunning) {
-                new AlertDialog.Builder(MainActivity.this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-                        .setTitle(getString(R.string.webserver_dialog_title))
-                        .setMessage(getString(R.string.webserver_dialog_message))
-                        .setPositiveButton(getString(R.string.webserver_stop_exit), new DialogInterface.OnClickListener() {
-                            public void onClick(DialogInterface dialog, int which) {
+                showThemedConfirm(
+                        getString(R.string.webserver_dialog_title),
+                        getString(R.string.webserver_dialog_message),
+                        getString(R.string.webserver_stop_exit),
+                        getString(R.string.webserver_keep_running),
+                        new Runnable() {
+                            @Override
+                            public void run() {
                                 toggleWebServer();
                                 returnFromAuxScreen();
                             }
-                        })
-                        .setNegativeButton(getString(R.string.webserver_keep_running), new DialogInterface.OnClickListener() {
-                            public void onClick(DialogInterface dialog, int which) {
+                        },
+                        new Runnable() {
+                            @Override
+                            public void run() {
                                 returnFromAuxScreen();
                             }
-                        })
-                        .show();
+                        });
             } else {
                 returnFromAuxScreen();
             }
             return;
         }
         if (currentScreenState == STATE_DEEZER_SETUP) {
-            new AlertDialog.Builder(MainActivity.this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-                    .setTitle(getString(R.string.deezer_setup_dialog_title))
-                    .setMessage(getString(R.string.deezer_setup_dialog_message))
-                    .setPositiveButton(getString(R.string.deezer_setup_stop_exit), new DialogInterface.OnClickListener() {
-                        public void onClick(DialogInterface dialog, int which) {
+            showThemedConfirm(
+                    getString(R.string.deezer_setup_dialog_title),
+                    getString(R.string.deezer_setup_dialog_message),
+                    getString(R.string.deezer_setup_stop_exit),
+                    getString(R.string.deezer_setup_stay),
+                    new Runnable() {
+                        @Override
+                        public void run() {
                             returnFromDeezerSetup();
                         }
-                    })
-                    .setNegativeButton(getString(R.string.deezer_setup_stay), null)
-                    .show();
+                    },
+                    null);
             return;
         }
         if (currentScreenState == STATE_BROWSER) {
@@ -14119,29 +14178,7 @@ public class MainActivity extends Activity {
             @Override
             public void onClick(View v) {
                 clickFeedback();
-                new AlertDialog.Builder(MainActivity.this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-                        .setTitle(getString(R.string.dialog_power_off_title))
-                        .setMessage(getString(R.string.dialog_power_off_message))
-                        .setPositiveButton("Shut Down", new DialogInterface.OnClickListener() {
-                            public void onClick(DialogInterface dialog, int which) {
-                                try {
-                                    Process proc = Runtime.getRuntime().exec(new String[] { "su", "-c", "reboot -p" });
-                                    proc.waitFor();
-                                } catch (Exception e) {
-                                    try {
-                                        Intent intent = new Intent("android.intent.action.ACTION_REQUEST_SHUTDOWN");
-                                        intent.putExtra("android.intent.extra.KEY_CONFIRM", false);
-                                        intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                                        startActivity(intent);
-                                    } catch (Exception ex) {
-                                        Toast.makeText(MainActivity.this, getString(R.string.dialog_power_off_blocked),
-                                                Toast.LENGTH_LONG).show();
-                                    }
-                                }
-                            }
-                        })
-                        .setNegativeButton("Cancel", null)
-                        .show();
+                showShutdownConfirm();
             }
         });
         containerSettingsItems.addView(btnPowerOff);
@@ -14151,40 +14188,7 @@ public class MainActivity extends Activity {
                 @Override
                 public void onClick(View v) {
                     clickFeedback();
-                    if (!LauncherSwitch.isRockboxInstalled(MainActivity.this)) {
-                        Toast.makeText(MainActivity.this, getString(R.string.dialog_rockbox_unavailable),
-                                Toast.LENGTH_SHORT).show();
-                        return;
-                    }
-                    new AlertDialog.Builder(MainActivity.this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-                            .setTitle(getString(R.string.dialog_rockbox_title))
-                            .setMessage(getString(R.string.dialog_rockbox_message))
-                            .setPositiveButton(getString(R.string.settings_switch_rockbox),
-                                    new DialogInterface.OnClickListener() {
-                                        public void onClick(DialogInterface dialog, int which) {
-                                            Toast.makeText(MainActivity.this,
-                                                    getString(R.string.dialog_rockbox_rebooting),
-                                                    Toast.LENGTH_SHORT).show();
-                                            new Thread(new Runnable() {
-                                                @Override
-                                                public void run() {
-                                                    final boolean ok = LauncherSwitch.switchToRockbox();
-                                                    runOnUiThread(new Runnable() {
-                                                        @Override
-                                                        public void run() {
-                                                            if (!ok) {
-                                                                Toast.makeText(MainActivity.this,
-                                                                        getString(R.string.dialog_rockbox_failed),
-                                                                        Toast.LENGTH_SHORT).show();
-                                                            }
-                                                        }
-                                                    });
-                                                }
-                                            }, "SwitchRockbox").start();
-                                        }
-                                    })
-                            .setNegativeButton("Cancel", null)
-                            .show();
+                    launchRockboxSwitch();
                 }
             });
             containerSettingsItems.addView(btnRockbox);
@@ -14295,11 +14299,14 @@ public class MainActivity extends Activity {
             @Override
             public void onClick(View v) {
                 clickFeedback();
-                new AlertDialog.Builder(MainActivity.this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-                        .setTitle(getString(R.string.dialog_clear_cache_title))
-                        .setMessage(getString(R.string.dialog_clear_cache_message))
-                        .setPositiveButton("Clear", new DialogInterface.OnClickListener() {
-                            public void onClick(DialogInterface dialog, int which) {
+                showThemedConfirm(
+                        getString(R.string.dialog_clear_cache_title),
+                        getString(R.string.dialog_clear_cache_message),
+                        getString(R.string.dialog_clear_cache_confirm),
+                        getString(R.string.common_cancel),
+                        new Runnable() {
+                            @Override
+                            public void run() {
                                 try {
                                     File coverFolder = getCoversFolder();
                                     int count = 0;
@@ -14311,21 +14318,21 @@ public class MainActivity extends Activity {
                                             }
                                         }
                                     }
-                                    Toast.makeText(MainActivity.this, getString(R.string.dialog_clear_cache_ok, count), Toast.LENGTH_SHORT).show();
-
-                                    // 메인 화면에 남아있는 이미지를 기본 아이콘으로 초기화합니다.
+                                    Toast.makeText(MainActivity.this,
+                                            getString(R.string.dialog_clear_cache_ok, count),
+                                            Toast.LENGTH_SHORT).show();
                                     ivAlbumArt.setImageResource(R.drawable.default_album);
                                     ivPlayerBgBlur.setImageResource(0);
                                     lastAlbumArtBytes = null;
                                     updateMainMenuBackground();
                                     refreshNowPlayingPreview();
                                 } catch (Exception e) {
-                                    Toast.makeText(MainActivity.this, getString(R.string.dialog_clear_cache_failed), Toast.LENGTH_SHORT).show();
+                                    Toast.makeText(MainActivity.this,
+                                            getString(R.string.dialog_clear_cache_failed),
+                                            Toast.LENGTH_SHORT).show();
                                 }
                             }
-                        })
-                        .setNegativeButton("Cancel", null)
-                        .show();
+                        });
             }
         });
         containerSettingsItems.addView(btnClearCache);
@@ -26250,6 +26257,9 @@ public class MainActivity extends Activity {
 
     private boolean handleThemedContextMenuKeyDown(int keyCode, KeyEvent event) {
         if (themedContextMenu == null || !themedContextMenu.isShowing()) return false;
+        if (contextMenuBlockingHint || themedContextMenu.isHintOnlyMode()) {
+            return true;
+        }
         if (Y1InputKeys.isWheelKey(keyCode)) {
             if (contextMenuInQueueTier && contextQueueMoveFrom >= 0
                     && themedContextMenu.focusZone() == ThemedContextMenu.FocusZone.TIER_CONTENT) {

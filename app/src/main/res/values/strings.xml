@@ -931,7 +931,7 @@
     <string name="dialog_power_off_blocked">⚠️System security prevents powering off directly from the app.</string>
     <string name="dialog_rockbox_title">Switch to Rockbox</string>
     <string name="dialog_rockbox_message">Switch to Rockbox now? Solar will close until you switch back from Rockbox.</string>
-    <string name="dialog_rockbox_rebooting">Switching to Rockbox…</string>
+    <string name="dialog_rockbox_rebooting">Please wait…\nSwitching to Rockbox.</string>
     <string name="dialog_rockbox_failed">Failed: Root access required.</string>
     <string name="dialog_rockbox_unavailable">Rockbox is not installed on this device.</string>
     <string name="settings_switch_rockbox">Switch to Rockbox</string>
@@ -941,6 +941,7 @@
     <string name="settings_debug_jj_themes_hint">Use themes from /JJ_Themes/ instead of Y1 Themes/</string>
     <string name="dialog_clear_cache_title">Clear Cache</string>
     <string name="dialog_clear_cache_message">Delete all downloaded album covers to free up storage space?</string>
+    <string name="dialog_clear_cache_confirm">Clear</string>
     <string name="dialog_clear_cache_ok">Deleted %1$d cover images.</string>
     <string name="dialog_clear_cache_failed">Failed to clear cache.</string>
     <string name="dialog_radius_theme">Use theme default</string>
