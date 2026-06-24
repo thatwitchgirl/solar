@@ -636,6 +636,11 @@
     <string name="deezer_back_results">〈 Back to Results</string>
     <string name="deezer_play">▶ Play</string>
     <string name="deezer_save">Save to Library</string>
+    <string name="deezer_play_album">Play album</string>
+    <string name="deezer_save_album">Save album to library</string>
+    <string name="deezer_queue_album">Add album to queue</string>
+    <string name="deezer_album_saved">Album saved to library</string>
+    <string name="deezer_album_queued">Album added to queue</string>
     <string name="deezer_add_to_queue">Add to queue</string>
     <string name="deezer_downloading">Downloading… %1$d%%</string>
     <string name="deezer_cancel">✕ Cancel</string>

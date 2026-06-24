@@ -359,6 +359,10 @@ public class MainActivity extends Activity {
     private int deezerPlaylistSaveGen = 0;
     private List<DeezerResult> deezerPlaylistPlayback = null;
     private int deezerPlaylistPlaybackIndex = -1;
+    /** Sequential album save/queue without clearing the playback queue. */
+    private List<DeezerResult> deezerBatchTransfer = null;
+    private int deezerBatchTransferIndex = -1;
+    private int deezerBatchTransferAction = 0;
     private static final int PODCAST_UI_SEARCH = 0;
     private static final int PODCAST_UI_SHOWS = 1;
     private static final int PODCAST_UI_EPISODES = 2;
@@ -7059,6 +7063,12 @@ public class MainActivity extends Activity {
         @Override public boolean deezerOpenedFromSettings() {
             return deezerReturnScreen == STATE_SETTINGS;
         }
+        @Override public boolean onDeezerBatchTransferStep(DeezerResult finished) {
+            return MainActivity.this.advanceDeezerBatchTransfer(finished);
+        }
+        @Override public boolean isDeezerAlbumBatchTransfer() {
+            return MainActivity.this.deezerBatchTransfer != null && deezerBatchTransferAction != 0;
+        }
     };
 
     private void openDeezerScreen() {
@@ -12621,54 +12631,10 @@ public class MainActivity extends Activity {
             }
         }
         if (currentScreenState == STATE_SOULSEEK && soulseekUiMode == SOULSEEK_UI_RESULTS) {
-            if (isGetMusicUnifiedUi()) {
-                final MusicSearchEntry entry = getMusicFocusedEntry();
-                if (entry != null && entry.source == MusicSearchEntry.Source.DEEZER && entry.deezer != null) {
-                    final DeezerResult dr = entry.deezer;
-                    addContextAction(getString(R.string.deezer_play), new Runnable() {
-                        @Override public void run() {
-                            startGetMusicDeezerTransfer(dr, DeezerScreen.ACTION_PLAY);
-                        }
-                    });
-                    addContextAction(getString(R.string.deezer_save), new Runnable() {
-                        @Override public void run() {
-                            startGetMusicDeezerTransfer(dr, DeezerScreen.ACTION_SAVE);
-                        }
-                    });
-                    addContextAction(getString(R.string.deezer_add_to_queue), new Runnable() {
-                        @Override public void run() {
-                            startGetMusicDeezerTransfer(dr, DeezerScreen.ACTION_QUEUE);
-                        }
-                    });
-                } else if (entry != null && entry.reach != null) {
-                    final SoulseekClient.Result r = entry.reach;
-                    addContextAction(getString(R.string.soulseek_play), new Runnable() {
-                        @Override public void run() {
-                            startSoulseekTransfer(r, SOULSEEK_ACTION_PLAY);
-                        }
-                    });
-                    addContextAction(getString(R.string.soulseek_save), new Runnable() {
-                        @Override public void run() {
-                            startSoulseekTransfer(r, SOULSEEK_ACTION_SAVE);
-                        }
-                    });
-                    addContextAction(getString(R.string.soulseek_add_to_queue), new Runnable() {
-                        @Override public void run() {
-                            startSoulseekTransfer(r, SOULSEEK_ACTION_QUEUE);
-                        }
-                    });
-                    final String resultPeer = r.username;
-                    addContextAction(getString(R.string.soulseek_view_profile), new Runnable() {
-                        @Override public void run() {
-                            dismissThemedContextMenu();
-                            openSoulseekUserProfile(resultPeer, new Runnable() {
-                                @Override public void run() {
-                                    changeScreen(STATE_SOULSEEK);
-                                    buildGetMusicResultsUI();
-                                }
-                            });
-                        }
-                    });
+            if (isGetMusicUnifiedUi() || soulseekUseOrganizedDisplay()) {
+                final MusicSearchEntry entry = getFocusedSearchEntry();
+                if (entry != null) {
+                    addMusicSearchEntryContextActions(entry);
                 }
             } else {
             final SoulseekClient.Result r = soulseekFocusedResult();
@@ -12730,6 +12696,13 @@ public class MainActivity extends Activity {
                     }
                 });
             }
+            }
+        }
+        if (currentScreenState == STATE_DEEZER && deezerScreen != null
+                && deezerScreen.uiMode() == DeezerScreen.UI_RESULTS) {
+            final MusicSearchEntry entry = getFocusedSearchEntry();
+            if (entry != null) {
+                addMusicSearchEntryContextActions(entry);
             }
         }
         if (currentScreenState == STATE_SOULSEEK && soulseekUiMode == SOULSEEK_UI_DOWNLOAD) {
@@ -13249,18 +13222,246 @@ public class MainActivity extends Activity {
         return null;
     }
 
-    private MusicSearchEntry getMusicFocusedEntry() {
+    private MusicSearchEntry getFocusedSearchEntry() {
         View c = getCurrentFocus();
-        if (c == null || !(c.getTag() instanceof MusicSearchEntry)) return null;
-        MusicSearchEntry e = (MusicSearchEntry) c.getTag();
-        if (e.deezer != null || e.reach != null) return e;
+        while (c != null) {
+            Object tag = c.getTag();
+            if (tag instanceof MusicSearchEntry) return (MusicSearchEntry) tag;
+            Object parent = c.getParent();
+            c = parent instanceof View ? (View) parent : null;
+        }
         return null;
     }
 
+    /** Context actions for unified Get Music / Reach organized / Deezer result rows. */
+    private void addMusicSearchEntryContextActions(final MusicSearchEntry entry) {
+        if (entry == null) return;
+        if (entry.kind == MusicSearchEntry.RowKind.DEEZER_ALBUM) {
+            addContextAction(getString(R.string.deezer_play_album), new Runnable() {
+                @Override public void run() {
+                    withDeezerAlbumTracks(entry, new DeezerAlbumTracksReady() {
+                        @Override public void onReady(List<DeezerResult> tracks) {
+                            startDeezerAlbumTransfer(tracks, DeezerScreen.ACTION_PLAY, true);
+                        }
+                    });
+                }
+            });
+            addContextAction(getString(R.string.deezer_save_album), new Runnable() {
+                @Override public void run() {
+                    withDeezerAlbumTracks(entry, new DeezerAlbumTracksReady() {
+                        @Override public void onReady(List<DeezerResult> tracks) {
+                            startDeezerAlbumTransfer(tracks, DeezerScreen.ACTION_SAVE, false);
+                        }
+                    });
+                }
+            });
+            addContextAction(getString(R.string.deezer_queue_album), new Runnable() {
+                @Override public void run() {
+                    withDeezerAlbumTracks(entry, new DeezerAlbumTracksReady() {
+                        @Override public void onReady(List<DeezerResult> tracks) {
+                            startDeezerAlbumTransfer(tracks, DeezerScreen.ACTION_QUEUE, false);
+                        }
+                    });
+                }
+            });
+            return;
+        }
+        if (entry.kind == MusicSearchEntry.RowKind.REACH_FOLDER) {
+            final java.util.ArrayList<SoulseekClient.Result> files = reachFolderFilesFromContainer(entry);
+            if (files.size() > 0) {
+                final String folderLabel = entry.containerLabel;
+                final String peer = files.get(0).username;
+                addContextAction(getString(R.string.soulseek_download_folder, files.size()),
+                        new Runnable() {
+                            @Override public void run() {
+                                showFolderDownloadConfirm(peer, folderLabel, files, false);
+                            }
+                        });
+            }
+            return;
+        }
+        if (entry.source == MusicSearchEntry.Source.DEEZER && entry.deezer != null) {
+            final DeezerResult dr = entry.deezer;
+            addContextAction(getString(R.string.deezer_play), new Runnable() {
+                @Override public void run() {
+                    startGetMusicDeezerTransfer(dr, DeezerScreen.ACTION_PLAY);
+                }
+            });
+            addContextAction(getString(R.string.deezer_save), new Runnable() {
+                @Override public void run() {
+                    startGetMusicDeezerTransfer(dr, DeezerScreen.ACTION_SAVE);
+                }
+            });
+            addContextAction(getString(R.string.deezer_add_to_queue), new Runnable() {
+                @Override public void run() {
+                    startGetMusicDeezerTransfer(dr, DeezerScreen.ACTION_QUEUE);
+                }
+            });
+        } else if (entry.reach != null) {
+            final SoulseekClient.Result r = entry.reach;
+            addContextAction(getString(R.string.soulseek_play), new Runnable() {
+                @Override public void run() {
+                    startSoulseekTransfer(r, SOULSEEK_ACTION_PLAY);
+                }
+            });
+            addContextAction(getString(R.string.soulseek_save), new Runnable() {
+                @Override public void run() {
+                    startSoulseekTransfer(r, SOULSEEK_ACTION_SAVE);
+                }
+            });
+            addContextAction(getString(R.string.soulseek_add_to_queue), new Runnable() {
+                @Override public void run() {
+                    startSoulseekTransfer(r, SOULSEEK_ACTION_QUEUE);
+                }
+            });
+            final String resultPeer = r.username;
+            final Runnable returnToResults = isGetMusicUnifiedUi()
+                    ? new Runnable() {
+                        @Override public void run() {
+                            changeScreen(STATE_SOULSEEK);
+                            buildGetMusicResultsUI();
+                        }
+                    }
+                    : new Runnable() {
+                        @Override public void run() {
+                            changeScreen(STATE_SOULSEEK);
+                            buildSoulseekResultsUI();
+                        }
+                    };
+            addContextAction(getString(R.string.soulseek_view_profile), new Runnable() {
+                @Override public void run() {
+                    dismissThemedContextMenu();
+                    openSoulseekUserProfile(resultPeer, returnToResults);
+                }
+            });
+        }
+    }
+
+    private interface DeezerAlbumTracksReady {
+        void onReady(List<DeezerResult> tracks);
+    }
+
+    private void withDeezerAlbumTracks(final MusicSearchEntry album,
+            final DeezerAlbumTracksReady ready) {
+        if (album == null || album.kind != MusicSearchEntry.RowKind.DEEZER_ALBUM || ready == null) return;
+        if (!requireInternet(R.string.deezer_wifi_required)) return;
+        List<DeezerResult> immediate = deezerTracksFromAlbumEntry(album);
+        if (!immediate.isEmpty()) {
+            ready.onReady(immediate);
+            return;
+        }
+        if (!album.needsLazyLoad()) {
+            Toast.makeText(this, getString(R.string.get_music_empty_results), Toast.LENGTH_SHORT).show();
+            return;
+        }
+        new Thread(new Runnable() {
+            @Override public void run() {
+                List<DeezerResult> tracks = new ArrayList<DeezerResult>();
+                try {
+                    DeezerClient c = new DeezerClient(prefs);
+                    DeezerSearch search = new DeezerSearch(c);
+                    tracks = search.listAlbumTracks(album.deezerContainerId);
+                } catch (Exception ignored) {}
+                final List<DeezerResult> loaded = tracks;
+                runOnUiThread(new Runnable() {
+                    @Override public void run() {
+                        if (loaded == null || loaded.isEmpty()) {
+                            Toast.makeText(MainActivity.this,
+                                    getString(R.string.get_music_empty_results), Toast.LENGTH_SHORT).show();
+                            return;
+                        }
+                        ready.onReady(loaded);
+                    }
+                });
+            }
+        }, "DeezerAlbumCtx").start();
+    }
+
+    private List<DeezerResult> deezerTracksFromAlbumEntry(MusicSearchEntry album) {
+        List<DeezerResult> out = new ArrayList<DeezerResult>();
+        if (album == null) return out;
+        for (MusicSearchEntry child : album.children) {
+            if (child != null && child.deezer != null) out.add(child.deezer);
+        }
+        return out;
+    }
+
+    private java.util.ArrayList<SoulseekClient.Result> reachFolderFilesFromContainer(
+            MusicSearchEntry folder) {
+        java.util.ArrayList<SoulseekClient.Result> out = new java.util.ArrayList<SoulseekClient.Result>();
+        if (folder == null || folder.kind != MusicSearchEntry.RowKind.REACH_FOLDER) return out;
+        for (MusicSearchEntry child : folder.children) {
+            if (child != null && child.reach != null) out.add(child.reach);
+        }
+        return out;
+    }
+
+    private void startDeezerAlbumTransfer(final List<DeezerResult> tracks, final int action,
+            final boolean replaceQueueForPlay) {
+        if (tracks == null || tracks.isEmpty()) return;
+        if (!requireInternet(R.string.deezer_wifi_required)) return;
+        if (!GetMusicSources.deezerConfiguredForGetMusic(prefs, deezerEnabled)) {
+            Toast.makeText(this, getString(R.string.deezer_not_configured), Toast.LENGTH_LONG).show();
+            return;
+        }
+        if (deezerScreen == null) deezerScreen = new DeezerScreen(deezerHost);
+        if (action == DeezerScreen.ACTION_PLAY && replaceQueueForPlay) {
+            deezerBatchTransfer = null;
+            deezerBatchTransferIndex = -1;
+            deezerBatchTransferAction = 0;
+            prepareDeezerEmbeddedTransferUi();
+            playDeezerPlaylistFromIndex(new ArrayList<DeezerResult>(tracks), 0);
+            return;
+        }
+        deezerBatchTransfer = new ArrayList<DeezerResult>(tracks);
+        deezerBatchTransferIndex = 0;
+        deezerBatchTransferAction = action;
+        prepareDeezerEmbeddedTransferUi();
+        startDeezerBatchTransferAt(0);
+    }
+
+    private void prepareDeezerEmbeddedTransferUi() {
+        if (isGetMusicUnifiedUi() && currentScreenState == STATE_SOULSEEK) {
+            getMusicEmbeddedInDeezer = true;
+            soulseekUiMode = SOULSEEK_UI_DOWNLOAD;
+        }
+    }
+
+    private void startDeezerBatchTransferAt(final int index) {
+        if (deezerBatchTransfer == null || index < 0 || index >= deezerBatchTransfer.size()) return;
+        deezerBatchTransferIndex = index;
+        if (deezerScreen == null) deezerScreen = new DeezerScreen(deezerHost);
+        deezerScreen.startTransfer(deezerBatchTransfer.get(index), deezerBatchTransferAction);
+    }
+
+    private boolean advanceDeezerBatchTransfer(DeezerResult finished) {
+        if (deezerBatchTransfer == null || deezerBatchTransferIndex < 0) return false;
+        int next = deezerBatchTransferIndex + 1;
+        if (next >= deezerBatchTransfer.size()) {
+            int action = deezerBatchTransferAction;
+            deezerBatchTransfer = null;
+            deezerBatchTransferIndex = -1;
+            deezerBatchTransferAction = 0;
+            if (action == DeezerScreen.ACTION_SAVE) {
+                scanMediaLibraryAsync();
+                Toast.makeText(this, getString(R.string.deezer_album_saved), Toast.LENGTH_SHORT).show();
+            } else if (action == DeezerScreen.ACTION_QUEUE) {
+                Toast.makeText(this, getString(R.string.deezer_album_queued), Toast.LENGTH_SHORT).show();
+            }
+            return false;
+        }
+        deezerBatchTransferIndex = next;
+        startDeezerBatchTransferAt(next);
+        return true;
+    }
+
     private void startGetMusicDeezerTransfer(final DeezerResult r, final int action) {
-        getMusicEmbeddedInDeezer = true;
-        soulseekUiMode = SOULSEEK_UI_DOWNLOAD;
-        if (deezerScreen != null) deezerScreen.startTransfer(r, action);
+        if (deezerScreen == null) deezerScreen = new DeezerScreen(deezerHost);
+        if (isGetMusicUnifiedUi() && currentScreenState == STATE_SOULSEEK) {
+            getMusicEmbeddedInDeezer = true;
+            soulseekUiMode = SOULSEEK_UI_DOWNLOAD;
+        }
+        deezerScreen.startTransfer(r, action);
     }
 
     private String soulseekFocusedRecentQuery() {

@@ -95,6 +95,10 @@ public final class DeezerScreen {
         void launchGetMusicSearchFromSuggestion(String q, boolean openKeyboard);
         /** True when Deezer search was opened from Settings (back label + restore). */
         boolean deezerOpenedFromSettings();
+        /** Multi-track album save/queue chain; return true to stay on download screen. */
+        boolean onDeezerBatchTransferStep(DeezerResult finished);
+        /** Suppress per-track save/queue toasts while batching an album. */
+        boolean isDeezerAlbumBatchTransfer();
     }
 
     private final Host host;
@@ -719,7 +723,9 @@ public final class DeezerScreen {
                             host.playDeezerPartial(destFile, meta, r.id);
                         } else if (pendingAction == ACTION_QUEUE) {
                             host.queueDeezerPartial(destFile, meta, r.id);
-                            Toast.makeText(host.context(), host.string(R.string.deezer_queued), Toast.LENGTH_SHORT).show();
+                            if (!host.isDeezerAlbumBatchTransfer()) {
+                                Toast.makeText(host.context(), host.string(R.string.deezer_queued), Toast.LENGTH_SHORT).show();
+                            }
                         }
                     }
                 });
@@ -736,12 +742,16 @@ public final class DeezerScreen {
                         activeDownload = null;
                         if (pendingAction == ACTION_SAVE) {
                             host.scanMediaLibraryAsync();
-                            Toast.makeText(host.context(), host.string(R.string.deezer_saved), Toast.LENGTH_SHORT).show();
+                            if (!host.isDeezerAlbumBatchTransfer()) {
+                                Toast.makeText(host.context(), host.string(R.string.deezer_saved), Toast.LENGTH_SHORT).show();
+                            }
                             afterDownloadComplete(r);
                         } else if (pendingAction == ACTION_QUEUE && growingFile != null) {
                             host.replaceDeezerInQueue(growingFile, destFile, r.displayTitle());
                             host.persistPlaybackQueue();
-                            Toast.makeText(host.context(), host.string(R.string.deezer_queued), Toast.LENGTH_SHORT).show();
+                            if (!host.isDeezerAlbumBatchTransfer()) {
+                                Toast.makeText(host.context(), host.string(R.string.deezer_queued), Toast.LENGTH_SHORT).show();
+                            }
                             afterDownloadComplete(r);
                         } else if (pendingAction == ACTION_PLAY) {
                             if (growingFile != null && !growingFile.equals(destFile)) {
@@ -793,6 +803,7 @@ public final class DeezerScreen {
     }
 
     private void afterDownloadComplete(DeezerResult r) {
+        if (host.onDeezerBatchTransferStep(r)) return;
         if (host.getMusicEmbedded()) {
             host.onGetMusicBackToResults();
         } else {
