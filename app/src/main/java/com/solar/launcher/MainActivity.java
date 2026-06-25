@@ -18581,47 +18581,23 @@ public class MainActivity extends Activity {
                     String normPath = f.getAbsolutePath().toLowerCase(java.util.Locale.US);
                     if (!libraryScanPaths.add(normPath)) continue;
                     try {
-                        MediaMetadataRetriever mmr = new MediaMetadataRetriever();
-                        java.io.FileInputStream fis = new java.io.FileInputStream(f);
-                        mmr.setDataSource(fis.getFD());
+                        AudioTags.Info tags = AudioTags.read(f, prefs);
+                        String title = tags.title;
+                        String artist = tags.artist;
+                        String album = tags.album;
+                        String genre = tags.genre;
+                        String albumArtist = tags.albumArtist;
+                        String duration = tags.durationMs;
 
-                        String title = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE);
-                        String artist = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST);
-                        String album = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM);
-                        String genre = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_GENRE);
-                        String duration = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION);
-                        String albumArtist = "";
-                        if (android.os.Build.VERSION.SDK_INT >= 19) {
-                            albumArtist = mmr.extractMetadata(
-                                    MediaMetadataRetriever.METADATA_KEY_ALBUMARTIST);
-                        }
-
-                        if (title == null || title.isEmpty()) title = f.getName();
-                        if (artist == null || artist.isEmpty()) artist = "";
-                        if (album == null || album.isEmpty()) album = "";
-                        if (albumArtist == null) albumArtist = "";
-
-                        String path = f.getAbsolutePath();
-                        if (DeezerMetadata.hasMetadata(prefs, path)
-                                || DeezerCache.isTempFile(getCacheDir(), f)) {
-                            title = DeezerMetadata.title(prefs, path, title);
-                            artist = DeezerMetadata.artist(prefs, path, artist);
-                            album = DeezerMetadata.album(prefs, path, album);
-                        }
                         if (artist.isEmpty()) artist = "Unknown Artist";
                         if (album.isEmpty()) album = "Unknown Album";
 
                         String metaKey = (title + "\0" + artist + "\0" + duration).toLowerCase(java.util.Locale.US);
                         if (!libraryScanMetaKeys.add(metaKey)) {
-                            fis.close();
-                            mmr.release();
                             continue;
                         }
 
                         customLibrary.add(new SongItem(f, title, artist, album, genre, albumArtist));
-
-                        fis.close();
-                        mmr.release();
                     } catch (Exception e) {
                     }
                 }
@@ -19651,9 +19627,58 @@ public class MainActivity extends Activity {
         }
     }
 
+    private void patchLibraryMetadataForPath(String path, String title, String artist, String album) {
+        if (path == null) return;
+        for (SongItem song : customLibrary) {
+            if (song.file != null && path.equals(song.file.getAbsolutePath())) {
+                if (title != null && !title.trim().isEmpty()) song.title = title.trim();
+                if (artist != null && !artist.trim().isEmpty()) song.artist = artist.trim();
+                if (album != null && !album.trim().isEmpty()) song.album = album.trim();
+                invalidateSongPathIndex();
+                if (currentScreenState == STATE_BROWSER && currentBrowserMode == BROWSER_VIRTUAL_SONGS) {
+                    buildVirtualSongs();
+                }
+                return;
+            }
+        }
+    }
+
+    /** Wi‑Fi auto-fetch when tags or album art are missing (runs even if embedded art exists). */
+    private void maybeAutoFetchTrackInfo(final File track, final AudioTags.Info tags,
+            final String safeFileName, final boolean hasDeezerMeta) {
+        if (!isAutoFetchEnabled || hasDeezerMeta || track == null || tags == null) return;
+        final boolean needsMeta = !AudioTags.hasValidTags(tags)
+                || tags.album.isEmpty() || "Unknown Album".equalsIgnoreCase(tags.album.trim());
+        final boolean needsArt = tags.embeddedArt == null || tags.embeddedArt.length == 0;
+        if (!needsMeta && !needsArt) return;
+        android.net.wifi.WifiManager wm = (android.net.wifi.WifiManager)
+                getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+        if (wm == null || !wm.isWifiEnabled() || wm.getConnectionInfo().getNetworkId() == -1) return;
+
+        String searchQuery;
+        if (AudioTags.hasValidTags(tags)) {
+            searchQuery = tags.artist + " " + tags.title;
+        } else {
+            searchQuery = safeFileName.replace("-", " ").replace("_", " ");
+        }
+        // #region agent log
+        try {
+            org.json.JSONObject d = new org.json.JSONObject();
+            d.put("file", track.getName());
+            d.put("needsMeta", needsMeta);
+            d.put("needsArt", needsArt);
+            d.put("query", searchQuery);
+            DebugAgentLog.log(this, "MainActivity.maybeAutoFetchTrackInfo", "auto-fetch", "H-C", d);
+        } catch (Exception ignored) {}
+        // #endregion
+        fetchTrackInfoFromInternet(track, searchQuery, AudioTags.hasValidTags(tags),
+                tags.title, tags.artist);
+    }
+
     private void invalidateSongPathIndex() {
         songPathIndex = null;
     }
+
 
     private boolean isPodcastMediaFile(File f) {
         if (f == null) return false;
@@ -19671,21 +19696,14 @@ public class MainActivity extends Activity {
         SongItem si = findSongItem(f);
         if (si != null) return si;
         if (!isMusicBrowseContextFile(f)) return null;
-        String path = f.getAbsolutePath();
-        String title = f.getName();
-        int dot = title.lastIndexOf('.');
-        if (dot > 0) title = title.substring(0, dot);
-        String artist = "";
-        String album = "";
-        String genre = "Unknown Genre";
-        try {
-            title = DeezerMetadata.title(prefs, path, title);
-            artist = DeezerMetadata.artist(prefs, path, artist);
-            album = DeezerMetadata.album(prefs, path, album);
-        } catch (Exception ignored) {}
+        AudioTags.Info tags = AudioTags.read(f, prefs);
+        String title = tags.title;
+        String artist = tags.artist;
+        String album = tags.album;
+        String genre = tags.genre != null && !tags.genre.isEmpty() ? tags.genre : "Unknown Genre";
         if (artist.isEmpty()) artist = "Unknown Artist";
         if (album.isEmpty()) album = "Unknown Album";
-        return new SongItem(f, title, artist, album, genre);
+        return new SongItem(f, title, artist, album, genre, tags.albumArtist);
     }
 
     private boolean isOnSameMusicListing(String type, String value, String artistForAlbum) {
@@ -25609,16 +25627,11 @@ public class MainActivity extends Activity {
         tvPlayerTimeTotal.setText("00:00");
 
         try {
-            MediaMetadataRetriever mmr = new MediaMetadataRetriever();
-            java.io.FileInputStream fisMmr = new java.io.FileInputStream(track);
-            mmr.setDataSource(fisMmr.getFD());
-
-
-            // 1. 파일에서 메타데이터(태그) 추출
-            String t = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE);
-            String a = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST);
-            String al = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM);
-            lastAlbumArtBytes = mmr.getEmbeddedPicture();
+            final AudioTags.Info tags = AudioTags.read(track, prefs);
+            String t = tags.title;
+            String a = tags.artist;
+            String al = tags.album;
+            lastAlbumArtBytes = tags.embeddedArt;
 
             String safeFileName = track.getName().replace(".mp3", "").replace(".flac", "").replace(".wav", "").replace(".m4a", "");
             File coverFile = coverFileForTrack(track);
@@ -25626,17 +25639,22 @@ public class MainActivity extends Activity {
             final boolean hasDeezerMeta = DeezerMetadata.hasMetadata(prefs, trackPath)
                     || DeezerCache.isTempFile(getCacheDir(), track);
 
-            if (DeezerMetadata.hasMetadata(prefs, trackPath)) {
-                t = DeezerMetadata.title(prefs, trackPath, t);
-                a = DeezerMetadata.artist(prefs, trackPath, a);
-                al = DeezerMetadata.album(prefs, trackPath, al);
-            } else if (prefs.contains("meta_title_" + trackPath)) {
-                t = prefs.getString("meta_title_" + trackPath, t);
-                a = prefs.getString("meta_artist_" + trackPath, a);
-            }
+            boolean hasValidTags = AudioTags.hasValidTags(tags);
 
-            // 🚀 [핵심 판단 로직] 이 파일에 정말 멀쩡한 태그(가수+제목)가 들어있는지 검사합니다.
-            boolean hasValidTags = (t != null && !t.trim().isEmpty() && a != null && !a.trim().isEmpty() && !a.equalsIgnoreCase("Unknown Artist"));
+            // #region agent log
+            try {
+                org.json.JSONObject d = new org.json.JSONObject();
+                d.put("file", track.getName());
+                d.put("title", t);
+                d.put("artist", a);
+                d.put("album", al);
+                d.put("artistSource", tags.artistSource);
+                d.put("hasValidTags", hasValidTags);
+                d.put("hasEmbeddedArt", lastAlbumArtBytes != null && lastAlbumArtBytes.length > 0);
+                d.put("hasCachedCover", coverFile.exists());
+                DebugAgentLog.log(this, "MainActivity.prepareMusicTrack", "player tags", "H-B", d);
+            } catch (Exception ignored) {}
+            // #endregion
 
             // 제목 화면에 표시
             if (t != null && !t.trim().isEmpty()) tvPlayerTitle.setText(t);
@@ -25680,10 +25698,12 @@ public class MainActivity extends Activity {
                         ivPlayerBgBlur.setImageResource(0);
                     }
                 } catch (Throwable e) {}
+                maybeAutoFetchTrackInfo(track, tags, safeFileName, hasDeezerMeta);
 
             } else if (coverFile.exists()) {
                 // 다운받아둔 앨범 아트가 있으면 사용
                 applyCachedCoverArt(coverFile.getAbsolutePath());
+                maybeAutoFetchTrackInfo(track, tags, safeFileName, hasDeezerMeta);
 
             } else {
                 final String deezerCoverUrl = DeezerMetadata.coverUrl(prefs, trackPath);
@@ -25696,28 +25716,10 @@ public class MainActivity extends Activity {
                 ivPlayerBgBlur.setImageResource(0); // 뒷배경 블러 비우기
                 updateMainMenuBackground();
                 refreshNowPlayingPreview();
-                // 없으면 인터넷에서 검색 출동!
-                if (isAutoFetchEnabled && !hasDeezerMeta) {
-                    android.net.wifi.WifiManager wm = (android.net.wifi.WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
-                    if (wm != null && wm.isWifiEnabled() && wm.getConnectionInfo().getNetworkId() != -1) {
-
-                        String searchQuery = "";
-                        // 🚀 [스마트 쿼리 생성] 멀쩡한 태그가 있다면 그걸 합쳐서(가수+제목) 무조건 100% 일치하는 곡을 찾습니다!
-                        if (hasValidTags) {
-                            searchQuery = a + " " + t;
-                        } else {
-                            searchQuery = safeFileName.replace("-", " ").replace("_", " ");
-                        }
-
-                        // 태그가 있다는 사실과 기존 태그 내용을 같이 넘겨서, 정보가 덮어씌워지지 않게 막습니다.
-                        fetchTrackInfoFromInternet(track, searchQuery, hasValidTags, t, a);
-                    }
-                }
+                maybeAutoFetchTrackInfo(track, tags, safeFileName, hasDeezerMeta);
                 }
             }
 
-            fisMmr.close();
-            mmr.release();
         } catch (Throwable t) {
         }
 
@@ -27657,10 +27659,12 @@ public class MainActivity extends Activity {
                         // 서버에서 가져온 가수와 제목
                         final String fetchedTitle = trackInfo.getString("title");
                         final String fetchedArtist = trackInfo.getJSONObject("artist").getString("name");
+                        final String fetchedAlbum = trackInfo.getJSONObject("album").optString("title", "");
 
                         // 🚀 [태그 보호 해제] 기존 파일에 잡다한 쓰레기 태그가 있더라도 무시하고, 인터넷의 정확한 공식 정보를 1순위로 강제 적용합니다!
                         final String finalTitle = fetchedTitle;
                         final String finalArtist = fetchedArtist;
+                        final String finalAlbum = fetchedAlbum;
 
                         String coverUrl = trackInfo.getJSONObject("album").getString("cover_xl").replace("https://", "http://");
                         java.net.URL imgUrl = new java.net.URL(coverUrl);
@@ -27681,7 +27685,9 @@ public class MainActivity extends Activity {
                         prefs.edit()
                                 .putString("meta_title_" + track.getAbsolutePath(), finalTitle)
                                 .putString("meta_artist_" + track.getAbsolutePath(), finalArtist)
+                                .putString("meta_album_" + track.getAbsolutePath(), finalAlbum)
                                 .commit();
+                        patchLibraryMetadataForPath(track.getAbsolutePath(), finalTitle, finalArtist, finalAlbum);
 
                         runOnUiThread(new Runnable() {
                             @Override
@@ -27691,7 +27697,11 @@ public class MainActivity extends Activity {
                                 if (playback.musicPlaylist().get(playback.musicIndex()).getAbsolutePath().equals(track.getAbsolutePath())) {
                                     // 🚀 화면의 글씨도 즉각 공식 정보로 갈아치웁니다!
                                     tvPlayerTitle.setText(finalTitle);
-                                    tvPlayerArtist.setText(finalArtist);
+                                    if (finalAlbum != null && !finalAlbum.trim().isEmpty()) {
+                                        tvPlayerArtist.setText(finalArtist + " · " + finalAlbum);
+                                    } else {
+                                        tvPlayerArtist.setText(finalArtist);
+                                    }
                                     applyCachedCoverArt(coverFile.getAbsolutePath());
                                 }
                             }
