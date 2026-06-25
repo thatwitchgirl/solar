@@ -8,10 +8,10 @@ Custom firmware and launcher for the **Innioasis Y1** — a full interface repla
 
 ## Features
 
-- **Reach** — search and download music from Deezer and Soulseek; messaging, chat rooms, and peer browse
-- **Podcasts** — search, subscribe, and download episodes to SD
+- **Reach** — search, play and download music from Deezer and Soulseek
+- **Podcasts** — search and download episodes to your Y1 over the internet
 - **Quick menu** — global context menu for playback, queue, Wi‑Fi, Bluetooth, and more from any screen
-- **Y1 themes** — install and apply themes from the original Y1 custom-firmware gallery
+- **Y1 themes** — install and apply themes from the original Y1 firmware
 - **Rockbox-Y1** — co-installed; switch launchers from Settings (unified keymap, no reboot)
 
 ## Screenshots
@@ -23,7 +23,7 @@ Custom firmware and launcher for the **Innioasis Y1** — a full interface repla
 | ![Reach browse](screenshots/Reach%202.png) | ![Get Music search](screenshots/Search%20for%20Music.png) |
 | **Reach browse** — peer library and download actions | **Get Music** — combined Deezer and Reach search |
 | ![Soulseek messaging](screenshots/Soulseek%20Messaging.png) | ![Podcasts](screenshots/Podcasts.png) |
-| **Soulseek messaging** — private messages inbox | **Podcasts** — subscribe and browse shows |
+| **Soulseek messaging** | **Podcasts** — subscribe and browse shows |
 | ![Podcast episodes](screenshots/Podcasts%202.png) | ![Artists view](screenshots/Artists%20View.png) |
 | **Podcast episodes** — episode list and downloads | **Artists view** — music library by artist |
 | ![Quick controls](screenshots/Quick%20Controls.png) | ![ACmp3 theme](screenshots/ACmp3%20theme%20%20on%20Solar.png) |
