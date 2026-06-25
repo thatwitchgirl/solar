@@ -57,7 +57,7 @@ public final class DeezerSearch {
                         item.optString("title", ""),
                         item.optString("record_type", "album"),
                         item.optInt("nb_tracks", 0),
-                        item.optString("cover_small", "")));
+                        albumListCover(item)));
             }
         } catch (Exception e) {
             throw new IOException(e.getMessage() != null ? e.getMessage() : "Album list failed");
@@ -76,7 +76,7 @@ public final class DeezerSearch {
             JSONObject albumRoot = new JSONObject(new String(searchPublic("album/" + albumId), utf8()));
             albumTitle = albumRoot.optString("title", "");
             albumIdResolved = albumRoot.optLong("id", albumId);
-            cover = albumRoot.optString("cover_small", "");
+            cover = DeezerCoverArt.albumCoverFromJson(albumRoot);
             JSONObject artist = albumRoot.optJSONObject("artist");
             if (artist != null) artistName = artist.optString("name", "");
         } catch (Exception ignored) {}
@@ -132,7 +132,7 @@ public final class DeezerSearch {
                         album != null ? album.optLong("id", 0) : 0,
                         item.optInt("duration", 0),
                         item.optString("preview", ""),
-                        album != null ? album.optString("cover_small", "") : ""));
+                        album != null ? DeezerCoverArt.albumCoverFromJson(album) : ""));
             }
         } catch (Exception e) {
             throw new IOException(e.getMessage() != null ? e.getMessage() : "Playlist tracks failed");
@@ -182,12 +182,22 @@ public final class DeezerSearch {
                         album != null ? album.optLong("id", 0) : 0,
                         item.optInt("duration", 0),
                         item.optString("preview", ""),
-                        album != null ? album.optString("cover_small", "") : ""));
+                        DeezerCoverArt.albumCoverFromJson(album)));
             }
         } catch (Exception e) {
             throw new IOException(e.getMessage() != null ? e.getMessage() : "Search failed");
         }
         return out;
+    }
+
+    private static String albumListCover(JSONObject item) {
+        if (item == null) return "";
+        String[] keys = {"cover_xl", "cover_big", "cover_medium", "cover", "cover_small"};
+        for (String key : keys) {
+            String url = item.optString(key, "").trim();
+            if (!url.isEmpty()) return DeezerCoverArt.bestCoverUrl(url);
+        }
+        return "";
     }
 
     private byte[] searchPublic(String pathAndQuery) throws IOException {
