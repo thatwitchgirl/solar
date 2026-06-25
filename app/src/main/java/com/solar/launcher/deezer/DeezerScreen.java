@@ -89,6 +89,7 @@ public final class DeezerScreen {
         void onGetMusicBackToSearch();
         void onDeezerDownloadProgress(int percent, File growingFile, long doneBytes, long totalBytes);
         void onDeezerStreamDownloadComplete(File completeFile);
+        void prefetchDeezerCover(File track);
         void onDeezerStreamDownloadFailed();
         void launchGetMusicSearchFromSuggestion(String q, boolean openKeyboard);
     }
@@ -531,6 +532,7 @@ public final class DeezerScreen {
                         partialPlaybackStarted = true;
                         growingFile = destFile;
                         DeezerMetadata.saveForResult(host.context(), destFile, r);
+                        host.prefetchDeezerCover(destFile);
                         String meta = r.displayTitle();
                         // #region agent log
                         try {
@@ -559,7 +561,8 @@ public final class DeezerScreen {
                         if (activeDownload == null || activeDownload.id != r.id) return;
                         cancelAutoRetrySchedule();
                         downloadAutoRetryUsed = false;
-                        DeezerMetadata.saveForTrackData(host.context(), destFile, track);
+                        DeezerMetadata.saveForTrackComplete(host.context(), destFile, r, track);
+                        host.prefetchDeezerCover(destFile);
                         downloadPercent = 100;
                         activeDownload = null;
                         if (pendingAction == ACTION_SAVE) {

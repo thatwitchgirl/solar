@@ -2,6 +2,7 @@ package com.solar.launcher;
 
 import com.solar.launcher.deezer.DeezerAccount;
 import com.solar.launcher.deezer.DeezerCache;
+import com.solar.launcher.deezer.DeezerCoverArt;
 import com.solar.launcher.deezer.DeezerMetadata;
 import com.solar.launcher.deezer.DeezerClient;
 import com.solar.launcher.deezer.DeezerPodcast;
@@ -6986,6 +6987,15 @@ public class MainActivity extends Activity {
                 }
             } catch (Exception ignored) {}
             // #endregion
+        }
+        @Override public void prefetchDeezerCover(final File track) {
+            if (track == null) return;
+            final File cover = coverFileForTrack(track);
+            new Thread(new Runnable() {
+                @Override public void run() {
+                    DeezerMetadata.prefetchCoverFile(prefs, track, cover);
+                }
+            }, "DeezerCover").start();
         }
         @Override public void onDeezerStreamDownloadComplete(File completeFile) {
             if (completeFile == null) return;
@@ -17970,9 +17980,19 @@ public class MainActivity extends Activity {
                         }
 
                         if (title == null || title.isEmpty()) title = f.getName();
-                        if (artist == null || artist.isEmpty()) artist = "Unknown Artist";
-                        if (album == null || album.isEmpty()) album = "Unknown Album";
+                        if (artist == null || artist.isEmpty()) artist = "";
+                        if (album == null || album.isEmpty()) album = "";
                         if (albumArtist == null) albumArtist = "";
+
+                        String path = f.getAbsolutePath();
+                        if (DeezerMetadata.hasMetadata(prefs, path)
+                                || DeezerCache.isTempFile(getCacheDir(), f)) {
+                            title = DeezerMetadata.title(prefs, path, title);
+                            artist = DeezerMetadata.artist(prefs, path, artist);
+                            album = DeezerMetadata.album(prefs, path, album);
+                        }
+                        if (artist.isEmpty()) artist = "Unknown Artist";
+                        if (album.isEmpty()) album = "Unknown Album";
 
                         String metaKey = (title + "\0" + artist + "\0" + duration).toLowerCase(java.util.Locale.US);
                         if (!libraryScanMetaKeys.add(metaKey)) {
@@ -22705,9 +22725,7 @@ public class MainActivity extends Activity {
         if (lastAlbumArtBytes == null || lastAlbumArtBytes.length == 0) {
             String coverUrl = DeezerMetadata.coverUrl(prefs, path);
             if (coverUrl != null && !coverUrl.isEmpty()) {
-                String safeFileName = partial.getName().replace(".mp3", "").replace(".flac", "")
-                        .replace(".m4a", "").replace(".wav", "");
-                File coverFile = new File(getCoversFolder(), safeFileName + ".jpg");
+                File coverFile = coverFileForTrack(partial);
                 if (coverFile.exists()) {
                     applyCachedCoverArt(coverFile.getAbsolutePath());
                 } else {
@@ -24525,10 +24543,11 @@ public class MainActivity extends Activity {
             // 1. 파일에서 메타데이터(태그) 추출
             String t = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE);
             String a = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST);
+            String al = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM);
             lastAlbumArtBytes = mmr.getEmbeddedPicture();
 
             String safeFileName = track.getName().replace(".mp3", "").replace(".flac", "").replace(".wav", "").replace(".m4a", "");
-            File coverFile = new File(getCoversFolder(), safeFileName + ".jpg");
+            File coverFile = coverFileForTrack(track);
             final String trackPath = track.getAbsolutePath();
             final boolean hasDeezerMeta = DeezerMetadata.hasMetadata(prefs, trackPath)
                     || DeezerCache.isTempFile(getCacheDir(), track);
@@ -24536,6 +24555,7 @@ public class MainActivity extends Activity {
             if (DeezerMetadata.hasMetadata(prefs, trackPath)) {
                 t = DeezerMetadata.title(prefs, trackPath, t);
                 a = DeezerMetadata.artist(prefs, trackPath, a);
+                al = DeezerMetadata.album(prefs, trackPath, al);
             } else if (prefs.contains("meta_title_" + trackPath)) {
                 t = prefs.getString("meta_title_" + trackPath, t);
                 a = prefs.getString("meta_artist_" + trackPath, a);
@@ -24548,9 +24568,15 @@ public class MainActivity extends Activity {
             if (t != null && !t.trim().isEmpty()) tvPlayerTitle.setText(t);
             else tvPlayerTitle.setText(safeFileName);
 
-            // 가수 화면에 표시
-            if (a != null && !a.trim().isEmpty()) tvPlayerArtist.setText(a);
-            else tvPlayerArtist.setText("Unknown Artist");
+            // 가수 / 앨범 화면에 표시
+            if (a != null && !a.trim().isEmpty() && al != null && !al.trim().isEmpty()
+                    && !"Unknown Album".equalsIgnoreCase(al.trim())) {
+                tvPlayerArtist.setText(a + " · " + al);
+            } else if (a != null && !a.trim().isEmpty()) {
+                tvPlayerArtist.setText(a);
+            } else {
+                tvPlayerArtist.setText("Unknown Artist");
+            }
 
             // 2. 앨범 아트 세팅 및 인터넷 검색
             if (lastAlbumArtBytes != null) {
@@ -26055,6 +26081,12 @@ public class MainActivity extends Activity {
         return label;
     }
 
+    private File coverFileForTrack(File track) {
+        String safe = track.getName().replace(".mp3", "").replace(".flac", "")
+                .replace(".m4a", "").replace(".wav", "");
+        return new File(getCoversFolder(), safe + ".jpg");
+    }
+
     private File getCoversFolder() {
         File covers = new File("/storage/sdcard0/Solar_Covers");
         if (!covers.exists()) covers.mkdirs();
@@ -26423,8 +26455,9 @@ public class MainActivity extends Activity {
             @Override
             public void run() {
                 try {
-                    String url = coverUrl.replace("https://", "http://");
-                    java.net.URL imgUrl = new java.net.URL(url);
+                    String url = DeezerCoverArt.bestCoverUrl(coverUrl);
+                    if (url.isEmpty()) return;
+                    java.net.URL imgUrl = new java.net.URL(url.replace("https://", "http://"));
                     java.net.HttpURLConnection imgConn = (java.net.HttpURLConnection) imgUrl.openConnection();
                     java.io.InputStream in = imgConn.getInputStream();
                     final android.graphics.Bitmap coverBitmap =

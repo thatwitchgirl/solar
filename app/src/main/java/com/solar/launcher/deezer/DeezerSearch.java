@@ -57,7 +57,7 @@ public final class DeezerSearch {
                         item.optString("title", ""),
                         item.optString("record_type", "album"),
                         item.optInt("nb_tracks", 0),
-                        item.optString("cover_small", "")));
+                        albumListCover(item)));
             }
         } catch (Exception e) {
             throw new IOException(e.getMessage() != null ? e.getMessage() : "Album list failed");
@@ -76,7 +76,7 @@ public final class DeezerSearch {
             JSONObject albumRoot = new JSONObject(new String(searchPublic("album/" + albumId), utf8()));
             albumTitle = albumRoot.optString("title", "");
             albumIdResolved = albumRoot.optLong("id", albumId);
-            cover = albumRoot.optString("cover_small", "");
+            cover = DeezerCoverArt.albumCoverFromJson(albumRoot);
             JSONObject artist = albumRoot.optJSONObject("artist");
             if (artist != null) artistName = artist.optString("name", "");
         } catch (Exception ignored) {}
@@ -105,6 +105,64 @@ public final class DeezerSearch {
         return out;
     }
 
+    public List<DeezerResult> listPlaylistTracks(long playlistId) throws IOException {
+        List<DeezerResult> out = new ArrayList<DeezerResult>();
+        if (playlistId <= 0) return out;
+        String playlistTitle = "";
+        try {
+            JSONObject plRoot = new JSONObject(new String(
+                    searchPublic("playlist/" + playlistId), utf8()));
+            playlistTitle = plRoot.optString("title", "");
+        } catch (Exception ignored) {}
+        try {
+            JSONObject root = new JSONObject(new String(
+                    searchPublic("playlist/" + playlistId + "/tracks"), utf8()));
+            JSONArray data = root.optJSONArray("data");
+            if (data == null) return out;
+            for (int i = 0; i < data.length(); i++) {
+                JSONObject item = data.optJSONObject(i);
+                if (item == null) continue;
+                JSONObject album = item.optJSONObject("album");
+                JSONObject artist = item.optJSONObject("artist");
+                out.add(new DeezerResult(
+                        item.optLong("id", 0),
+                        item.optString("title", ""),
+                        artist != null ? artist.optString("name", "") : "",
+                        album != null ? album.optString("title", playlistTitle) : playlistTitle,
+                        album != null ? album.optLong("id", 0) : 0,
+                        item.optInt("duration", 0),
+                        item.optString("preview", ""),
+                        album != null ? DeezerCoverArt.albumCoverFromJson(album) : ""));
+            }
+        } catch (Exception e) {
+            throw new IOException(e.getMessage() != null ? e.getMessage() : "Playlist tracks failed");
+        }
+        return out;
+    }
+
+    public List<DeezerPlaylist> listUserPlaylists(long userId) throws IOException {
+        List<DeezerPlaylist> out = new ArrayList<DeezerPlaylist>();
+        if (userId <= 0) return out;
+        try {
+            JSONObject root = new JSONObject(new String(
+                    searchPublic("user/" + userId + "/playlists"), utf8()));
+            JSONArray data = root.optJSONArray("data");
+            if (data == null) return out;
+            for (int i = 0; i < data.length(); i++) {
+                JSONObject item = data.optJSONObject(i);
+                if (item == null) continue;
+                out.add(new DeezerPlaylist(
+                        item.optLong("id", 0),
+                        item.optString("title", ""),
+                        item.optInt("nb_tracks", 0),
+                        item.optString("picture_small", "")));
+            }
+        } catch (Exception e) {
+            throw new IOException(e.getMessage() != null ? e.getMessage() : "Playlist list failed");
+        }
+        return out;
+    }
+
     private List<DeezerResult> parseTrackSearch(byte[] body) throws IOException {
         List<DeezerResult> out = new ArrayList<DeezerResult>();
         try {
@@ -124,12 +182,22 @@ public final class DeezerSearch {
                         album != null ? album.optLong("id", 0) : 0,
                         item.optInt("duration", 0),
                         item.optString("preview", ""),
-                        album != null ? album.optString("cover_small", "") : ""));
+                        DeezerCoverArt.albumCoverFromJson(album)));
             }
         } catch (Exception e) {
             throw new IOException(e.getMessage() != null ? e.getMessage() : "Search failed");
         }
         return out;
+    }
+
+    private static String albumListCover(JSONObject item) {
+        if (item == null) return "";
+        String[] keys = {"cover_xl", "cover_big", "cover_medium", "cover", "cover_small"};
+        for (String key : keys) {
+            String url = item.optString(key, "").trim();
+            if (!url.isEmpty()) return DeezerCoverArt.bestCoverUrl(url);
+        }
+        return "";
     }
 
     private byte[] searchPublic(String pathAndQuery) throws IOException {
