@@ -500,10 +500,11 @@
                 android:layout_marginLeft="8dp"
                 android:layout_marginTop="26dp"
                 android:orientation="vertical">
-                <TextView android:id="@+id/tv_player_title" android:layout_width="match_parent" android:layout_height="42dp" android:text="@string/common_title" android:textColor="#FFFFFF" android:textSize="25sp" android:textStyle="bold" android:gravity="start|center_vertical" android:paddingLeft="13dp" android:singleLine="true" android:ellipsize="marquee" android:background="#1affffff"/>
-                <TextView android:id="@+id/tv_player_artist" android:layout_width="match_parent" android:layout_height="38dp" android:layout_marginTop="7dp" android:text="@string/common_artist" android:textColor="#FFFFFF" android:textSize="21sp" android:textStyle="bold" android:gravity="start|center_vertical" android:paddingLeft="13dp" android:singleLine="true" android:ellipsize="marquee" android:background="#1affffff"/>
-                <TextView android:id="@+id/tv_player_track_count" android:layout_width="match_parent" android:layout_height="38dp" android:layout_marginTop="7dp" android:text="00 / 00" android:textColor="#FFFFFF" android:textSize="21sp" android:textStyle="bold" android:gravity="start|center_vertical" android:paddingLeft="13dp" android:singleLine="true" android:background="#1affffff"/>
-                <LinearLayout android:id="@+id/player_status_row" android:layout_width="match_parent" android:layout_height="38dp" android:layout_marginTop="7dp" android:orientation="horizontal" android:gravity="center_vertical" android:paddingLeft="13dp" android:background="#1affffff">
+                <TextView android:id="@+id/tv_player_title" android:layout_width="match_parent" android:layout_height="40dp" android:text="@string/common_title" android:textColor="#FFFFFF" android:textSize="25sp" android:textStyle="bold" android:gravity="start|center_vertical" android:paddingLeft="13dp" android:singleLine="true" android:ellipsize="marquee" android:background="#1affffff"/>
+                <TextView android:id="@+id/tv_player_artist" android:layout_width="match_parent" android:layout_height="32dp" android:layout_marginTop="5dp" android:text="@string/common_artist" android:textColor="#FFFFFF" android:textSize="21sp" android:textStyle="bold" android:gravity="start|center_vertical" android:paddingLeft="13dp" android:singleLine="true" android:ellipsize="marquee" android:background="#1affffff"/>
+                <TextView android:id="@+id/tv_player_album" android:layout_width="match_parent" android:layout_height="32dp" android:layout_marginTop="5dp" android:text="" android:textColor="#FFFFFF" android:textSize="21sp" android:textStyle="bold" android:gravity="start|center_vertical" android:paddingLeft="13dp" android:singleLine="true" android:ellipsize="marquee" android:background="#1affffff"/>
+                <TextView android:id="@+id/tv_player_track_count" android:layout_width="match_parent" android:layout_height="32dp" android:layout_marginTop="5dp" android:text="— / —" android:textColor="#FFFFFF" android:textSize="21sp" android:textStyle="bold" android:gravity="start|center_vertical" android:paddingLeft="13dp" android:singleLine="true" android:background="#1affffff"/>
+                <LinearLayout android:id="@+id/player_status_row" android:layout_width="match_parent" android:layout_height="30dp" android:layout_marginTop="5dp" android:orientation="horizontal" android:gravity="center_vertical" android:paddingLeft="13dp" android:background="#1affffff">
                     <ImageView android:id="@+id/iv_player_shuffle_status" android:layout_width="24dp" android:layout_height="24dp" android:visibility="gone" android:layout_marginRight="10dp"/>
                     <ImageView android:id="@+id/iv_player_repeat_status" android:layout_width="24dp" android:layout_height="24dp" android:visibility="gone"/>
                 </LinearLayout>
@@ -540,8 +541,8 @@
             <TextView
                 android:id="@+id/tv_viz_artist"
                 android:layout_width="match_parent"
-                android:layout_height="24dp"
-                android:layout_marginTop="4dp"
+                android:layout_height="22dp"
+                android:layout_marginTop="3dp"
                 android:background="#1affffff"
                 android:ellipsize="marquee"
                 android:gravity="center_vertical"
@@ -550,6 +551,22 @@
                 android:paddingRight="8dp"
                 android:singleLine="true"
                 android:text="@string/common_artist"
+                android:textColor="#FFFFFF"
+                android:textSize="15sp" />
+
+            <TextView
+                android:id="@+id/tv_viz_album"
+                android:layout_width="match_parent"
+                android:layout_height="22dp"
+                android:layout_marginTop="3dp"
+                android:background="#1affffff"
+                android:ellipsize="marquee"
+                android:gravity="center_vertical"
+                android:marqueeRepeatLimit="marquee_forever"
+                android:paddingLeft="8dp"
+                android:paddingRight="8dp"
+                android:singleLine="true"
+                android:text=""
                 android:textColor="#FFFFFF"
                 android:textSize="15sp" />
 

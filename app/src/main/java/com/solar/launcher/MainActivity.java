@@ -315,9 +315,9 @@ public class MainActivity extends Activity {
     private StoragePieView storagePieView;
     private LinearLayout playerVisualizerContainer, playerContentRow;
     private FrameLayout playerVisualizerSlot;
-    private TextView tvVizTitle, tvVizArtist, tvVizTrackCount;
+    private TextView tvVizTitle, tvVizArtist, tvVizAlbum, tvVizTrackCount;
 
-    private TextView tvBrowserPath, tvPlayerTitle, tvPlayerArtist, tvPlayerTimeCurrent, tvPlayerTimeTotal;
+    private TextView tvBrowserPath, tvPlayerTitle, tvPlayerArtist, tvPlayerAlbum, tvPlayerTimeCurrent, tvPlayerTimeTotal;
     private TextView tvPlayerTrackCount;
     private LinearLayout playerStatusRow;
     private ImageView ivPlayerShuffleStatus, ivPlayerRepeatStatus; // 💡 텍스트뷰에서 이미지뷰로 변경!
@@ -1539,6 +1539,7 @@ public class MainActivity extends Activity {
         playerVisualizerSlot = findViewById(R.id.player_visualizer_slot);
         tvVizTitle = findViewById(R.id.tv_viz_title);
         tvVizArtist = findViewById(R.id.tv_viz_artist);
+        tvVizAlbum = findViewById(R.id.tv_viz_album);
         tvVizTrackCount = findViewById(R.id.tv_viz_track_count);
         ivMenuPreview = findViewById(R.id.iv_menu_preview);
         tvMenuPreviewTitle = findViewById(R.id.tv_menu_preview_title);
@@ -1776,6 +1777,7 @@ public class MainActivity extends Activity {
 
         tvPlayerTitle = findViewById(R.id.tv_player_title);
         tvPlayerArtist = findViewById(R.id.tv_player_artist);
+        tvPlayerAlbum = findViewById(R.id.tv_player_album);
         tvPlayerTimeCurrent = findViewById(R.id.tv_player_time_current);
         tvPlayerTimeTotal = findViewById(R.id.tv_player_time_total);
         ivAlbumArt = findViewById(R.id.iv_album_art);
@@ -2751,16 +2753,18 @@ public class MainActivity extends Activity {
             int progressText = ThemeManager.getProgressTextColor();
             android.graphics.Typeface font = ThemeManager.getCustomFont();
 
-            applyNowPlayingInfoRow(tvPlayerTitle, infoW, 42, textColor, font);
-            applyNowPlayingInfoRow(tvPlayerArtist, infoW, 38, textColor, font);
-            applyNowPlayingInfoRow(tvPlayerTrackCount, infoW, 38, textColor, font);
+            applyNowPlayingInfoRow(tvPlayerTitle, infoW, 40, textColor, font);
+            applyNowPlayingInfoRow(tvPlayerArtist, infoW, 32, textColor, font);
+            applyNowPlayingInfoRow(tvPlayerAlbum, infoW, 32, textColor, font);
+            applyNowPlayingInfoRow(tvPlayerTrackCount, infoW, 32, textColor, font);
             if (playerStatusRow != null) {
                 float d = getResources().getDisplayMetrics().density;
-                int h = (int) (38 * d);
+                int h = (int) (30 * d);
                 playerStatusRow.setBackground(ThemeManager.getNowPlayingInfoBarBackground(getResources(), infoW, h));
             }
             applyNowPlayingInfoRow(tvVizTitle, infoW, 28, textColor, font);
-            applyNowPlayingInfoRow(tvVizArtist, infoW, 24, textColor, font);
+            applyNowPlayingInfoRow(tvVizArtist, infoW, 22, textColor, font);
+            applyNowPlayingInfoRow(tvVizAlbum, infoW, 22, textColor, font);
             applyNowPlayingInfoRow(tvVizTrackCount, infoW, 22, textColor, font);
             refreshPlayerMarquee();
 
@@ -2778,10 +2782,29 @@ public class MainActivity extends Activity {
     private void refreshPlayerMarquee() {
         enableMarquee(tvPlayerTitle);
         enableMarquee(tvPlayerArtist);
+        enableMarquee(tvPlayerAlbum);
         enableMarquee(tvPlayerTrackCount);
         if (tvPlayerTitle != null) tvPlayerTitle.setSelected(true);
         if (tvPlayerArtist != null) tvPlayerArtist.setSelected(true);
+        if (tvPlayerAlbum != null) tvPlayerAlbum.setSelected(true);
         if (tvPlayerTrackCount != null) tvPlayerTrackCount.setSelected(true);
+    }
+
+    /** Now Playing lines 2–3: artist and album on separate rows. */
+    private void bindNowPlayingArtistAlbum(String artist, String album) {
+        String a = artist != null ? artist.trim() : "";
+        String al = album != null ? album.trim() : "";
+        if ("Unknown Album".equalsIgnoreCase(al)) al = "";
+        if (tvPlayerArtist != null) tvPlayerArtist.setText(a);
+        if (tvPlayerAlbum != null) tvPlayerAlbum.setText(al);
+        if (tvVizArtist != null) tvVizArtist.setText(a);
+        if (tvVizAlbum != null) tvVizAlbum.setText(al);
+        refreshPlayerMarquee();
+    }
+
+    private void clearNowPlayingAlbumLine() {
+        if (tvPlayerAlbum != null) tvPlayerAlbum.setText("");
+        if (tvVizAlbum != null) tvVizAlbum.setText("");
     }
 
     private void applyNowPlayingInfoRow(TextView tv, int widthPx, int heightDp, int textColor,
@@ -11468,6 +11491,7 @@ public class MainActivity extends Activity {
         String titled = reachProgressPrefix(pct) + base;
         tvPlayerTitle.setText(titled);
         if (tvVizTitle != null) tvVizTitle.setText(titled);
+        refreshPlayerMarquee();
     }
 
     private String queueItemSubtitle(PlayQueue.QueueItem item) {
@@ -23118,23 +23142,25 @@ public class MainActivity extends Activity {
 
     private void updateMusicTrackCountUi() {
         if (tvPlayerTrackCount == null) return;
+        String text;
         if (playback.isPodcastActive()) {
             int idx = playback.podcastIndex();
             int total = playback.podcastQueue().size();
             if (idx < 0 || total <= 0) {
-                tvPlayerTrackCount.setText("— / —");
+                text = "— / —";
             } else {
-                tvPlayerTrackCount.setText(PlaybackCoordinator.formatTrackPosition(idx, total));
+                text = PlaybackCoordinator.formatTrackPositionPlain(idx, total);
             }
-            return;
+        } else {
+            int total = playback.musicPlaylist().size();
+            if (!playback.isMusicActive() || total <= 0) {
+                text = "— / —";
+            } else {
+                text = PlaybackCoordinator.formatTrackPositionPlain(playback.musicIndex(), total);
+            }
         }
-        int total = playback.musicPlaylist().size();
-        if (!playback.isMusicActive() || total <= 0) {
-            tvPlayerTrackCount.setText("— / —");
-            return;
-        }
-        tvPlayerTrackCount.setText(
-                PlaybackCoordinator.formatTrackPosition(playback.musicIndex(), total));
+        tvPlayerTrackCount.setText(text);
+        if (tvVizTrackCount != null) tvVizTrackCount.setText(text);
     }
 
     private void replaceReachFileInQueue(File oldF, File newF) {
@@ -23812,6 +23838,7 @@ public class MainActivity extends Activity {
             mmr.setDataSource(fis.getFD());
             String t = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE);
             String a = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST);
+            String al = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM);
             byte[] art = mmr.getEmbeddedPicture();
             fis.close();
             mmr.release();
@@ -23820,7 +23847,7 @@ public class MainActivity extends Activity {
                         + stripReachProgressPrefix(t));
             }
             if (a != null && !a.trim().isEmpty()) {
-                tvPlayerArtist.setText(a);
+                bindNowPlayingArtistAlbum(a, al);
             } else {
                 clearReachLoadingArtistLabel();
             }
@@ -23886,14 +23913,11 @@ public class MainActivity extends Activity {
         if (tvPlayerArtist != null) {
             if (showBufferingArtist && pct >= 0 && pct < 95 && isDeezerStreamDownloadInProgress()) {
                 tvPlayerArtist.setText(getString(R.string.reach_buffering_track));
-            } else if (!artist.isEmpty() && !album.isEmpty()) {
-                tvPlayerArtist.setText(artist + " · " + album);
-            } else if (!artist.isEmpty()) {
-                tvPlayerArtist.setText(artist);
-            } else if (!album.isEmpty()) {
-                tvPlayerArtist.setText(album);
+            } else {
+                bindNowPlayingArtistAlbum(artist, album);
             }
         }
+        refreshPlayerMarquee();
 
         if (lastAlbumArtBytes == null || lastAlbumArtBytes.length == 0) {
             String coverUrl = DeezerMetadata.coverUrl(prefs, path);
@@ -23944,6 +23968,7 @@ public class MainActivity extends Activity {
         if (dot > 0) reachBase = reachBase.substring(0, dot);
         tvPlayerTitle.setText(reachProgressPrefix(reachDownloadPercentForFile(partial)) + reachBase);
         tvPlayerArtist.setText(getString(R.string.reach_buffering_track));
+        clearNowPlayingAlbumLine();
         playerProgress.setProgress(0);
         tvPlayerTimeCurrent.setText("00:00");
         tvPlayerTimeTotal.setText("00:00");
@@ -23954,6 +23979,22 @@ public class MainActivity extends Activity {
         applyScreenChange(STATE_PLAYER);
         progressHandler.post(updateProgressTask);
         startReachFromGrowingFile(partial, 0);
+    }
+
+    /** Download hit 100% — refresh UI/metadata without resetting playback unless at decode edge. */
+    private void markReachGrowingDownloadComplete() {
+        if (reachGrowingCacheFile == null || !reachGrowingCacheFile.isFile()) return;
+        reachGrowingPreparedBytes = reachGrowingCacheFile.length();
+        reachGrowingTotalBytes = reachGrowingPreparedBytes;
+        progressHandler.removeCallbacks(reachGrowingEdgePoll);
+        refreshReachPlayerTitleProgress();
+        updateReachGrowingDurationUi();
+        if (DeezerCache.isTempFile(getCacheDir(), reachGrowingCacheFile)) {
+            applyDeezerStreamMetadata(reachGrowingCacheFile, false);
+        } else {
+            applyReachId3Metadata(reachGrowingCacheFile);
+            clearReachLoadingArtistLabel();
+        }
     }
 
     private void maybeExtendReachGrowingPlayback(final boolean force) {
@@ -23978,6 +24019,19 @@ public class MainActivity extends Activity {
             }
         } catch (Exception ignored) {}
         long growth = fileLen - reachGrowingPreparedBytes;
+        // ponytail: at 100% do not reset MediaPlayer mid-track — only re-prepare at buffered decode edge.
+        if (!reachDownloadInProgress()) {
+            reachGrowingPreparedBytes = fileLen;
+            if (force) {
+                markReachGrowingDownloadComplete();
+            }
+            if (playing && durationMs > 0 && positionMs < durationMs - REACH_GROWING_EXTEND_MS) {
+                return;
+            }
+            if (!playing && growth <= 0) {
+                return;
+            }
+        }
         if (!force) {
             if (playing) {
                 if (durationMs <= 0 || positionMs < durationMs - REACH_GROWING_EXTEND_MS) return;
@@ -24346,27 +24400,18 @@ public class MainActivity extends Activity {
     private void restoreStreamArtistFromMetadata() {
         if (tvPlayerArtist == null || reachGrowingCacheFile == null) return;
         String path = reachGrowingCacheFile.getAbsolutePath();
-        String artist = "";
         if (DeezerCache.isTempFile(getCacheDir(), reachGrowingCacheFile)) {
-            artist = DeezerMetadata.artist(prefs, path, "");
+            String artist = DeezerMetadata.artist(prefs, path, "");
             if (artist.isEmpty()) {
                 artist = deezerArtistFromQueueMeta();
             }
             String album = DeezerMetadata.album(prefs, path, "");
-            if (!artist.isEmpty() && !album.isEmpty()) {
-                tvPlayerArtist.setText(artist + " · " + album);
-            } else if (!artist.isEmpty()) {
-                tvPlayerArtist.setText(artist);
-            } else if (!album.isEmpty()) {
-                tvPlayerArtist.setText(album);
-            } else {
-                tvPlayerArtist.setText("");
-            }
+            bindNowPlayingArtistAlbum(artist, album);
             return;
         }
-        artist = prefs.getString("meta_artist_" + path, "");
-        if (!artist.isEmpty()) tvPlayerArtist.setText(artist);
-        else tvPlayerArtist.setText("");
+        String artist = prefs.getString("meta_artist_" + path, "");
+        String album = prefs.getString("meta_album_" + path, "");
+        bindNowPlayingArtistAlbum(artist, album);
     }
 
     private String deezerArtistFromQueueMeta() {
@@ -24835,7 +24880,8 @@ public class MainActivity extends Activity {
         String showTitle = podcastSelected != null ? podcastSelected.title : playback.podcastShowTitle();
         tvPlayerTitle.setText(ep.title);
         tvPlayerArtist.setText(showTitle.isEmpty() ? "Podcast" : showTitle);
-        tvPlayerTrackCount.setText(PlaybackCoordinator.formatTrackPosition(index, playback.podcastQueue().size()));
+        clearNowPlayingAlbumLine();
+        updateMusicTrackCountUi();
         tvPlayerTimeCurrent.setText("00:00");
         tvPlayerTimeTotal.setText(getString(R.string.podcasts_buffering));
         ivAlbumArt.setImageResource(R.drawable.default_album);
@@ -25653,6 +25699,7 @@ public class MainActivity extends Activity {
             File track = playback.musicPlaylist().get(playback.musicIndex());
             tvPlayerTitle.setText(track.getName());
             tvPlayerArtist.setText(getString(R.string.reach_loading_track));
+            clearNowPlayingAlbumLine();
             playerProgress.setProgress(0);
             tvPlayerTimeCurrent.setText("00:00");
             tvPlayerTimeTotal.setText("00:00");
@@ -25698,6 +25745,7 @@ public class MainActivity extends Activity {
             }
             tvPlayerTitle.setText("Corrupted File");
             tvPlayerArtist.setText("Skipping...");
+            clearNowPlayingAlbumLine();
             ivAlbumArt.setImageResource(R.drawable.default_album);
 
             // 시스템이 뻗기 전에 경고창을 띄우고 1.5초 뒤에 다음 곡으로 자동으로 부드럽게 넘겨버립니다!
@@ -25712,6 +25760,7 @@ public class MainActivity extends Activity {
         }
         tvPlayerTitle.setText(track.getName());
         tvPlayerArtist.setText("Loading...");
+        clearNowPlayingAlbumLine();
         ivAlbumArt.setImageResource(R.drawable.default_album);
         ivPlayerBgBlur.setImageResource(0);
         playerProgress.setProgress(0);
@@ -25752,15 +25801,18 @@ public class MainActivity extends Activity {
             if (t != null && !t.trim().isEmpty()) tvPlayerTitle.setText(t);
             else tvPlayerTitle.setText(safeFileName);
 
-            // 가수 / 앨범 화면에 표시
-            if (a != null && !a.trim().isEmpty() && al != null && !al.trim().isEmpty()
-                    && !"Unknown Album".equalsIgnoreCase(al.trim())) {
-                tvPlayerArtist.setText(a + " · " + al);
-            } else if (a != null && !a.trim().isEmpty()) {
+            // 가수 / 앨범 — separate Now Playing lines
+            if (a != null && !a.trim().isEmpty()) {
                 tvPlayerArtist.setText(a);
             } else {
                 tvPlayerArtist.setText("Unknown Artist");
             }
+            if (al != null && !al.trim().isEmpty() && !"Unknown Album".equalsIgnoreCase(al.trim())) {
+                if (tvPlayerAlbum != null) tvPlayerAlbum.setText(al);
+            } else {
+                clearNowPlayingAlbumLine();
+            }
+            refreshPlayerMarquee();
 
             // 2. 앨범 아트 세팅 및 인터넷 검색
             if (lastAlbumArtBytes != null) {
@@ -25939,6 +25991,10 @@ public class MainActivity extends Activity {
         if (tvVizArtist != null && tvPlayerArtist != null) {
             tvVizArtist.setText(tvPlayerArtist.getText());
             tvVizArtist.setSelected(true);
+        }
+        if (tvVizAlbum != null && tvPlayerAlbum != null) {
+            tvVizAlbum.setText(tvPlayerAlbum.getText());
+            tvVizAlbum.setSelected(true);
         }
         if (tvVizTrackCount != null && tvPlayerTrackCount != null) {
             tvVizTrackCount.setText(tvPlayerTrackCount.getText());
@@ -27789,11 +27845,7 @@ public class MainActivity extends Activity {
                                 if (playback.musicPlaylist().get(playback.musicIndex()).getAbsolutePath().equals(track.getAbsolutePath())) {
                                     // 🚀 화면의 글씨도 즉각 공식 정보로 갈아치웁니다!
                                     tvPlayerTitle.setText(finalTitle);
-                                    if (finalAlbum != null && !finalAlbum.trim().isEmpty()) {
-                                        tvPlayerArtist.setText(finalArtist + " · " + finalAlbum);
-                                    } else {
-                                        tvPlayerArtist.setText(finalArtist);
-                                    }
+                                    bindNowPlayingArtistAlbum(finalArtist, finalAlbum);
                                     applyCachedCoverArt(coverFile.getAbsolutePath());
                                 }
                             }

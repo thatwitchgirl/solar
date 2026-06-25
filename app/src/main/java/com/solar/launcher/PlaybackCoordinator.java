@@ -94,6 +94,15 @@ public final class PlaybackCoordinator {
         return String.format(java.util.Locale.US, "%02d / %02d", pos, total);
     }
 
+    /** Now Playing line 4 — track position without leading zeros (e.g. "4 / 12"). */
+    public static String formatTrackPositionPlain(int index, int total) {
+        if (total <= 0) return "— / —";
+        int pos = index + 1;
+        if (pos < 1) pos = 1;
+        if (pos > total) pos = total;
+        return String.format(java.util.Locale.US, "%d / %d", pos, total);
+    }
+
     public String formatActivePosition() {
         return formatTrackPosition(queue.index(), queue.size());
     }
