@@ -32,6 +32,7 @@ local.properties
 # Stray docs / screenshots at repo root
 /docs/
 /*.md
+!README.md
 !solar-rom/README.md
 *.logcat
 Screenshot_*.png
