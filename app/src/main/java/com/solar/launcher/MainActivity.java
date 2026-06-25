@@ -632,7 +632,7 @@ public class MainActivity extends Activity {
     private int soulseekReturnScreen = STATE_MENU;
     private int pendingScreenChange = -1;
     private String soulseekReturnSettingsSubKey = null;
-    private int soulseekSettingsMenuFocusIndex = 15;
+    private int reachSettingsMenuFocusIndex = 15;
     private String pendingSoulseekUser = "";
     private int y1RowWidthPx;
     private int y1RowHeightPx;
@@ -3506,8 +3506,24 @@ public class MainActivity extends Activity {
             return true;
         }
         if (SettingsScreens.SOULSEEK.equals(settingsSubScreenKey)) {
-            lastSettingsFocusIndex = soulseekSettingsMenuFocusIndex;
+            buildReachSettingsUI(1);
+            return true;
+        }
+        return false;
+    }
+
+    private boolean handleReachSettingsBack() {
+        if (SettingsScreens.REACH.equals(settingsSubScreenKey)) {
+            lastSettingsFocusIndex = reachSettingsMenuFocusIndex;
             buildSettingsUI();
+            return true;
+        }
+        return false;
+    }
+
+    private boolean handleDeezerSettingsBack() {
+        if (SettingsScreens.DEEZER.equals(settingsSubScreenKey)) {
+            buildReachSettingsUI(2);
             return true;
         }
         return false;
@@ -7558,11 +7574,12 @@ public class MainActivity extends Activity {
         updateStatusBarTitle();
         DeezerAccount.migrateLegacyArl(this, prefs);
         containerSettingsItems.removeAllViews();
-        Button back = createListButton(getString(R.string.settings_deezer));
+        Button back = createListButton(getString(R.string.common_cancel_back));
+        styleSecondaryLabel(back);
         back.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) {
                 clickFeedback();
-                buildSettingsUI();
+                buildReachSettingsUI(2);
             }
         });
         containerSettingsItems.addView(back);
@@ -9210,7 +9227,8 @@ public class MainActivity extends Activity {
 
     private String resolveSolarSettingAppName(String rowKey) {
         if (rowKey == null) return null;
-        if (RowKeys.SOULSEEK.equals(rowKey)) return "Reach";
+        if (RowKeys.REACH.equals(rowKey)) return "Reach";
+        if (RowKeys.SOULSEEK.equals(rowKey)) return "Soulseek";
         if (RowKeys.WEB_SERVER.equals(rowKey)) return "PC Upload";
         if (RowKeys.GET_THEMES.equals(rowKey) || RowKeys.THEMES.equals(rowKey)) return "Themes";
         if (RowKeys.homeShortcut(HomeMenuConfig.ID_APPS).equals(rowKey)) return "Apps";
@@ -14037,7 +14055,9 @@ public class MainActivity extends Activity {
             }
             if (handleHomeScreenEditorBack()) return;
             if (handleLanguageSettingsBack()) return;
+            if (handleReachSettingsBack()) return;
             if (handleSoulseekSettingsBack()) return;
+            if (handleDeezerSettingsBack()) return;
             if (handleLibraryBrowseSettingsBack()) return;
             if (handleDebugSettingsBack()) return;
             if (handleAboutSettingsBack()) return;
@@ -14384,25 +14404,16 @@ public class MainActivity extends Activity {
         });
         containerSettingsItems.addView(btnWifiMenu);
 
-        LinearLayout btnSoulseekMenu = createSettingsRow(RowKeys.SOULSEEK, R.string.settings_soulseek, true);
-        soulseekSettingsMenuFocusIndex = containerSettingsItems.getChildCount();
-        btnSoulseekMenu.setOnClickListener(new View.OnClickListener() {
+        LinearLayout btnReachMenu = createSettingsRow(RowKeys.REACH, R.string.settings_reach, true);
+        reachSettingsMenuFocusIndex = containerSettingsItems.getChildCount();
+        btnReachMenu.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
                 clickFeedback();
-                buildSoulseekSettingsUI();
+                buildReachSettingsUI(1);
             }
         });
-        containerSettingsItems.addView(btnSoulseekMenu);
-
-        LinearLayout btnDeezerMenu = createSettingsRow(RowKeys.DEEZER, R.string.settings_deezer, true);
-        btnDeezerMenu.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View v) {
-                clickFeedback();
-                buildDeezerSettingsUI();
-            }
-        });
-        containerSettingsItems.addView(btnDeezerMenu);
+        containerSettingsItems.addView(btnReachMenu);
 
         LinearLayout btnLibraryBrowse = createSettingsRow(RowKeys.LIBRARY_BROWSE, R.string.settings_library_browse, true);
         libraryBrowseSettingsMenuFocusIndex = containerSettingsItems.getChildCount();
@@ -14889,6 +14900,59 @@ public class MainActivity extends Activity {
         return false;
     }
 
+    /** Reach hub: Soulseek + Deezer settings submenus. */
+    private void buildReachSettingsUI() {
+        buildReachSettingsUI(1);
+    }
+
+    private void buildReachSettingsUI(final int focusChildIndex) {
+        showSoulseekConversationPanel(false);
+        showReachBrowseList(false);
+        resetReachBrowseHeaders();
+        setSettingsSubScreen(SettingsScreens.REACH);
+        updateStatusBarTitle();
+        applyReachBrowseLayoutMode();
+        containerSettingsItems.removeAllViews();
+
+        Button btnBack = createListButton(getString(R.string.common_cancel_back));
+        styleSecondaryLabel(btnBack);
+        btnBack.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                clickFeedback();
+                lastSettingsFocusIndex = reachSettingsMenuFocusIndex;
+                buildSettingsUI();
+            }
+        });
+        containerSettingsItems.addView(btnBack);
+
+        LinearLayout btnSoulseek = createSettingsRow(RowKeys.SOULSEEK, R.string.settings_soulseek, true);
+        btnSoulseek.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                clickFeedback();
+                buildSoulseekSettingsUI();
+            }
+        });
+        containerSettingsItems.addView(btnSoulseek);
+
+        LinearLayout btnDeezer = createSettingsRow(RowKeys.DEEZER, R.string.settings_deezer, true);
+        btnDeezer.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                clickFeedback();
+                buildDeezerSettingsUI();
+            }
+        });
+        containerSettingsItems.addView(btnDeezer);
+
+        final int idx = Math.max(0, Math.min(focusChildIndex,
+                containerSettingsItems.getChildCount() - 1));
+        if (containerSettingsItems.getChildCount() > idx) {
+            containerSettingsItems.getChildAt(idx).requestFocus();
+        }
+    }
+
     private void buildSoulseekSettingsUI() {
         showSoulseekConversationPanel(false);
         showReachBrowseList(false);
@@ -14904,8 +14968,7 @@ public class MainActivity extends Activity {
             @Override
             public void onClick(View v) {
                 clickFeedback();
-                lastSettingsFocusIndex = soulseekSettingsMenuFocusIndex;
-                buildSettingsUI();
+                buildReachSettingsUI(1);
             }
         });
         containerSettingsItems.addView(btnBack);

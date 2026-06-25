@@ -22,6 +22,7 @@ public final class RowKeys {
     public static final String SWITCH_ROCKBOX = "settings.switch_rockbox";
     public static final String WEB_SERVER = "settings.web_server";
     public static final String WIFI_SETUP = "settings.wifi_setup";
+    public static final String REACH = "settings.reach";
     public static final String SOULSEEK = "settings.soulseek";
     public static final String DEEZER = "settings.deezer";
     public static final String AUTO_FETCH = "settings.auto_fetch";
@@ -122,6 +123,7 @@ public final class RowKeys {
         if (SWITCH_ROCKBOX.equals(rowKey)) return R.string.settings_switch_rockbox;
         if (WEB_SERVER.equals(rowKey)) return R.string.settings_web_server;
         if (WIFI_SETUP.equals(rowKey)) return R.string.settings_wifi_setup;
+        if (REACH.equals(rowKey)) return R.string.settings_reach;
         if (SOULSEEK.equals(rowKey)) return R.string.settings_soulseek;
         if (DEEZER.equals(rowKey)) return R.string.settings_deezer;
         if (AUTO_FETCH.equals(rowKey)) return R.string.settings_auto_fetch;

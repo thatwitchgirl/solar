@@ -5,6 +5,7 @@ public final class SettingsScreens {
     public static final String APPEARANCE = "settings.appearance";
     public static final String THEMES = "settings.themes";
     public static final String THEME_PICKER = "settings.theme_picker";
+    public static final String REACH = "settings.reach";
     public static final String SOULSEEK = "settings.soulseek";
     public static final String SOULSEEK_CONNECTION = "settings.soulseek.connection";
     public static final String SOULSEEK_ABOUT = "settings.soulseek.about";
@@ -42,6 +43,7 @@ public final class SettingsScreens {
         if (APPEARANCE.equals(key)) return R.string.settings_sub_appearance;
         if (THEMES.equals(key)) return R.string.settings_sub_themes;
         if (THEME_PICKER.equals(key)) return R.string.settings_sub_theme_picker;
+        if (REACH.equals(key)) return R.string.settings_sub_reach;
         if (SOULSEEK.equals(key)) return R.string.settings_sub_soulseek;
         if (SOULSEEK_CONNECTION.equals(key)) return R.string.settings_sub_soulseek_connection;
         if (SOULSEEK_ABOUT.equals(key)) return R.string.settings_sub_soulseek_about;
@@ -72,6 +74,10 @@ public final class SettingsScreens {
         if (THEME_VARIANT.equals(key)) return R.string.settings_sub_theme_variant;
         if (LIBRARY_BROWSE.equals(key)) return R.string.settings_sub_library_browse;
         return 0;
+    }
+
+    public static boolean isReach(String key) {
+        return REACH.equals(key);
     }
 
     public static boolean isSoulseek(String key) {
