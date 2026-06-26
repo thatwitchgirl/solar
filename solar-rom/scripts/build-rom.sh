@@ -533,9 +533,10 @@ sudo chown root:root "$MOUNT_SYS/usr/keylayout/Stock.kl" "$MOUNT_SYS/usr/keylayo
     "$MOUNT_SYS/usr/keylayout/Y1-Rockbox.kl" "$MOUNT_SYS/usr/keylayout/Generic.kl" \
     "$MOUNT_SYS/usr/keylayout/mtk-tpd-kpd.kl"
 # Patch wheel scancodes in mtk-kpd.kl without replacing GPIO key map.
+# ponytail: sed -i writes a temp file beside the target — needs sudo on mounted system.img (root-owned dir).
 if [ -f "$MOUNT_SYS/usr/keylayout/mtk-kpd.kl" ]; then
-    sed -i 's/^key 105[[:space:]].*/key 105   MEDIA_PLAY/' "$MOUNT_SYS/usr/keylayout/mtk-kpd.kl"
-    sed -i 's/^key 106[[:space:]].*/key 106   MEDIA_PAUSE/' "$MOUNT_SYS/usr/keylayout/mtk-kpd.kl"
+    sudo sed -i 's/^key 105[[:space:]].*/key 105   MEDIA_PLAY/' "$MOUNT_SYS/usr/keylayout/mtk-kpd.kl"
+    sudo sed -i 's/^key 106[[:space:]].*/key 106   MEDIA_PAUSE/' "$MOUNT_SYS/usr/keylayout/mtk-kpd.kl"
 fi
 
 echo "==> AVRCP Bluetooth stack (Y1Bridge + mtkbt patches; hardware keylayout unchanged)"
