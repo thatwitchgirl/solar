@@ -48,6 +48,19 @@ public class PlaybackCoordinatorTest {
     }
 
     @Test
+    public void formatTrackPositionPlain_noLeadingZeros() {
+        if (!"— / —".equals(PlaybackCoordinator.formatTrackPositionPlain(0, 0))) {
+            throw new AssertionError("empty queue");
+        }
+        if (!"1 / 3".equals(PlaybackCoordinator.formatTrackPositionPlain(0, 3))) {
+            throw new AssertionError("first track");
+        }
+        if (!"3 / 3".equals(PlaybackCoordinator.formatTrackPositionPlain(99, 3))) {
+            throw new AssertionError("clamp high index");
+        }
+    }
+
+    @Test
     public void activateMusic_emptyClearsMode() {
         PlaybackCoordinator pc = new PlaybackCoordinator();
         pc.activateMusic(files("a"), 0, false);

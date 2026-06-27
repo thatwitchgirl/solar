@@ -1,0 +1,6 @@
+Vendored from koensayr (GPL-3) for CI — upstream lives in reference/koensayr-main (local only, gitignored).
+
+ROM build uses: patch_mtkbt*.py, patch_libextavrcp*.py, patch_libaudio_a2dp.py, patch_avrcp_kl.py
++ _thumb2asm.py, _trampolines.py. Y1Bridge.apk: solar-rom/system/app/Y1Bridge.apk.
+
+License: KOENSAYR-GPL-3.txt in this directory.
