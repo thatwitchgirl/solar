@@ -974,6 +974,7 @@
     <string name="toast_audio_connected">Audio: %1$s</string>
     <string name="toast_download_failed">Download failed.</string>
     <string name="toast_theme_applied">Applied: %1$s</string>
+    <string name="theme_applying">Applying %1$s</string>
     <string name="toast_wifi_required">Please turn ON Wi-Fi first</string>
     <string name="toast_internet_required">Internet connection required</string>
     <string name="themes_get_more">Get More</string>
@@ -995,6 +996,7 @@
     <string name="toast_wifi_saved_connecting">Connecting to saved network…</string>
     <string name="toast_wifi_forgotten">Forgot network: %1$s</string>
     <string name="toast_wifi_forget_failed">Could not forget network.</string>
+    <string name="toast_wifi_connect_failed">Could not connect to Wi-Fi.</string>
     <string name="toast_bt_forgotten">Forgot device: %1$s</string>
     <string name="toast_bt_forget_failed">Could not forget device.</string>
     <string name="toast_eq_unsupported">This device does not support EQ presets.</string>

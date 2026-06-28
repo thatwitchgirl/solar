@@ -596,6 +596,9 @@ public class MainActivity extends Activity {
     private Set<String> getMusicDeezerDedupeKeys = new HashSet<String>();
     private boolean getMusicSearchInProgress = false;
     private boolean getMusicDeezerDone = false;
+    /** True once Deezer track search has been applied — gates Reach row paint in unified search. */
+    private boolean getMusicDeezerTracksReady = false;
+    private boolean getMusicDeezerArtistsFetched = false;
     private int getMusicSearchGen = 0;
     private int getMusicResultsVisibleCount = GET_MUSIC_PAGE_SIZE;
     private int getMusicEntryUiCount = 0;
@@ -929,6 +932,17 @@ public class MainActivity extends Activity {
         }
     };
     private final Handler networkRescanHandler = new Handler();
+    /** Coalesce home/settings rebuilds on NETWORK_STATE_CHANGED — avoids connect UI storm. */
+    private final Handler connectivityUiDebounceHandler = new Handler();
+    private static final long CONNECTIVITY_UI_DEBOUNCE_MS = 400L;
+    /** Scan results cached for one Wi-Fi tier / settings list rebuild (avoid O(n²) binder calls). */
+    private java.util.Map<String, ScanResult> wifiScanCacheBySsid = new java.util.HashMap<String, ScanResult>();
+    private final Runnable connectivityUiDebounceRunnable = new Runnable() {
+        @Override
+        public void run() {
+            refreshConnectivityGatedMenusNow();
+        }
+    };
     private final Runnable networkRescanTick = new Runnable() {
         @Override
         public void run() {
@@ -1298,7 +1312,7 @@ public class MainActivity extends Activity {
                     ivStatusWifi.setVisibility(View.GONE);
                 }
                 if (currentScreenState == STATE_SETTINGS)
-                    buildSettingsUI();
+                    scheduleConnectivityGatedMenusRefresh();
                 else if (currentScreenState == STATE_WIFI)
                     startWifiScan();
                 onWifiConnectivityChanged();
@@ -1498,24 +1512,6 @@ public class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
 // 🚀 앱이 켜지면 자기 자신을 변수에 등록합니다.
         instance = this;
-        Thread.setDefaultUncaughtExceptionHandler(new Thread.UncaughtExceptionHandler() {
-            @Override
-            public void uncaughtException(Thread thread, Throwable e) {
-                try {
-                    java.io.StringWriter sw = new java.io.StringWriter();
-                    java.io.PrintWriter pw = new java.io.PrintWriter(sw);
-                    e.printStackTrace(pw);
-                    android.util.Log.e("SolarCrash", sw.toString());
-                    java.io.File logFile = new java.io.File("/storage/sdcard0/solar_crash_log.txt");
-                    java.io.FileOutputStream fos = new java.io.FileOutputStream(logFile, true);
-                    fos.write(("\n\n--- 💥 CRASH REPORT (" + new java.util.Date().toString() + ") ---\n").getBytes());
-                    fos.write(sw.toString().getBytes());
-                    fos.close();
-                } catch (Exception ex) {
-                }
-                System.exit(1);
-            }
-        });
 
         requestWindowFeature(Window.FEATURE_NO_TITLE);
         getWindow().setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN, WindowManager.LayoutParams.FLAG_FULLSCREEN);
@@ -4759,6 +4755,11 @@ public class MainActivity extends Activity {
                         if (isFinishing()) return;
                         if (layoutLoadingOverlay != null) layoutLoadingOverlay.setVisibility(View.GONE);
                         if (applyIndex < 0 || applyTheme == null) return;
+                        final ViewGroup root = (ViewGroup) findViewById(android.R.id.content);
+                        if (themedContextMenu != null && root != null && appliedName != null) {
+                            themedContextMenu.showInstallStatusOverlay(root,
+                                    getString(R.string.theme_applying, appliedName), "");
+                        }
                         ThemeManager.setThemeIndex(applyIndex);
                         try {
                             SharedPreferences.Editor ed = prefs.edit()
@@ -4771,12 +4772,16 @@ public class MainActivity extends Activity {
                             }
                             ed.commit();
                         } catch (Exception ignored) {}
-                        if (appliedName != null) {
-                            Toast.makeText(MainActivity.this,
-                                    getString(R.string.toast_theme_applied, appliedName),
-                                    Toast.LENGTH_SHORT).show();
+                        if (root != null) {
+                            root.post(new Runnable() {
+                                @Override
+                                public void run() {
+                                    if (!isFinishing()) recreate();
+                                }
+                            });
+                        } else {
+                            recreate();
                         }
-                        recreate();
                     }
                 });
             }
@@ -4828,6 +4833,15 @@ public class MainActivity extends Activity {
     }
 
     private void refreshConnectivityGatedMenus() {
+        scheduleConnectivityGatedMenusRefresh();
+    }
+
+    private void scheduleConnectivityGatedMenusRefresh() {
+        connectivityUiDebounceHandler.removeCallbacks(connectivityUiDebounceRunnable);
+        connectivityUiDebounceHandler.postDelayed(connectivityUiDebounceRunnable, CONNECTIVITY_UI_DEBOUNCE_MS);
+    }
+
+    private void refreshConnectivityGatedMenusNow() {
         if (currentScreenState == STATE_MENU) {
             buildHomeMenu();
         } else if (currentScreenState == STATE_MORE) {
@@ -5732,8 +5746,6 @@ public class MainActivity extends Activity {
             jjHomeOverlay = null;
         }
         final int buildGen = ++homeMenuBuildGen;
-        containerHomeMenuItems.removeAllViews();
-        if (menuScroll != null) menuScroll.scrollTo(0, 0);
         final boolean online = ConnectivityHelper.isOnline(this);
         final boolean onLan = ConnectivityHelper.hasLocalNetwork(this);
         homeMenuEntries = HomeMenuConfig.loadVisibleForDisplay(prefs, online, onLan);
@@ -5763,6 +5775,8 @@ public class MainActivity extends Activity {
             focusedHomeMenuIndex = Math.max(0, totalRows - 1);
             if (menuScroll != null) menuScroll.scrollTo(0, 0);
         }
+        // ponytail: build off-container first — stale-gen abort must not leave removeAllViews() with 0 rows.
+        final java.util.ArrayList<View> pendingRows = new java.util.ArrayList<View>(totalRows);
         for (int i = 0; i < homeMenuEntries.size(); i++) {
             if (buildGen != homeMenuBuildGen) {
                 // #region agent log
@@ -5778,11 +5792,17 @@ public class MainActivity extends Activity {
                 // #endregion
                 return;
             }
-            addHomeMenuRow(homeMenuEntries.get(i), i);
+            pendingRows.add(createHomeMenuRow(homeMenuEntries.get(i), i));
         }
         if (showMore) {
             if (buildGen != homeMenuBuildGen) return;
-            addHomeMoreTileRow(homeMenuEntries.size());
+            pendingRows.add(createHomeMoreTileRow(homeMenuEntries.size()));
+        }
+        if (buildGen != homeMenuBuildGen) return;
+        containerHomeMenuItems.removeAllViews();
+        if (menuScroll != null) menuScroll.scrollTo(0, 0);
+        for (View row : pendingRows) {
+            containerHomeMenuItems.addView(row, homeMenuRowLayoutParams());
         }
         int panelH = menuListHeightPx > 0 ? menuListHeightPx
                 : (int) getResources().getDimension(R.dimen.y1_menu_height);
@@ -5847,6 +5867,9 @@ public class MainActivity extends Activity {
                 d.put("actual", childCount);
                 DebugAgentLog.log(this, "MainActivity.buildHomeMenu", "row count mismatch", "H-B", d);
             } catch (Exception ignored) {}
+        }
+        if (childCount == 0 && totalRows > 0) {
+            scheduleRebuildHomeMenuIfVisible();
         }
         scrollHomeMenuToIndex(focusedHomeMenuIndex);
         refreshHomeMenuRowStyles();
@@ -5941,7 +5964,15 @@ public class MainActivity extends Activity {
         refreshThemeBrowserList();
     }
 
-    private void addHomeMenuRow(final HomeMenuConfig.Entry entry, final int idx) {
+    private LinearLayout.LayoutParams homeMenuRowLayoutParams() {
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                isFullWidthMenus ? LinearLayout.LayoutParams.MATCH_PARENT : y1ActiveRowWidthPx(),
+                y1RowHeightPx);
+        lp.setMargins(0, 1, 0, 1);
+        return lp;
+    }
+
+    private FrameLayout createHomeMenuRow(final HomeMenuConfig.Entry entry, final int idx) {
         FrameLayout row = createHomeMenuRowShell(y1HomeArrowExtraInsetPx());
         TextView label = (TextView) row.getTag(HOME_MENU_TAG_LABEL);
         ImageView arrow = (ImageView) row.getTag(HOME_MENU_TAG_ARROW);
@@ -5965,14 +5996,10 @@ public class MainActivity extends Activity {
             }
         });
         applyY1ListRowStyle(row, idx == focusedHomeMenuIndex, label, null, arrow, Y1_ROW_HOME);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                isFullWidthMenus ? LinearLayout.LayoutParams.MATCH_PARENT : y1ActiveRowWidthPx(),
-                y1RowHeightPx);
-        lp.setMargins(0, 1, 0, 1);
-        containerHomeMenuItems.addView(row, lp);
+        return row;
     }
 
-    private void addHomeMoreTileRow(final int idx) {
+    private FrameLayout createHomeMoreTileRow(final int idx) {
         FrameLayout row = createHomeMenuRowShell(y1HomeArrowExtraInsetPx());
         TextView label = (TextView) row.getTag(HOME_MENU_TAG_LABEL);
         ImageView arrow = (ImageView) row.getTag(HOME_MENU_TAG_ARROW);
@@ -5999,11 +6026,7 @@ public class MainActivity extends Activity {
             }
         });
         applyY1ListRowStyle(row, idx == focusedHomeMenuIndex, label, null, arrow, Y1_ROW_HOME);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                isFullWidthMenus ? LinearLayout.LayoutParams.MATCH_PARENT : y1ActiveRowWidthPx(),
-                y1RowHeightPx);
-        lp.setMargins(0, 1, 0, 1);
-        containerHomeMenuItems.addView(row, lp);
+        return row;
     }
 
     /** Home list host has no outer padding — nudge selection arrows left so they are not clipped. */
@@ -8113,7 +8136,6 @@ public class MainActivity extends Activity {
             if (growing != null) {
                 deezerActiveGrowingFile = growing;
                 reachGrowingCacheFile = growing;
-                reachGrowingPreparedBytes = growing.length();
             }
             long nowUi = android.os.SystemClock.uptimeMillis();
             boolean throttled = nowUi - deezerLastProgressUiMs < 150
@@ -8646,26 +8668,25 @@ public class MainActivity extends Activity {
     }
 
     private void connectToWifi() {
-        performWifiConnection(targetWifiSsid, typedPassword, isTargetWifiOpen);
-        changeScreen(STATE_WIFI);
+        final String ssid = targetWifiSsid;
+        final String password = typedPassword;
+        final boolean open = isTargetWifiOpen;
+        Toast.makeText(this, getString(R.string.toast_wifi_connecting, ssid), Toast.LENGTH_SHORT).show();
+        WifiConnector.connect(this, ssid, password, open, new WifiConnector.Callback() {
+            @Override
+            public void onComplete(boolean success) {
+                if (!success) {
+                    Toast.makeText(MainActivity.this, getString(R.string.toast_wifi_connect_failed),
+                            Toast.LENGTH_SHORT).show();
+                }
+                changeScreen(STATE_WIFI);
+            }
+        });
     }
 
     private void performWifiConnection(String ssid, String password, boolean open) {
         Toast.makeText(this, getString(R.string.toast_wifi_connecting, ssid), Toast.LENGTH_SHORT).show();
-        WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
-        if (wm == null) return;
-        WifiConfiguration conf = new WifiConfiguration();
-        conf.SSID = "\"" + ssid + "\"";
-        if (open) {
-            conf.allowedKeyManagement.set(WifiConfiguration.KeyMgmt.NONE);
-        } else {
-            conf.preSharedKey = "\"" + password + "\"";
-        }
-        int netId = wm.addNetwork(conf);
-        wm.disconnect();
-        wm.enableNetwork(netId, true);
-        wm.reconnect();
-        wm.saveConfiguration();
+        WifiConnector.connect(this, ssid, password, open, wifiConnectResultCallback());
     }
 
     private boolean isWifiNetworkOpen(String capabilities) {
@@ -8688,8 +8709,30 @@ public class MainActivity extends Activity {
     }
 
     @android.annotation.SuppressLint("MissingPermission")
+    private void rebuildWifiScanCache() {
+        try {
+            WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+            applyWifiScanCache(wm != null ? wm.getScanResults() : null);
+        } catch (Exception e) {
+            SolarLog.w("MainActivity", "rebuildWifiScanCache: " + e.getMessage());
+        }
+    }
+
+    private void applyWifiScanCache(List<ScanResult> results) {
+        wifiScanCacheBySsid.clear();
+        if (results == null) return;
+        for (ScanResult result : results) {
+            if (result.SSID != null && !result.SSID.isEmpty()) {
+                wifiScanCacheBySsid.put(result.SSID, result);
+            }
+        }
+    }
+
+    @android.annotation.SuppressLint("MissingPermission")
     private int wifiRssiForSsid(String ssid) {
         if (ssid == null || ssid.isEmpty()) return -100;
+        ScanResult cached = wifiScanCacheBySsid.get(ssid);
+        if (cached != null) return cached.level;
         try {
             WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
             if (wm == null) return -100;
@@ -9272,6 +9315,7 @@ public class MainActivity extends Activity {
             return;
 
         if (results != null) {
+            applyWifiScanCache(results);
             foundWifiNetworks.clear();
             WifiManager manager = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
             WifiInfo wifiInfo = manager.getConnectionInfo();
@@ -9329,28 +9373,10 @@ public class MainActivity extends Activity {
                     return;
                 }
 
-                WifiManager manager = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
-                boolean isSaved = false;
-                int savedNetId = -1;
-                try {
-                    List<WifiConfiguration> configuredNetworks = manager.getConfiguredNetworks();
-                    if (configuredNetworks != null) {
-                        for (WifiConfiguration conf : configuredNetworks) {
-                            if (conf.SSID != null && conf.SSID.equals("\"" + ssid + "\"")) {
-                                isSaved = true;
-                                savedNetId = conf.networkId;
-                                break;
-                            }
-                        }
-                    }
-                } catch (Exception e) {
-                }
-
-                if (isSaved && savedNetId != -1) {
+                if (WifiConnector.findSavedNetId(
+                        wifiManagerConfiguredNetworks(), ssid) >= 0) {
                     Toast.makeText(MainActivity.this, getString(R.string.toast_wifi_saved_connecting), Toast.LENGTH_SHORT).show();
-                    manager.disconnect();
-                    manager.enableNetwork(savedNetId, true);
-                    manager.reconnect();
+                    WifiConnector.connectSaved(MainActivity.this, ssid, wifiConnectResultCallback());
                 } else if (isOpen) {
                     performWifiConnection(ssid, "", true);
                 } else {
@@ -12237,6 +12263,7 @@ public class MainActivity extends Activity {
         if (resetFocus && isWifiContextExpanded()) {
             scheduleWifiContextScanFollowUps();
         }
+        rebuildWifiScanCache();
         String focusLabel = !resetFocus && themedContextMenu != null
                 ? themedContextMenu.focusItemLabel() : null;
         java.util.ArrayList<String> connected = new java.util.ArrayList<String>();
@@ -12360,45 +12387,47 @@ public class MainActivity extends Activity {
     }
 
     private void connectWifiFromContextMenu(final String ssid) {
+        if (WifiConnector.findSavedNetId(wifiManagerConfiguredNetworks(), ssid) >= 0) {
+            Toast.makeText(this, getString(R.string.toast_wifi_saved_connecting), Toast.LENGTH_SHORT).show();
+            WifiConnector.connectSaved(this, ssid, wifiConnectResultCallback());
+            return;
+        }
+        String caps = wifiCapabilitiesForSsid(ssid);
+        if (isWifiNetworkOpen(caps)) {
+            performWifiConnection(ssid, "", true);
+            return;
+        }
+        dismissThemedContextMenu();
+        isTargetWifiOpen = false;
+        keyboardReturnState = currentScreenState;
+        openWifiKeyboard(ssid);
+    }
+
+    @android.annotation.SuppressLint("MissingPermission")
+    private List<WifiConfiguration> wifiManagerConfiguredNetworks() {
         try {
-            WifiManager manager = (WifiManager) getApplicationContext()
-                    .getSystemService(Context.WIFI_SERVICE);
-            if (manager == null) return;
-            boolean isSaved = false;
-            int savedNetId = -1;
-            java.util.List<WifiConfiguration> configured = manager.getConfiguredNetworks();
-            if (configured != null) {
-                for (WifiConfiguration conf : configured) {
-                    if (conf.SSID != null && conf.SSID.equals("\"" + ssid + "\"")) {
-                        isSaved = true;
-                        savedNetId = conf.networkId;
-                        break;
-                    }
+            WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+            return wm != null ? wm.getConfiguredNetworks() : null;
+        } catch (Exception e) {
+            SolarLog.e("MainActivity", "getConfiguredNetworks", e);
+            return null;
+        }
+    }
+
+    private WifiConnector.Callback wifiConnectResultCallback() {
+        return new WifiConnector.Callback() {
+            @Override
+            public void onComplete(boolean success) {
+                if (!success) {
+                    Toast.makeText(MainActivity.this, getString(R.string.toast_wifi_connect_failed),
+                            Toast.LENGTH_SHORT).show();
                 }
-            }
-            if (isSaved && savedNetId != -1) {
-                Toast.makeText(MainActivity.this,
-                        getString(R.string.toast_wifi_saved_connecting),
-                        Toast.LENGTH_SHORT).show();
-                manager.disconnect();
-                manager.enableNetwork(savedNetId, true);
-                manager.reconnect();
-                collectWifiNetworksFromScan();
-                refreshContextWifiTier(false);
-            } else {
-                String caps = wifiCapabilitiesForSsid(ssid);
-                if (isWifiNetworkOpen(caps)) {
-                    performWifiConnection(ssid, "", true);
-                    collectWifiNetworksFromScan();
-                    refreshContextWifiTier(false);
-                } else {
-                    dismissThemedContextMenu();
-                    isTargetWifiOpen = false;
-                    keyboardReturnState = currentScreenState;
-                    openWifiKeyboard(ssid);
+                if (currentScreenState == STATE_WIFI) {
+                    startWifiScan();
                 }
+                scheduleContextWifiRefresh(false);
             }
-        } catch (Exception ignored) {}
+        };
     }
 
     @android.annotation.SuppressLint("MissingPermission")
@@ -13923,6 +13952,10 @@ public class MainActivity extends Activity {
 
     private String wifiCapabilitiesForSsid(String ssid) {
         if (ssid == null || ssid.isEmpty()) return "";
+        ScanResult cached = wifiScanCacheBySsid.get(ssid);
+        if (cached != null) {
+            return cached.capabilities != null ? cached.capabilities : "";
+        }
         try {
             WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
             java.util.List<ScanResult> results = wm != null ? wm.getScanResults() : null;
@@ -13930,7 +13963,9 @@ public class MainActivity extends Activity {
             for (ScanResult result : results) {
                 if (ssid.equals(result.SSID)) return result.capabilities != null ? result.capabilities : "";
             }
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            SolarLog.w("MainActivity", "wifiCapabilitiesForSsid: " + e.getMessage());
+        }
         return "";
     }
 
@@ -22336,36 +22371,25 @@ public class MainActivity extends Activity {
 
     private boolean isWifiNetworkSaved(String ssid) {
         if (ssid == null) return false;
-        try {
-            WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
-            List<WifiConfiguration> configs = wm != null ? wm.getConfiguredNetworks() : null;
-            if (configs == null) return false;
-            for (WifiConfiguration conf : configs) {
-                if (conf.SSID != null && conf.SSID.equals("\"" + ssid + "\"")) return true;
-            }
-        } catch (Exception ignored) {}
-        return false;
+        return WifiConnector.findSavedNetId(wifiManagerConfiguredNetworks(), ssid) >= 0;
     }
 
     private void forgetWifiNetwork(String ssid) {
         if (ssid == null) return;
-        try {
-            WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
-            if (wm == null) return;
-            List<WifiConfiguration> configs = wm.getConfiguredNetworks();
-            if (configs == null) return;
-            for (WifiConfiguration conf : configs) {
-                if (conf.SSID != null && conf.SSID.equals("\"" + ssid + "\"")) {
-                    wm.removeNetwork(conf.networkId);
-                    wm.saveConfiguration();
-                    Toast.makeText(this, getString(R.string.toast_wifi_forgotten, ssid), Toast.LENGTH_SHORT).show();
+        WifiConnector.forget(this, ssid, new WifiConnector.Callback() {
+            @Override
+            public void onComplete(boolean success) {
+                if (success) {
+                    Toast.makeText(MainActivity.this, getString(R.string.toast_wifi_forgotten, ssid),
+                            Toast.LENGTH_SHORT).show();
                     if (currentScreenState == STATE_WIFI) startWifiScan();
-                    return;
+                    scheduleContextWifiRefresh(false);
+                } else {
+                    Toast.makeText(MainActivity.this, getString(R.string.toast_wifi_forget_failed),
+                            Toast.LENGTH_SHORT).show();
                 }
             }
-        } catch (Exception e) {
-            Toast.makeText(this, getString(R.string.toast_wifi_forget_failed), Toast.LENGTH_SHORT).show();
-        }
+        });
     }
 
     private void forgetBluetoothDevice(final BluetoothDevice device) {
@@ -23968,7 +23992,6 @@ public class MainActivity extends Activity {
                         startReachPlayFromPartial(partialFile);
                     } else if (action == SOULSEEK_ACTION_PLAY && reachPartialPlaybackStarted) {
                         reachGrowingCacheFile = partialFile;
-                        reachGrowingPreparedBytes = partialFile.length();
                         updateReachGrowingDurationUi();
                         tryReachId3FromPartial(partialFile);
                     } else if (action == SOULSEEK_ACTION_QUEUE && reachQueuePartialFile == null) {
@@ -24469,6 +24492,8 @@ public class MainActivity extends Activity {
         final int gen = getMusicSearchGen;
         getMusicSearchInProgress = true;
         getMusicDeezerDone = false;
+        getMusicDeezerTracksReady = false;
+        getMusicDeezerArtistsFetched = false;
         getMusicReachDone = false;
         getMusicDeezerError = null;
         getMusicResultsVisibleCount = GET_MUSIC_PAGE_SIZE;
@@ -24501,8 +24526,6 @@ public class MainActivity extends Activity {
             }
             new Thread(new Runnable() {
                 @Override public void run() {
-                    List<DeezerResult> foundTracks = new ArrayList<DeezerResult>();
-                    List<DeezerSearch.DeezerArtist> foundArtists = new ArrayList<DeezerSearch.DeezerArtist>();
                     String errorMsg = null;
                     try {
                         DeezerClient c = new DeezerClient(prefs);
@@ -24511,37 +24534,75 @@ public class MainActivity extends Activity {
                                 if (c.initSession()) ConnectivityHelper.setDeezerLoginOk(true);
                             } catch (Exception ignored) {}
                         }
-                        DeezerSearch search = new DeezerSearch(c);
-                        foundArtists = search.searchArtists(soulseekLastQuery);
-                        foundTracks = search.searchTracks(soulseekLastQuery);
+                        final DeezerSearch search = new DeezerSearch(c);
+                        Thread tracksThread = new Thread(new Runnable() {
+                            @Override public void run() {
+                                List<DeezerResult> foundTracks = new ArrayList<DeezerResult>();
+                                String err = null;
+                                try {
+                                    foundTracks = search.searchTracks(soulseekLastQuery);
+                                } catch (Exception e) {
+                                    err = e.getMessage() != null ? e.getMessage() : "Error";
+                                }
+                                final List<DeezerResult> ff = foundTracks;
+                                final String trackErr = err;
+                                runOnUiThread(new Runnable() {
+                                    @Override public void run() {
+                                        if (gen != getMusicSearchGen) return;
+                                        applyGetMusicDeezerTracksUi(gen, ff, trackErr);
+                                        maybeCompleteGetMusicDeezerSearch(gen);
+                                    }
+                                });
+                            }
+                        }, "GetMusicDzTracks");
+                        Thread artistsThread = new Thread(new Runnable() {
+                            @Override public void run() {
+                                List<DeezerSearch.DeezerArtist> foundArtists =
+                                        new ArrayList<DeezerSearch.DeezerArtist>();
+                                String err = null;
+                                try {
+                                    foundArtists = search.searchArtists(soulseekLastQuery);
+                                } catch (Exception e) {
+                                    err = e.getMessage() != null ? e.getMessage() : "Error";
+                                }
+                                final List<DeezerSearch.DeezerArtist> fa = foundArtists;
+                                final String artistErr = err;
+                                runOnUiThread(new Runnable() {
+                                    @Override public void run() {
+                                        if (gen != getMusicSearchGen) return;
+                                        getMusicDeezerArtists.clear();
+                                        getMusicDeezerArtists.addAll(fa);
+                                        getMusicDeezerArtistsFetched = true;
+                                        if (artistErr != null) getMusicDeezerError = artistErr;
+                                        if (getMusicDeezerTracksReady) {
+                                            refreshGetMusicResultsVisible(true);
+                                        }
+                                        maybeCompleteGetMusicDeezerSearch(gen);
+                                    }
+                                });
+                            }
+                        }, "GetMusicDzArtists");
+                        tracksThread.start();
+                        artistsThread.start();
                     } catch (Exception e) {
                         errorMsg = e.getMessage() != null ? e.getMessage() : "Error";
-                    }
-                    final List<DeezerResult> ff = foundTracks;
-                    final List<DeezerSearch.DeezerArtist> fa = foundArtists;
-                    final String err = errorMsg;
-                    runOnUiThread(new Runnable() {
-                        @Override public void run() {
-                            if (gen != getMusicSearchGen) return;
-                            getMusicDeezerResults.clear();
-                            getMusicDeezerResults.addAll(ff);
-                            getMusicDeezerArtists.clear();
-                            getMusicDeezerArtists.addAll(fa);
-                            getMusicDeezerDedupeKeys = GetMusicSearch.deezerDedupeKeys(ff);
-                            for (DeezerResult r : ff) {
-                                getMusicEntries.add(MusicSearchEntry.deezer(r));
+                        final String err = errorMsg;
+                        runOnUiThread(new Runnable() {
+                            @Override public void run() {
+                                if (gen != getMusicSearchGen) return;
+                                applyGetMusicDeezerTracksUi(gen, new ArrayList<DeezerResult>(), err);
+                                getMusicDeezerArtists.clear();
+                                getMusicDeezerArtistsFetched = true;
+                                maybeCompleteGetMusicDeezerSearch(gen);
                             }
-                            getMusicDeezerDone = true;
-                            getMusicDeezerError = err;
-                            updateGetMusicSearchStatusRow();
-                            appendGetMusicResultRowsInner();
-                            maybeFinishGetMusicSearch(gen);
-                        }
-                    });
+                        });
+                    }
                 }
             }, "GetMusicDeezer").start();
         } else {
             getMusicDeezerDone = true;
+            getMusicDeezerTracksReady = true;
+            getMusicDeezerArtistsFetched = true;
         }
 
         if (wantReachSearch) {
@@ -24565,7 +24626,7 @@ public class MainActivity extends Activity {
         soulseekSearchInProgress = false;
         getMusicTopLevelEntries.clear();
         getMusicTopLevelEntries.addAll(
-                GetMusicSearch.organizeWithContainers(getMusicDeezerArtists, getMusicEntries));
+                organizeGetMusicResults(getMusicDeezerArtists, getMusicEntries));
         getMusicBrowseContainer = null;
         getMusicEntryUiCount = 0;
         refreshGetMusicResultsVisible(true);
@@ -24584,7 +24645,48 @@ public class MainActivity extends Activity {
         if (!getMusicSearchInProgress && !getMusicTopLevelEntries.isEmpty()) {
             return getMusicTopLevelEntries;
         }
-        return getMusicEntries;
+        return organizeGetMusicResults(getMusicDeezerArtists, getMusicEntries);
+    }
+
+    /** Deezer-first when both sources are active; round-robin within each catalog. */
+    private List<MusicSearchEntry> organizeGetMusicResults(
+            List<DeezerSearch.DeezerArtist> artists, List<MusicSearchEntry> flat) {
+        if (getMusicHasBothSearchSources()) {
+            return GetMusicSearch.organizeUnifiedDeezerFirst(artists, flat);
+        }
+        return GetMusicSearch.organizeWithContainers(artists, flat);
+    }
+
+    private void removeDeezerEntriesFromGetMusic() {
+        java.util.Iterator<MusicSearchEntry> it = getMusicEntries.iterator();
+        while (it.hasNext()) {
+            if (it.next().source == MusicSearchEntry.Source.DEEZER) it.remove();
+        }
+    }
+
+    /** Apply Deezer track hits as soon as the API returns — before artist search finishes. */
+    private void applyGetMusicDeezerTracksUi(final int gen, List<DeezerResult> tracks, String err) {
+        if (gen != getMusicSearchGen) return;
+        removeDeezerEntriesFromGetMusic();
+        getMusicDeezerResults.clear();
+        if (tracks != null) getMusicDeezerResults.addAll(tracks);
+        getMusicDeezerDedupeKeys = GetMusicSearch.deezerDedupeKeys(getMusicDeezerResults);
+        for (DeezerResult r : getMusicDeezerResults) {
+            getMusicEntries.add(MusicSearchEntry.deezer(r));
+        }
+        getMusicDeezerTracksReady = true;
+        if (err != null) getMusicDeezerError = err;
+        updateGetMusicSearchStatusRow();
+        refreshGetMusicResultsVisible(true);
+    }
+
+    private void maybeCompleteGetMusicDeezerSearch(int gen) {
+        if (gen != getMusicSearchGen || getMusicDeezerDone) return;
+        if (!getMusicDeezerTracksReady || !getMusicDeezerArtistsFetched) return;
+        getMusicDeezerDone = true;
+        updateGetMusicSearchStatusRow();
+        refreshGetMusicResultsVisible(true);
+        maybeFinishGetMusicSearch(gen);
     }
 
     private void refreshGetMusicResultsVisible(boolean fullRebuild) {
@@ -24836,7 +24938,7 @@ public class MainActivity extends Activity {
         } else {
             getMusicTopLevelEntries.clear();
             getMusicTopLevelEntries.addAll(
-                    GetMusicSearch.organizeWithContainers(getMusicDeezerArtists, getMusicEntries));
+                    organizeGetMusicResults(getMusicDeezerArtists, getMusicEntries));
             getMusicBrowseContainer = null;
             updateReachBrowserHint(R.string.get_music_hint_results);
             appendGetMusicResultRowsInner();
@@ -24985,8 +25087,10 @@ public class MainActivity extends Activity {
         for (SoulseekClient.Result r : reachOnly) {
             mergeGetMusicReachResult(r);
         }
+        // ponytail: hold Reach rows until Deezer tracks land so catalog hits paint first.
+        if (getMusicDeezerSearchActive() && !getMusicDeezerTracksReady) return;
         if (getMusicSearchInProgress) {
-            appendGetMusicResultRowsInner();
+            refreshGetMusicResultsVisible(true);
         }
     }
 
@@ -26312,9 +26416,20 @@ public class MainActivity extends Activity {
             try {
                 int mpDur = mediaPlayer.getDuration();
                 int tagDur = reachStreamTagDurationMs();
-                if (tagDur > mpDur + 1500 || mpDur <= 0) {
+                if (!reachGrowingFinalReprepareDone
+                        || tagDur > mpDur + 1500 || mpDur <= 0) {
                     progressHandler.postDelayed(reachGrowingEdgePoll, 200);
                 } else {
+                    // #region agent log
+                    try {
+                        org.json.JSONObject d = new org.json.JSONObject();
+                        d.put("mpDur", mpDur);
+                        d.put("tagDur", tagDur);
+                        d.put("fileLen", reachGrowingCacheFile.length());
+                        DebugAgentLog.log(this, "MainActivity.markReachGrowingDownloadComplete",
+                                "stopped edge poll — tagDur ~ mpDur", "H-B", d);
+                    } catch (Exception ignored) {}
+                    // #endregion
                     progressHandler.removeCallbacks(reachGrowingEdgePoll);
                 }
             } catch (Exception ignored) {
@@ -26334,6 +26449,14 @@ public class MainActivity extends Activity {
     private void maybeExtendReachGrowingPlayback(final boolean force) {
         if (!playback.isMusicActive() || reachGrowingCacheFile == null || !reachGrowingCacheFile.isFile()) return;
         if (reachGrowingReprepareInFlight) {
+            // #region agent log
+            try {
+                org.json.JSONObject d = new org.json.JSONObject();
+                d.put("force", force);
+                DebugAgentLog.log(this, "MainActivity.maybeExtendReachGrowingPlayback",
+                        "blocked: reprepare in flight", "H-D", d);
+            } catch (Exception ignored) {}
+            // #endregion
             progressHandler.postDelayed(reachGrowingEdgePoll, 250);
             return;
         }
@@ -26353,17 +26476,44 @@ public class MainActivity extends Activity {
             }
         } catch (Exception ignored) {}
         long growth = fileLen - reachGrowingPreparedBytes;
-        // ponytail: at 100% do not reset MediaPlayer mid-track — only re-prepare at buffered decode edge.
+        // ponytail: at 100% re-prepare once so MediaPlayer decodes the finalized file.
         if (!reachDownloadInProgress()) {
-            reachGrowingPreparedBytes = fileLen;
             if (force) {
+                if (reachGrowingFinalReprepareDone) return;
                 markReachGrowingDownloadComplete();
-            }
-            if (playing && durationMs > 0 && positionMs < durationMs - REACH_GROWING_EXTEND_MS) {
-                return;
-            }
-            if (!playing && growth <= 0) {
-                return;
+            } else {
+                reachGrowingPreparedBytes = fileLen;
+                if (playing && durationMs > 0 && positionMs < durationMs - REACH_GROWING_EXTEND_MS) {
+                    // #region agent log
+                    try {
+                        org.json.JSONObject d = new org.json.JSONObject();
+                        d.put("force", force);
+                        d.put("positionMs", positionMs);
+                        d.put("durationMs", durationMs);
+                        d.put("growth", growth);
+                        d.put("fileLen", fileLen);
+                        d.put("prepared", reachGrowingPreparedBytes);
+                        d.put("tagDur", reachStreamTagDurationMs());
+                        d.put("decodeEdge", reachGrowingDecodeEdgeMs());
+                        d.put("finalDone", reachGrowingFinalReprepareDone);
+                        DebugAgentLog.log(this, "MainActivity.maybeExtendReachGrowingPlayback",
+                                "early return: mid-track at 100%", "H-A", d);
+                    } catch (Exception ignored) {}
+                    // #endregion
+                    return;
+                }
+                if (!playing && growth <= 0) {
+                    // #region agent log
+                    try {
+                        org.json.JSONObject d = new org.json.JSONObject();
+                        d.put("force", force);
+                        d.put("growth", growth);
+                        DebugAgentLog.log(this, "MainActivity.maybeExtendReachGrowingPlayback",
+                                "early return: not playing, no growth", "H-C", d);
+                    } catch (Exception ignored) {}
+                    // #endregion
+                    return;
+                }
             }
         }
         final int decodeEdgeMs = reachGrowingDecodeEdgeMs();
@@ -26452,8 +26602,7 @@ public class MainActivity extends Activity {
                             maybeExtendReachGrowingPlayback(true);
                             return;
                         }
-                        if (!reachGrowingFinalReprepareDone && shouldReprepareReachGrowingAtEnd(mp)) {
-                            reachGrowingFinalReprepareDone = true;
+                        if (!reachGrowingFinalReprepareDone) {
                             int pos = 0;
                             try {
                                 pos = mp.getCurrentPosition();
@@ -26463,6 +26612,18 @@ public class MainActivity extends Activity {
                             maybeExtendReachGrowingPlayback(true);
                             return;
                         }
+                        // #region agent log
+                        try {
+                            org.json.JSONObject d = new org.json.JSONObject();
+                            d.put("finalDone", reachGrowingFinalReprepareDone);
+                            d.put("shouldReprepare", shouldReprepareReachGrowingAtEnd(mp));
+                            d.put("pos", mp.getCurrentPosition());
+                            d.put("dur", mp.getDuration());
+                            d.put("fileLen", reachGrowingCacheFile.length());
+                            DebugAgentLog.log(MainActivity.this, "MainActivity.reachOnCompletion",
+                                    "nextTrack — no extend", "H-E", d);
+                        } catch (Exception ignored) {}
+                        // #endregion
                     }
                     nextTrack();
                 }
@@ -26505,6 +26666,9 @@ public class MainActivity extends Activity {
                     if (reachGrowingCacheFile != null
                             && DeezerCache.isTempFile(streamAppCacheRoot(), reachGrowingCacheFile)) {
                         applyDeezerStreamMetadata(reachGrowingCacheFile, reachDownloadInProgress());
+                    }
+                    if (!reachDownloadInProgress()) {
+                        reachGrowingFinalReprepareDone = true;
                     }
                     if (reachDownloadInProgress()) {
                         progressHandler.postDelayed(reachGrowingEdgePoll, 150);
@@ -29453,16 +29617,7 @@ public class MainActivity extends Activity {
         if (Y1InputKeys.isBackKey(keyCode)) {
             return handleBackKeyDown(event);
         }
-        // Side prev/next — horizontal quick-bar navigation (was swallowed, leaving focus on the list).
-        if (Y1InputKeys.isTrackPreviousKey(keyCode) || Y1InputKeys.isTrackNextKey(keyCode)) {
-            int horiz = Y1InputKeys.isTrackNextKey(keyCode) ? 22 : 21;
-            if (themedContextMenu.handleKeyHorizontal(horiz)) {
-                syncContextVolumeSliderWithFocus();
-                clickFeedback();
-                return true;
-            }
-        }
-        // ponytail: wheel navigates the modal; transport keys fall through to playback handlers.
+        // ponytail: Y1 side prev/next (21/22/87/88) are transport — wheel navigates quick bar.
         if (isMediaPlayPauseKey(keyCode) || isMediaSkipKey(keyCode)) {
             return false;
         }

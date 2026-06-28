@@ -5,6 +5,6 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 SRC="$ROOT/solar-rom/scripts"
 DST="$ROOT/app/src/main/assets/y1"
 mkdir -p "$DST"
-for f in switch-to-stock.sh switch-to-rockbox.sh sync-rockbox-libs.sh sync-y1-keymap.sh Y1-Rockbox.kl; do
+for f in switch-to-stock.sh switch-to-rockbox.sh sync-rockbox-libs.sh sync-y1-keymap.sh disable-rockbox-for-solar.sh Y1-Rockbox.kl; do
     cp "$SRC/$f" "$DST/$f"
 done

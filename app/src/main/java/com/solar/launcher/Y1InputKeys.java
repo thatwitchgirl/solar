@@ -3,8 +3,8 @@ package com.solar.launcher;
 import android.view.KeyEvent;
 
 /**
- * Y1 keys under {@code Y1-Rockbox.kl} (Generic.kl) — matches RockboxFramebuffer scroll keys
- * MEDIA_PLAY/PAUSE (126/127) on mtk-tpd-kpd wheel scancodes 105/106.
+ * Y1 hardware keys — InputReader uses Generic.kl for mtk-kpd/mtk-tpd-kpd on Y1 firmware.
+ * wheel 105/106 → MEDIA_PLAY/PAUSE (126/127); side 165/163 → MEDIA_PREVIOUS/NEXT (88/87).
  */
 public final class Y1InputKeys {
 
@@ -42,16 +42,14 @@ public final class Y1InputKeys {
         return keyCode == KEY_WHEEL_DOWN || keyCode == 127;
     }
 
-    /** Side previous — Y1-Rockbox.kl scancode 165 → DPAD_LEFT (21); Rockbox-y1 transport key. */
+    /** Side previous — mtk-kpd scancode 165 → MEDIA_PREVIOUS (88). */
     public static boolean isTrackPreviousKey(int keyCode) {
-        return keyCode == KeyEvent.KEYCODE_DPAD_LEFT || keyCode == 21
-                || keyCode == KEY_TRACK_PREV || keyCode == 88;
+        return keyCode == KEY_TRACK_PREV || keyCode == 88;
     }
 
-    /** Side next — Y1-Rockbox.kl scancode 163 → DPAD_RIGHT (22); Rockbox-y1 transport key. */
+    /** Side next — mtk-kpd scancode 163 → MEDIA_NEXT (87). */
     public static boolean isTrackNextKey(int keyCode) {
-        return keyCode == KeyEvent.KEYCODE_DPAD_RIGHT || keyCode == 22
-                || keyCode == KEY_TRACK_NEXT || keyCode == 87;
+        return keyCode == KEY_TRACK_NEXT || keyCode == 87;
     }
 
     public static boolean isWheelKey(int keyCode) {
@@ -74,7 +72,7 @@ public final class Y1InputKeys {
         return isWheelDown(keyCode);
     }
 
-    /** Discrete skip from AVRCP.kl — not Y1 side keys (21/22). */
+    /** Discrete skip from AVRCP.kl — same keycodes as Y1 side keys (87/88). */
     public static boolean isAvrcpSkipNext(int keyCode) {
         return keyCode == KEY_TRACK_NEXT || keyCode == 87;
     }
@@ -87,7 +85,7 @@ public final class Y1InputKeys {
         return isAvrcpSkipNext(keyCode) || isAvrcpSkipPrevious(keyCode);
     }
 
-    /** Keycodes BT remotes may send via AVRCP.kl or ACTION_MEDIA_BUTTON (not hardware 21/22). */
+    /** Keycodes BT remotes may send via AVRCP.kl or ACTION_MEDIA_BUTTON. */
     public static boolean isAvrcpMediaTransportKeyCode(int keyCode) {
         return isDiscreteMediaPlay(keyCode) || isDiscreteMediaPause(keyCode)
                 || keyCode == KeyEvent.KEYCODE_MEDIA_STOP || keyCode == 86
@@ -120,7 +118,9 @@ public final class Y1InputKeys {
         if (wheelMenuDelta(127) != 1) throw new AssertionError("wheel MEDIA_PAUSE");
         if (wheelMenuDelta(88) != 0) throw new AssertionError("track prev not wheel");
         if (wheelMenuDelta(87) != 0) throw new AssertionError("track next not wheel");
-        if (!isTrackPreviousKey(21)) throw new AssertionError("track prev dpad");
-        if (!isTrackNextKey(22)) throw new AssertionError("track next dpad");
+        if (!isTrackPreviousKey(88)) throw new AssertionError("track prev media");
+        if (!isTrackNextKey(87)) throw new AssertionError("track next media");
+        if (isTrackPreviousKey(21)) throw new AssertionError("dpad left not track prev");
+        if (isTrackNextKey(22)) throw new AssertionError("dpad right not track next");
     }
 }
