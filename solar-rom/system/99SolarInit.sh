@@ -32,21 +32,15 @@ fi
 if [ -f /system/etc/solar/sync-y1-keymap.sh ]; then
     sh /system/etc/solar/sync-y1-keymap.sh
 fi
+# ponytail: side keys live in mtk-kpd — mtk-tpd-kpd must mirror it (not Y1-Rockbox DPAD 21/22).
+if [ -f /system/usr/keylayout/mtk-kpd.kl ]; then
+    cp /system/usr/keylayout/mtk-kpd.kl /system/usr/keylayout/mtk-tpd-kpd.kl
+    chmod 644 /system/usr/keylayout/mtk-tpd-kpd.kl
+fi
 
-# First boot after Solar ROM flash: Solar is HOME, Rockbox disabled until user switches.
-# ponytail: marker skipped on reflash (build-rom wipes it); skipped after first run so Rockbox survives reboot.
-SOLAR_HOME_MARKER=/data/data/.solar_rom_home_ready
-if [ ! -f "$SOLAR_HOME_MARKER" ]; then
-    i=0
-    while [ "$i" -lt 90 ]; do
-        [ "$(getprop sys.boot_completed)" = "1" ] && break
-        sleep 1
-        i=$((i + 1))
-    done
-    pm enable com.solar.launcher 2>/dev/null
-    pm disable org.rockbox 2>/dev/null
-    touch "$SOLAR_HOME_MARKER"
-    log -p i -t SolarInit "first boot: Solar default launcher, Rockbox disabled"
+# First boot after Solar ROM flash: disable Rockbox once (Solar is HOME until user switches).
+if [ -f /system/etc/solar/disable-rockbox-for-solar.sh ]; then
+    sh /system/etc/solar/disable-rockbox-for-solar.sh
 fi
 
 if [ ! -f /system/lib/libconscrypt_jni.so ]; then

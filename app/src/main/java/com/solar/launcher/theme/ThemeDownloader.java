@@ -539,7 +539,7 @@ public class ThemeDownloader {
         File themesRoot = new File(ThemeManager.themesRoot());
         for (String rel : expected) {
             File f = resolveAssetFile(themesRoot, themeDir, catalogFolder, rel);
-            if (!f.isFile() || f.length() == 0) missing.add(rel);
+            if (f == null || !f.isFile() || f.length() == 0) missing.add(rel);
         }
         return missing;
     }
@@ -583,20 +583,32 @@ public class ThemeDownloader {
         }
     }
 
+    /** Local install path for a gallery-relative asset (creates parent dirs on write). */
+    static File resolveAssetOutputFile(File themeDir, String catalogFolder, String galleryRel) {
+        if (galleryRel == null || galleryRel.isEmpty() || themeDir == null) return null;
+        if (galleryRel.contains("..")) return null;
+        if (catalogFolder != null && !catalogFolder.isEmpty()
+                && galleryRel.startsWith(catalogFolder + "/")) {
+            return new File(themeDir, galleryRel.substring(catalogFolder.length() + 1));
+        }
+        String rel = galleryRel.replace('\\', '/');
+        if (rel.contains("/")) {
+            return new File(themeDir, rel.substring(rel.lastIndexOf('/') + 1));
+        }
+        return new File(themeDir, rel);
+    }
+
+    /** Resolve an on-disk asset for reads / completeness checks (flat variant layout fallback). */
     static File resolveAssetFile(File themesRoot, File themeDir, String catalogFolder, String galleryRel) {
         if (galleryRel == null || galleryRel.isEmpty() || themeDir == null) return null;
         // ponytail: never load sibling theme assets from themesRoot — active theme folder only.
         if (galleryRel.contains("..")) return null;
-        if (catalogFolder != null && !catalogFolder.isEmpty()
-                && galleryRel.startsWith(catalogFolder + "/")) {
-            File f = new File(themeDir, galleryRel.substring(catalogFolder.length() + 1));
-            return f.isFile() ? f : null;
-        }
-        File exact = new File(themeDir, galleryRel);
-        if (exact.isFile()) return exact;
+        File out = resolveAssetOutputFile(themeDir, catalogFolder, galleryRel);
+        if (out != null && out.isFile() && out.length() > 0) return out;
         String name = new File(galleryRel.replace('\\', '/')).getName();
         File byName = new File(themeDir, name);
-        return byName.isFile() ? byName : null;
+        if (byName.isFile() && byName.length() > 0) return byName;
+        return out;
     }
 
     public static Set<String> missingAssets(String folderName) throws Exception {
@@ -911,7 +923,6 @@ public class ThemeDownloader {
             int done = 0;
             int skipped = 0;
             dlLog("asset pass 1/2 count=" + total);
-            final File themesRoot = new File(ThemeManager.themesRoot());
             for (String rel : assets) {
                 checkDownloadCancel();
                 if (rel.endsWith("/config.json") || "config.json".equals(rel)) {
@@ -919,7 +930,13 @@ public class ThemeDownloader {
                     if (listener != null) listener.onProgress(done, total, rel);
                     continue;
                 }
-                File out = resolveAssetFile(themesRoot, dest, entry.folder, rel);
+                File out = resolveAssetOutputFile(dest, entry.folder, rel);
+                if (out == null) {
+                    dlLog("skip unresolved path " + rel);
+                    done++;
+                    if (listener != null) listener.onProgress(done, total, rel);
+                    continue;
+                }
                 if (out.isFile() && out.length() > 0) {
                     skipped++;
                     dlLog("skip exists " + rel + " (" + out.length() + "b)");
@@ -1222,7 +1239,12 @@ public class ThemeDownloader {
             } else {
                 try {
                     byte[] fileBytes = httpGet(url);
-                    writeFile(resolveAssetFile(new File(ThemeManager.themesRoot()), entry.themeDir(), entry.folder, rel), fileBytes);
+                    File out = resolveAssetOutputFile(entry.themeDir(), entry.folder, rel);
+                    if (out == null) {
+                        dlLog("recovery skip unresolved " + rel);
+                    } else {
+                        writeFile(out, fileBytes);
+                    }
                     dlLog("recovery saved " + rel + " (" + fileBytes.length + "b)");
                 } catch (HttpStatusException hs) {
                     if (hs.statusCode == 404) {
@@ -1388,6 +1410,20 @@ public class ThemeDownloader {
         Set<String> sub = collectAssetPaths(new JSONObject(
                 "{\"homePageConfig\":{\"music\":\"icons/Music.png\"}}"), "MyTheme");
         if (!sub.contains("MyTheme/icons/Music.png")) throw new AssertionError("subfolder asset");
+        File subDir = File.createTempFile("solar-theme-out-", "");
+        subDir.delete();
+        subDir.mkdirs();
+        try {
+            File themeDir = new File(subDir, "ACNH");
+            themeDir.mkdirs();
+            File out = resolveAssetOutputFile(themeDir, "ACNH",
+                    "ACNH/all other images/folder view/foldericon.png");
+            if (out == null || !out.getParentFile().getName().equals("folder view")) {
+                throw new AssertionError("subfolder output path " + out);
+            }
+        } finally {
+            deleteRecursive(subDir);
+        }
         if (!collectAssetPaths(new JSONObject("{\"themeCover\":\"@cover.png\"}"), "T").contains("T/cover.png")) {
             throw new AssertionError("@ prefix");
         }

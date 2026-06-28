@@ -43,12 +43,16 @@ public final class Y1RomPrep {
                             "/system/etc/solar/sync-rockbox-libs.sh") ? 1 : 0;
                     patched += patchSwitchScript(context, "y1/sync-y1-keymap.sh",
                             "/system/etc/solar/sync-y1-keymap.sh") ? 1 : 0;
+                    patched += patchSwitchScript(context, "y1/disable-rockbox-for-solar.sh",
+                            "/system/etc/solar/disable-rockbox-for-solar.sh") ? 1 : 0;
                     patched += patchSwitchScript(context, "y1/Y1-Rockbox.kl",
                             "/system/etc/solar/Y1-Rockbox.kl") ? 1 : 0;
                     RockboxCoexistence.ensureOnSolarStart(context);
+                    RockboxDisable.ensureOnce(context);
                     runSu("chmod 755 /data/data/switch-to-stock.sh /data/data/switch-to-rockbox.sh "
                             + "/system/etc/solar/switch-to-stock.sh /system/etc/solar/switch-to-rockbox.sh "
                             + "/system/etc/solar/sync-rockbox-libs.sh /system/etc/solar/sync-y1-keymap.sh "
+                            + "/system/etc/solar/disable-rockbox-for-solar.sh "
                             + "2>/dev/null; chmod 644 /system/etc/solar/Y1-Rockbox.kl 2>/dev/null");
                     Log.i(TAG, "patched " + patched + "/4 switch script paths"
                             + (legacy ? " (replaced legacy rockbox-y1 script)" : ""));

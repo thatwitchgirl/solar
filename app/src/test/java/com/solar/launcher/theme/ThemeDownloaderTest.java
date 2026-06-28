@@ -3,6 +3,7 @@ package com.solar.launcher.theme;
 import org.json.JSONObject;
 import org.junit.Test;
 
+import java.io.File;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -13,6 +14,24 @@ public class ThemeDownloaderTest {
     @Test
     public void selfCheck() throws Exception {
         ThemeDownloader.selfCheck();
+    }
+
+    @Test
+    public void subfolderOutputPath() throws Exception {
+        File themeDir = new File(System.getProperty("java.io.tmpdir"), "solar-theme-subfolder-test");
+        deleteDir(themeDir);
+        themeDir.mkdirs();
+        try {
+            File out = ThemeDownloader.resolveAssetOutputFile(themeDir, "ACNH",
+                    "ACNH/all other images/folder view/foldericon.png");
+            if (out == null) throw new AssertionError("null output");
+            String path = out.getAbsolutePath().replace('\\', '/');
+            if (!path.contains("/all other images/folder view/foldericon.png")) {
+                throw new AssertionError("bad subfolder path: " + path);
+            }
+        } finally {
+            deleteDir(themeDir);
+        }
     }
 
     @Test
@@ -37,5 +56,14 @@ public class ThemeDownloaderTest {
         Map<String, String> mapped = ThemeDownloader.planLocalNames(assets);
         if (mapped.isEmpty()) throw new AssertionError("no mapped assets");
         if (mapped.size() != assets.size()) throw new AssertionError("map size mismatch");
+    }
+
+    private static void deleteDir(File f) {
+        if (f == null || !f.exists()) return;
+        if (f.isDirectory()) {
+            File[] kids = f.listFiles();
+            if (kids != null) for (File k : kids) deleteDir(k);
+        }
+        f.delete();
     }
 }

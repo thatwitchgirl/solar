@@ -296,6 +296,9 @@ audit_rom_contents() {
     if [ ! -f "$sys_mount/etc/init.d/99SolarInit.sh" ]; then
         echo "audit fail: 99SolarInit.sh missing (SD Music/Podcasts/Themes + TLS sanity)" >&2
         errors=$((errors + 1))
+    elif ! grep -q 'disable-rockbox-for-solar.sh' "$sys_mount/etc/init.d/99SolarInit.sh" 2>/dev/null; then
+        echo "audit fail: 99SolarInit must run disable-rockbox-for-solar.sh on first boot" >&2
+        errors=$((errors + 1))
     fi
 
     if [ -f "$sys_mount/etc/init.d/99Y1LauncherInit.sh" ]; then
@@ -327,6 +330,14 @@ audit_rom_contents() {
             echo "audit fail: org.rockbox.apk has ${rb_so_count:-0} native libs (expected >=35 from rockbox-y1 base)" >&2
             errors=$((errors + 1))
         fi
+    fi
+
+    if [ ! -f "$sys_mount/etc/solar/disable-rockbox-for-solar.sh" ]; then
+        echo "audit fail: /system/etc/solar/disable-rockbox-for-solar.sh missing" >&2
+        errors=$((errors + 1))
+    elif ! grep -q 'pm disable' "$sys_mount/etc/solar/disable-rockbox-for-solar.sh" 2>/dev/null; then
+        echo "audit fail: disable-rockbox-for-solar.sh must pm disable org.rockbox" >&2
+        errors=$((errors + 1))
     fi
 
     if [ ! -f "$sys_mount/etc/solar/switch-to-stock.sh" ]; then
@@ -367,6 +378,10 @@ audit_rom_contents() {
         errors=$((errors + 1))
     elif ! cmp -s "$sys_mount/usr/keylayout/Rockbox.kl" "$sys_mount/usr/keylayout/Y1-Rockbox.kl"; then
         echo "audit fail: Rockbox.kl must match Y1-Rockbox.kl (unified keymap)" >&2
+        errors=$((errors + 1))
+    elif [ -f "$sys_mount/usr/keylayout/mtk-tpd-kpd.kl" ] && [ -f "$sys_mount/usr/keylayout/mtk-kpd.kl" ] \
+            && ! cmp -s "$sys_mount/usr/keylayout/mtk-tpd-kpd.kl" "$sys_mount/usr/keylayout/mtk-kpd.kl"; then
+        echo "audit fail: mtk-tpd-kpd.kl must match mtk-kpd.kl (side keys 88/87, wheel 126/127)" >&2
         errors=$((errors + 1))
     fi
 
@@ -509,34 +524,37 @@ sudo cp "$SCRIPT_DIR/switch-to-stock.sh" "$MOUNT_SYS/etc/solar/switch-to-stock.s
 sudo cp "$SCRIPT_DIR/switch-to-rockbox.sh" "$MOUNT_SYS/etc/solar/switch-to-rockbox.sh"
 sudo cp "$SCRIPT_DIR/sync-rockbox-libs.sh" "$MOUNT_SYS/etc/solar/sync-rockbox-libs.sh"
 sudo cp "$SCRIPT_DIR/sync-y1-keymap.sh" "$MOUNT_SYS/etc/solar/sync-y1-keymap.sh"
+sudo cp "$SCRIPT_DIR/disable-rockbox-for-solar.sh" "$MOUNT_SYS/etc/solar/disable-rockbox-for-solar.sh"
 sudo cp "$SCRIPT_DIR/Y1-Rockbox.kl" "$MOUNT_SYS/etc/solar/Y1-Rockbox.kl"
 sudo chmod 755 "$MOUNT_SYS/etc/solar/switch-to-stock.sh" "$MOUNT_SYS/etc/solar/switch-to-rockbox.sh" \
-    "$MOUNT_SYS/etc/solar/sync-rockbox-libs.sh" "$MOUNT_SYS/etc/solar/sync-y1-keymap.sh"
+    "$MOUNT_SYS/etc/solar/sync-rockbox-libs.sh" "$MOUNT_SYS/etc/solar/sync-y1-keymap.sh" \
+    "$MOUNT_SYS/etc/solar/disable-rockbox-for-solar.sh"
 sudo chmod 644 "$MOUNT_SYS/etc/solar/Y1-Rockbox.kl"
 sudo chown root:root "$MOUNT_SYS/etc/solar/switch-to-stock.sh" "$MOUNT_SYS/etc/solar/switch-to-rockbox.sh" \
     "$MOUNT_SYS/etc/solar/sync-rockbox-libs.sh" "$MOUNT_SYS/etc/solar/sync-y1-keymap.sh" \
-    "$MOUNT_SYS/etc/solar/Y1-Rockbox.kl"
+    "$MOUNT_SYS/etc/solar/disable-rockbox-for-solar.sh" "$MOUNT_SYS/etc/solar/Y1-Rockbox.kl"
 
 sudo cp "$REPO_ROOT/solar-rom/system/99Y1ButtonScript" "$MOUNT_SYS/etc/init.d/99Y1ButtonScript"
 sudo chmod 755 "$MOUNT_SYS/etc/init.d/99Y1ButtonScript"
 sudo chown root:root "$MOUNT_SYS/etc/init.d/99Y1ButtonScript"
 
 [ -f "$SCRIPT_DIR/Y1-Rockbox.kl" ] || die "missing $SCRIPT_DIR/Y1-Rockbox.kl"
-# ponytail: one unified map for Solar + Rockbox-y1 — wheel 105/106→126/127, side 165/163→88/87.
-for _kl in Stock.kl Rockbox.kl Y1-Rockbox.kl Generic.kl mtk-tpd-kpd.kl; do
+# ponytail: Generic/Stock/Rockbox = Y1-Rockbox.kl (wheel 126/127); mtk-tpd-kpd mirrors patched mtk-kpd (side 88/87).
+for _kl in Stock.kl Rockbox.kl Y1-Rockbox.kl Generic.kl; do
     sudo cp "$SCRIPT_DIR/Y1-Rockbox.kl" "$MOUNT_SYS/usr/keylayout/$_kl"
 done
 sudo chmod 644 "$MOUNT_SYS/usr/keylayout/Stock.kl" "$MOUNT_SYS/usr/keylayout/Rockbox.kl" \
-    "$MOUNT_SYS/usr/keylayout/Y1-Rockbox.kl" "$MOUNT_SYS/usr/keylayout/Generic.kl" \
-    "$MOUNT_SYS/usr/keylayout/mtk-tpd-kpd.kl"
+    "$MOUNT_SYS/usr/keylayout/Y1-Rockbox.kl" "$MOUNT_SYS/usr/keylayout/Generic.kl"
 sudo chown root:root "$MOUNT_SYS/usr/keylayout/Stock.kl" "$MOUNT_SYS/usr/keylayout/Rockbox.kl" \
-    "$MOUNT_SYS/usr/keylayout/Y1-Rockbox.kl" "$MOUNT_SYS/usr/keylayout/Generic.kl" \
-    "$MOUNT_SYS/usr/keylayout/mtk-tpd-kpd.kl"
-# Patch wheel scancodes in mtk-kpd.kl without replacing GPIO key map.
+    "$MOUNT_SYS/usr/keylayout/Y1-Rockbox.kl" "$MOUNT_SYS/usr/keylayout/Generic.kl"
+# Patch wheel scancodes in mtk-kpd.kl without replacing GPIO key map; mtk-tpd-kpd uses the same file.
 # ponytail: sed -i writes a temp file beside the target — needs sudo on mounted system.img (root-owned dir).
 if [ -f "$MOUNT_SYS/usr/keylayout/mtk-kpd.kl" ]; then
     sudo sed -i 's/^key 105[[:space:]].*/key 105   MEDIA_PLAY/' "$MOUNT_SYS/usr/keylayout/mtk-kpd.kl"
     sudo sed -i 's/^key 106[[:space:]].*/key 106   MEDIA_PAUSE/' "$MOUNT_SYS/usr/keylayout/mtk-kpd.kl"
+    sudo cp "$MOUNT_SYS/usr/keylayout/mtk-kpd.kl" "$MOUNT_SYS/usr/keylayout/mtk-tpd-kpd.kl"
+    sudo chmod 644 "$MOUNT_SYS/usr/keylayout/mtk-kpd.kl" "$MOUNT_SYS/usr/keylayout/mtk-tpd-kpd.kl"
+    sudo chown root:root "$MOUNT_SYS/usr/keylayout/mtk-kpd.kl" "$MOUNT_SYS/usr/keylayout/mtk-tpd-kpd.kl"
 fi
 
 echo "==> AVRCP Bluetooth stack (Y1Bridge + mtkbt patches; hardware keylayout unchanged)"

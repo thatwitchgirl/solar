@@ -183,10 +183,10 @@ key 158   BACK
 key 159   FORWARD
 key 103   MEDIA_PLAY
 key 108   MEDIA_PAUSE
-# ponytail: 165/163 stay DPAD_LEFT/RIGHT (21/22) per rockbox-y1 Rockbox.kl — 88/87 causes instant track skip.
-key 163   DPAD_RIGHT
+# ponytail: Y1 InputReader binds mtk-kpd/mtk-tpd-kpd to Generic.kl (dumpsys) — side keys must be MEDIA here.
+key 163   MEDIA_NEXT
 key 164   MEDIA_PLAY_PAUSE
-key 165   DPAD_LEFT
+key 165   MEDIA_PREVIOUS
 key 166   MEDIA_STOP
 key 167   MEDIA_RECORD
 key 169   CALL

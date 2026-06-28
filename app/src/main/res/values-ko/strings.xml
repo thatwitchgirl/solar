@@ -625,6 +625,7 @@
     <string name="toast_audio_connected">오디오: %1$s</string>
     <string name="toast_download_failed">다운로드에 실패했습니다.</string>
     <string name="toast_theme_applied">적용됨: %1$s</string>
+    <string name="theme_applying">%1$s 적용 중</string>
     <string name="toast_wifi_required">먼저 Wi-Fi를 켜 주세요</string>
     <string name="toast_internet_required">인터넷 연결이 필요합니다</string>
     <string name="toast_network_required">Wi‑Fi 또는 로컬 네트워크에 연결하세요</string>
@@ -641,6 +642,7 @@
     <string name="toast_wifi_saved_connecting">저장된 네트워크에 연결 중…</string>
     <string name="toast_wifi_forgotten">네트워크 삭제됨: %1$s</string>
     <string name="toast_wifi_forget_failed">네트워크를 삭제할 수 없습니다.</string>
+    <string name="toast_wifi_connect_failed">Wi-Fi에 연결할 수 없습니다.</string>
     <string name="toast_bt_forgotten">기기 삭제됨: %1$s</string>
     <string name="toast_bt_forget_failed">기기를 삭제할 수 없습니다.</string>
     <string name="toast_eq_unsupported">이 기기는 EQ 프리셋을 지원하지 않습니다.</string>

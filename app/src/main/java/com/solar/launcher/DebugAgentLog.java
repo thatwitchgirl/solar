@@ -8,13 +8,13 @@ import org.json.JSONObject;
 import java.io.File;
 import java.io.FileWriter;
 
-/** Debug-mode NDJSON logger — session cd7436; pull via adb from /storage/sdcard0/. */
+/** Debug-mode NDJSON logger — session ae04aa; pull via adb from /storage/sdcard0/. */
 public final class DebugAgentLog {
     private static final String TAG = "SolarNetDbg";
-    private static final String FILE = "debug-cd7436.log";
-    private static final String SESSION = "cd7436";
+    private static final String FILE = "debug-ae04aa.log";
+    private static final String SESSION = "ae04aa";
     private static final String WORKSPACE_LOG =
-            "/home/deck/Documents/Cursor Workspaces/TheSolarProject/solar/.cursor/debug-cd7436.log";
+            "/home/deck/Documents/Cursor Workspaces/TheSolarProject/solar/.cursor/debug-ae04aa.log";
     /** ponytail: hot-path sync file I/O was freezing UI — flip true only for short debug sessions. */
     public static volatile boolean ENABLED = false;
 

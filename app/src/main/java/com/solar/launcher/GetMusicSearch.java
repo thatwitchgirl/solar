@@ -47,6 +47,26 @@ public final class GetMusicSearch {
     }
 
     /**
+     * Unified Get Music when both Deezer and Reach are enabled: Deezer rows first
+     * (artists / albums / tracks), then Reach — catalog hits beat the peer flood.
+     */
+    public static List<MusicSearchEntry> organizeUnifiedDeezerFirst(
+            List<DeezerSearch.DeezerArtist> artists, List<MusicSearchEntry> flat) {
+        if (flat == null) flat = new ArrayList<MusicSearchEntry>();
+        List<MusicSearchEntry> deezerFlat = new ArrayList<MusicSearchEntry>();
+        List<MusicSearchEntry> reachFlat = new ArrayList<MusicSearchEntry>();
+        for (MusicSearchEntry e : flat) {
+            if (e == null) continue;
+            if (e.source == MusicSearchEntry.Source.DEEZER) deezerFlat.add(e);
+            else if (e.source == MusicSearchEntry.Source.REACH) reachFlat.add(e);
+        }
+        List<MusicSearchEntry> out = new ArrayList<MusicSearchEntry>();
+        out.addAll(organizeWithContainers(artists, deezerFlat));
+        out.addAll(organizeWithContainers(null, reachFlat));
+        return out;
+    }
+
+    /**
      * Build top-level rows with artists, albums, folders, and loose tracks round-robin
      * interleaved so one result type does not dominate the list.
      */

@@ -10,10 +10,12 @@ public class SolarApplication extends Application {
     @Override
     public void onCreate() {
         super.onCreate();
+        SolarLog.installUncaughtHandler();
         TlsHelper.init(this);
         com.solar.launcher.theme.ActiveThemeEngine.init(this);
         Y1InputKeys.selfCheckWheelMapping();
         Y1RomPrep.ensureSwitchScripts(this);
+        RockboxDisable.ensureOnce(this);
         ThemeManager.ensureThemesRootReady(this);
         LauncherDefault.ensureDefaultHome(this);
     }

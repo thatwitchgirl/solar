@@ -100,6 +100,30 @@ public class GetMusicSearchTest {
     }
 
     @Test
+    public void organizeUnifiedDeezerFirst_putsDeezerBeforeReach() {
+        List<DeezerSearch.DeezerArtist> artists = new ArrayList<DeezerSearch.DeezerArtist>();
+        artists.add(new DeezerSearch.DeezerArtist(1L, "Artist", ""));
+
+        List<MusicSearchEntry> flat = new ArrayList<MusicSearchEntry>();
+        flat.add(MusicSearchEntry.reach(new SoulseekClient.Result("peer", "reach.mp3",
+                1000, 200, 320, true, true, 100, 0)));
+        flat.add(MusicSearchEntry.deezer(new DeezerResult(10, "Deezer Hit", "Artist",
+                "Album", 100, 200, "", "")));
+
+        List<MusicSearchEntry> out = GetMusicSearch.organizeUnifiedDeezerFirst(artists, flat);
+        if (out.isEmpty()) throw new AssertionError("empty");
+        int firstReach = -1;
+        int firstDeezer = -1;
+        for (int i = 0; i < out.size(); i++) {
+            MusicSearchEntry e = out.get(i);
+            if (firstDeezer < 0 && e.source == MusicSearchEntry.Source.DEEZER) firstDeezer = i;
+            if (firstReach < 0 && e.source == MusicSearchEntry.Source.REACH) firstReach = i;
+        }
+        if (firstDeezer < 0 || firstReach < 0) throw new AssertionError("missing source");
+        if (firstReach < firstDeezer) throw new AssertionError("reach before deezer");
+    }
+
+    @Test
     public void formatDeezerReleaseLabel_types() {
         if (!GetMusicSearch.formatDeezerReleaseLabel("single", "Live Forever").startsWith("Single")) {
             throw new AssertionError("single");

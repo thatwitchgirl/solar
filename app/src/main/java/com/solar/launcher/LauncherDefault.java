@@ -12,7 +12,7 @@ import org.json.JSONObject;
 
 /**
  * Makes Solar the default HOME launcher on Solar ROM (platform app).
- * ponytail: first flash disables org.rockbox via 99SolarInit.sh; this sets preferred activity in PM.
+ * ponytail: first flash disables org.rockbox via disable-rockbox-for-solar.sh; this sets preferred activity in PM.
  */
 public final class LauncherDefault {
     private static final String TAG = "LauncherDefault";
