@@ -29453,16 +29453,7 @@ public class MainActivity extends Activity {
         if (Y1InputKeys.isBackKey(keyCode)) {
             return handleBackKeyDown(event);
         }
-        // Side prev/next — horizontal quick-bar navigation (was swallowed, leaving focus on the list).
-        if (Y1InputKeys.isTrackPreviousKey(keyCode) || Y1InputKeys.isTrackNextKey(keyCode)) {
-            int horiz = Y1InputKeys.isTrackNextKey(keyCode) ? 22 : 21;
-            if (themedContextMenu.handleKeyHorizontal(horiz)) {
-                syncContextVolumeSliderWithFocus();
-                clickFeedback();
-                return true;
-            }
-        }
-        // ponytail: wheel navigates the modal; transport keys fall through to playback handlers.
+        // ponytail: Y1 side prev/next (21/22/87/88) are transport — wheel navigates quick bar.
         if (isMediaPlayPauseKey(keyCode) || isMediaSkipKey(keyCode)) {
             return false;
         }
