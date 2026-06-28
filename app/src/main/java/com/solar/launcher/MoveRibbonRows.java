@@ -126,7 +126,7 @@ final class MoveRibbonRows {
         sub.setEllipsize(TextUtils.TruncateAt.MARQUEE);
         sub.setMarqueeRepeatLimit(-1);
         ThemeManager.applyThemedTextStyle(sub,
-                ThemeManager.contextMenuMutedText(ThemeManager.getHintTextColor()));
+                ThemeManager.contextMenuMutedText(ThemeManager.getSubtitleTextColor()));
         textCol.addView(sub, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
 
@@ -217,6 +217,9 @@ final class MoveRibbonRows {
         if (sub != null) {
             sub.setText(subText != null ? subText : "");
             sub.setSelected(highlighted && subText != null && !subText.isEmpty());
+            ThemeManager.applyThemedTextStyle(sub, highlighted
+                    ? ThemeManager.getItemTextColorSelected()
+                    : ThemeManager.getSubtitleTextColor());
         }
         TextView grip = (TextView) row.findViewWithTag(TAG_GRIP);
         ImageView pp = (ImageView) row.findViewWithTag(TAG_PP);

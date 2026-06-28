@@ -182,10 +182,7 @@ public final class SoulseekBrowseAdapter extends BaseAdapter {
                 text = activity.getString(R.string.soulseek_browse_loading);
             }
             tv.setText(text);
-            ThemeManager.applyThemedTextStyle(tv,
-                    statusMode
-                            ? ThemeManager.getHintTextColor()
-                            : ThemeManager.getTextColorSecondary());
+            ThemeManager.applyThemedTextStyle(tv, ThemeManager.getSubtitleTextColor());
             return tv;
         }
         if (type == TYPE_SHOW_MORE) {

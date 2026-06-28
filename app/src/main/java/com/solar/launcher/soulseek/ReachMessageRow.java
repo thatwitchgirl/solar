@@ -87,8 +87,7 @@ public final class ReachMessageRow {
         reactions.setEllipsize(TextUtils.TruncateAt.MARQUEE);
         reactions.setMarqueeRepeatLimit(-1);
         reactions.setHorizontallyScrolling(true);
-        ThemeManager.applyThemedTextStyle(reactions,
-                ThemeManager.contextMenuMutedText(ThemeManager.getHintTextColor()));
+        ThemeManager.applyThemedTextStyle(reactions, secondaryLineColor(false));
         reactions.setVisibility(View.GONE);
         textCol.addView(reactions, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, subH));
@@ -102,8 +101,7 @@ public final class ReachMessageRow {
         sub.setEllipsize(TextUtils.TruncateAt.MARQUEE);
         sub.setMarqueeRepeatLimit(-1);
         sub.setHorizontallyScrolling(true);
-        ThemeManager.applyThemedTextStyle(sub,
-                ThemeManager.contextMenuMutedText(ThemeManager.getHintTextColor()));
+        ThemeManager.applyThemedTextStyle(sub, secondaryLineColor(false));
         sub.setVisibility(View.GONE);
         textCol.addView(sub, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, subH));
@@ -196,7 +194,7 @@ public final class ReachMessageRow {
         boolean showPreview = previewLine != null && !previewLine.isEmpty();
         if (line2 != null) {
             if (showPreview) {
-                bindLine(line2, previewLine, ThemeManager.getHintTextColor(), selected);
+                bindLine(line2, previewLine, ThemeManager.getItemTextColorNormal(), selected);
             } else {
                 hideLine(line2);
             }
@@ -207,6 +205,7 @@ public final class ReachMessageRow {
             sub.setText(ts);
             sub.setVisibility(ts.isEmpty() ? View.GONE : View.VISIBLE);
             sub.setSelected(selected);
+            ThemeManager.applyThemedTextStyle(sub, secondaryLineColor(selected));
         }
 
         bindLeadIcon(activity, row, true, null, countryCode);
@@ -294,6 +293,7 @@ public final class ReachMessageRow {
             sub.setText(subText);
             sub.setVisibility(subText.isEmpty() ? View.GONE : View.VISIBLE);
             sub.setSelected(selected);
+            ThemeManager.applyThemedTextStyle(sub, secondaryLineColor(selected));
         }
 
         bindPeerDot(row, incoming, peerOnline);
@@ -361,6 +361,7 @@ public final class ReachMessageRow {
             sub.setText(subText);
             sub.setVisibility(subText.isEmpty() ? View.GONE : View.VISIBLE);
             sub.setSelected(selected);
+            ThemeManager.applyThemedTextStyle(sub, secondaryLineColor(selected));
         }
 
         bindPeerDot(row, incoming, peerOnline);
@@ -447,6 +448,7 @@ public final class ReachMessageRow {
             sub.setText(subText);
             sub.setVisibility(subText.isEmpty() ? View.GONE : View.VISIBLE);
             sub.setSelected(selected);
+            ThemeManager.applyThemedTextStyle(sub, secondaryLineColor(selected));
         }
 
         bindPeerDot(row, incoming, null);
@@ -516,13 +518,15 @@ public final class ReachMessageRow {
     }
 
     private static int conversationTextColor(boolean incoming, boolean selected) {
-        int normalColor = incoming
-                ? ThemeManager.getTextColorSecondary()
-                : ThemeManager.getItemTextColorNormal();
-        int selectedColor = incoming
-                ? ThemeManager.getTextColorPrimary()
-                : ThemeManager.getItemTextColorSelected();
+        int normalColor = ThemeManager.getItemTextColorNormal();
+        int selectedColor = ThemeManager.getItemTextColorSelected();
         return selected ? selectedColor : normalColor;
+    }
+
+    /** Subtitle / timestamp / hint lines — same hue as unselected list text (no panel mute). */
+    private static int secondaryLineColor(boolean selected) {
+        return selected ? ThemeManager.getItemTextColorSelected()
+                : ThemeManager.getItemTextColorNormal();
     }
 
     private static void alignTextColumn(FrameLayout row, boolean incoming) {

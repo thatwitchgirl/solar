@@ -6,6 +6,7 @@ import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteOpenHelper;
 
+import com.solar.launcher.soulseek.ReachIntroMessage;
 import com.solar.launcher.soulseek.SoulseekChatRooms;
 import com.solar.launcher.soulseek.SoulseekMessaging;
 import com.solar.launcher.soulseek.SoulseekWire;
@@ -449,7 +450,15 @@ public class ReachDatabase extends SQLiteOpenHelper {
                     while (c.moveToNext()) {
                         String peer = c.getString(0);
                         if (peer == null || peer.isEmpty()) continue;
-                        out.add(new InboxRow(peer, c.getString(1), c.getInt(2)));
+                        String text = c.getString(1);
+                        int ts = c.getInt(2);
+                        if (ReachIntroMessage.isIntro(text)) {
+                            SoulseekMessaging.Message visible = lastVisibleMessageForPeerSync(peer);
+                            if (visible == null) continue;
+                            text = visible.text;
+                            ts = visible.timestamp;
+                        }
+                        out.add(new InboxRow(peer, text, ts));
                     }
                 } finally {
                     c.close();
@@ -491,6 +500,48 @@ public class ReachDatabase extends SQLiteOpenHelper {
             }
         });
         return holder[0];
+    }
+
+    /** Last PM row visible in Reach browse UI — skips auto-intro lines. */
+    public SoulseekMessaging.Message lastVisibleMessageForPeerSync(final String peer) {
+        if (peer == null || peer.isEmpty()) return null;
+        final SoulseekMessaging.Message[] holder = new SoulseekMessaging.Message[1];
+        ReachDbExecutor.runSync(new Runnable() {
+            @Override
+            public void run() {
+                SQLiteDatabase db = getReadableDatabase();
+                Cursor c = db.rawQuery(
+                        "SELECT msg_id,ts,peer,text,incoming FROM pm_messages"
+                                + " WHERE peer=? COLLATE NOCASE ORDER BY ts DESC, id DESC LIMIT 32",
+                        new String[] { peer });
+                try {
+                    while (c.moveToNext()) {
+                        String text = c.getString(3);
+                        if (ReachIntroMessage.isIntro(text)) continue;
+                        holder[0] = new SoulseekMessaging.Message(
+                                c.getInt(0), c.getInt(1), c.getString(2),
+                                text, c.getInt(4) != 0);
+                        break;
+                    }
+                } finally {
+                    c.close();
+                }
+            }
+        });
+        return holder[0];
+    }
+
+    /** Delete entire PM thread for one peer. */
+    public void deletePmThreadSync(final String peer) {
+        if (peer == null || peer.trim().isEmpty()) return;
+        final String key = peer.trim();
+        ReachDbExecutor.runSync(new Runnable() {
+            @Override
+            public void run() {
+                SQLiteDatabase db = getWritableDatabase();
+                db.delete("pm_messages", "peer=? COLLATE NOCASE", new String[] { key });
+            }
+        });
     }
 
     public List<SoulseekMessaging.Message> threadSync(String peer) {
@@ -547,6 +598,30 @@ public class ReachDatabase extends SQLiteOpenHelper {
     }
 
     // --- Peer notes ---
+
+    /** All saved peer notes — load once per inbox refresh (avoid main-thread getView DB hits). */
+    public java.util.HashMap<String, String> loadAllPeerNotesSync() {
+        final java.util.HashMap<String, String> out = new java.util.HashMap<String, String>();
+        ReachDbExecutor.runSync(new Runnable() {
+            @Override
+            public void run() {
+                SQLiteDatabase db = getReadableDatabase();
+                Cursor c = db.rawQuery("SELECT username, note FROM peer_notes", null);
+                try {
+                    while (c.moveToNext()) {
+                        String user = c.getString(0);
+                        String note = c.getString(1);
+                        if (user != null && note != null && !note.trim().isEmpty()) {
+                            out.put(user.toLowerCase(Locale.US), note);
+                        }
+                    }
+                } finally {
+                    c.close();
+                }
+            }
+        });
+        return out;
+    }
 
     public String getPeerNoteSync(String username) {
         if (username == null || username.trim().isEmpty()) return "";

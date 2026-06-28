@@ -258,7 +258,7 @@
                     android:textSize="18sp"
                     android:textStyle="bold" />
 
-                <ListView
+                <com.solar.launcher.Y1SafeListView
                     android:id="@+id/list_conversation_thread"
                     android:layout_width="match_parent"
                     android:layout_height="0dp"
@@ -267,7 +267,7 @@
                     android:scrollbars="none" />
             </LinearLayout>
 
-            <ListView
+            <com.solar.launcher.Y1SafeListView
                 android:id="@+id/list_reach_browse"
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"

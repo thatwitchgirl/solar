@@ -31,6 +31,8 @@ import com.solar.launcher.soulseek.SoulseekMessaging;
 import com.solar.launcher.soulseek.SoulseekUserDirectory;
 import com.solar.launcher.soulseek.SoulseekWire;
 import com.solar.launcher.soulseek.ReachChatRoomsAdapter;
+import com.solar.launcher.soulseek.ReachCommunityRooms;
+import com.solar.launcher.soulseek.SoulseekRoomPrefs;
 import com.solar.launcher.soulseek.ReachIntroMessage;
 import com.solar.launcher.soulseek.ReachIntroTracker;
 import com.solar.launcher.soulseek.SoulseekRoomWall;
@@ -196,7 +198,8 @@ public class MainActivity extends Activity {
     private static final int KEYBOARD_SOULSEEK_ROOM_SEARCH = 10;
     private static final int KEYBOARD_SOULSEEK_ROOM_WALL = 11;
     private static final int KEYBOARD_DEEZER_SEARCH = 12;
-    private static final int KEYBOARD_PODCAST_SEARCH = 4;
+    /** Must not collide with KEYBOARD_SOULSEEK_FIND (4) — shared value broke podcast search. */
+    private static final int KEYBOARD_PODCAST_SEARCH = 13;
     /** ponytail: stock Y1 row art — home=itemConfig, settings/menu lists=menuConfig, file lists=itemConfig */
     private static final int Y1_ROW_HOME = 0;
     private static final int Y1_ROW_MENU = 1;
@@ -290,6 +293,8 @@ public class MainActivity extends Activity {
     private boolean isAutoFetchEnabled = true; // 🚀 [추가] 인터넷 자동 검색 스위치 기본값
     private static List<SongItem> customLibrary = new ArrayList<>();
     private boolean isCustomScanning = false;
+    /** True while a library scan worker thread is running (prevents duplicate scans). */
+    private volatile boolean libraryScanRunning = false;
     private int currentScreenState = STATE_MENU;
     // 💡 자체 날짜/시간 설정용 임시 변수
     private int dtYear = 2026, dtMonth = 1, dtDay = 1, dtHour = 12, dtMinute = 0;
@@ -571,6 +576,8 @@ public class MainActivity extends Activity {
     private final SoulseekSharePolicy soulseekSharePolicy = new SoulseekSharePolicy();
     private volatile boolean soulseekShareScanRunning = false;
     private volatile boolean soulseekShareRescanPending = false;
+    /** ponytail: reuse duration map between share rescans — invalidated when library changes. */
+    private volatile java.util.Map<String, Integer> cachedShareDurations;
     private static final int PODCAST_DOWNLOAD_MAX_RETRIES = 3;
     private int podcastDownloadRetryCount = 0;
     private long podcastDownloadLastProgressMs = 0;
@@ -850,6 +857,8 @@ public class MainActivity extends Activity {
     private final QueueMoveWheelFilter contextQueueMoveWheelFilter = new QueueMoveWheelFilter();
     private static final int QUEUE_SPEC_FULL_METADATA_MAX = 80;
     private java.util.HashMap<String, SongItem> songPathIndex;
+    /** ponytail: avoid rebuilding artist-policy track list on every browse call. */
+    private List<ArtistBrowsePolicy.Track> cachedPolicyTracks;
     private int contextQueueFocusIndex = 0;
     private boolean nowPlayingHomeMenuVisible = false;
 
@@ -858,6 +867,11 @@ public class MainActivity extends Activity {
     private boolean wifiContextPendingDisable = false;
     /** Optimistic on + expanded list while {@link WifiManager#setWifiEnabled(true)} is still in flight. */
     private boolean wifiContextPendingEnable = false;
+    /** True while {@link WifiConnector} is joining a network — suppresses tier/list UI storms. */
+    private boolean wifiConnectInProgress = false;
+    private static final long WIFI_CONFIGURED_CACHE_TTL_MS = 8_000L;
+    private volatile List<WifiConfiguration> wifiConfiguredNetworksCache;
+    private volatile long wifiConfiguredNetworksCacheAtMs;
     private boolean btContextPendingDisable = false;
     private boolean btContextPendingEnable = false;
     private static final long NETWORK_RESCAN_INTERVAL_MS = 18_000L;
@@ -888,6 +902,7 @@ public class MainActivity extends Activity {
                 wifiContextRefreshPendingResetFocus = false;
                 return;
             }
+            if (wifiConnectInProgress && !wifiContextRefreshPendingResetFocus) return;
             refreshContextWifiTierImmediate(wifiContextRefreshPendingResetFocus,
                     wifiContextPendingEnable || wifiContextPendingDisable);
             wifiContextRefreshPendingResetFocus = false;
@@ -913,6 +928,7 @@ public class MainActivity extends Activity {
             if (themedContextMenu == null || !themedContextMenu.isShowing()) return;
             if (contextTierConfirmOpen) return;
             if (!isWifiTierMounted()) return;
+            if (wifiConnectInProgress) return;
             refreshContextWifiTierImmediate(false, true);
             try {
                 WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
@@ -935,6 +951,9 @@ public class MainActivity extends Activity {
     /** Coalesce home/settings rebuilds on NETWORK_STATE_CHANGED — avoids connect UI storm. */
     private final Handler connectivityUiDebounceHandler = new Handler();
     private static final long CONNECTIVITY_UI_DEBOUNCE_MS = 400L;
+    /** Coalesce Reach share-policy work during Wi-Fi handshakes — was freezing the wheel. */
+    private final Handler soulseekPolicyDebounceHandler = new Handler();
+    private static final long SOULSEEK_POLICY_DEBOUNCE_MS = 800L;
     /** Scan results cached for one Wi-Fi tier / settings list rebuild (avoid O(n²) binder calls). */
     private java.util.Map<String, ScanResult> wifiScanCacheBySsid = new java.util.HashMap<String, ScanResult>();
     private final Runnable connectivityUiDebounceRunnable = new Runnable() {
@@ -943,12 +962,19 @@ public class MainActivity extends Activity {
             refreshConnectivityGatedMenusNow();
         }
     };
+    private final Runnable soulseekPolicyDebounceRunnable = new Runnable() {
+        @Override
+        public void run() {
+            updateSoulseekSharePolicy();
+        }
+    };
     private final Runnable networkRescanTick = new Runnable() {
         @Override
         public void run() {
             if (!isNetworkRescanActive()) return;
             if (themedContextMenu != null && themedContextMenu.isShowing()
-                    && isWifiTierMounted() && !contextTierConfirmOpen && isWifiContextExpanded()) {
+                    && isWifiTierMounted() && !contextTierConfirmOpen && isWifiContextExpanded()
+                    && !wifiConnectInProgress) {
                 try {
                     WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
                     if (wm != null && wm.isWifiEnabled()) wm.startScan();
@@ -1236,11 +1262,11 @@ public class MainActivity extends Activity {
 
             if (Intent.ACTION_SCREEN_OFF.equals(action)) {
                 isScreenSleeping = true;
-                updateSoulseekSharePolicy();
+                scheduleSoulseekSharePolicyRefresh();
             } else if (Intent.ACTION_SCREEN_ON.equals(action)) {
                 isScreenSleeping = false;
                 lastScreenOnTime = System.currentTimeMillis();
-                updateSoulseekSharePolicy();
+                scheduleSoulseekSharePolicyRefresh();
             } else if (Intent.ACTION_BATTERY_CHANGED.equals(action)) {
                 updateBatteryUi(intent);
             } else if (Intent.ACTION_HEADSET_PLUG.equals(action)) {
@@ -1318,17 +1344,31 @@ public class MainActivity extends Activity {
                 onWifiConnectivityChanged();
                 if (themedContextMenu != null && themedContextMenu.isShowing()
                         && isWifiTierMounted()) {
-                    refreshContextWifiTierImmediate(false, true);
+                    scheduleContextWifiRefresh(false);
                 }
             } else if (WifiManager.RSSI_CHANGED_ACTION.equals(action)
                     || WifiManager.NETWORK_STATE_CHANGED_ACTION.equals(action)) {
                 NetworkInfo networkInfo = intent.getParcelableExtra(WifiManager.EXTRA_NETWORK_INFO);
                 if (WifiManager.NETWORK_STATE_CHANGED_ACTION.equals(action)) {
+                    // #region agent log
+                    try {
+                        org.json.JSONObject d = new org.json.JSONObject();
+                        d.put("connected", networkInfo != null && networkInfo.isConnected());
+                        d.put("wifiConnectInProgress", wifiConnectInProgress);
+                        d.put("detailedState", networkInfo != null ? String.valueOf(networkInfo.getDetailedState()) : "null");
+                        DebugSessionLog.log("MainActivity.broadcastReceiver", "NETWORK_STATE_CHANGED", "H2", d);
+                    } catch (Exception ignored) {}
+                    // #endregion
                     if (networkInfo != null && networkInfo.isConnected()) {
-                        if (currentScreenState == STATE_WIFI)
+                        if (currentScreenState == STATE_WIFI && !wifiConnectInProgress)
                             startWifiScan();
                     }
                     onWifiConnectivityChanged();
+                    if (themedContextMenu != null && themedContextMenu.isShowing()
+                            && shouldRefreshWifiContextUi() && !contextTierConfirmOpen
+                            && !wifiConnectInProgress) {
+                        scheduleContextWifiRefresh(false);
+                    }
                 }
                 refreshWifiStatusIcon();
             } else if (ConnectivityManager.CONNECTIVITY_ACTION.equals(action)) {
@@ -1415,9 +1455,12 @@ public class MainActivity extends Activity {
                 WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
                 if (wm != null) {
                     List<ScanResult> results = wm.getScanResults();
-                    updateWifiUI(results);
+                    if (!wifiConnectInProgress) {
+                        updateWifiUI(results);
+                    }
                     if (themedContextMenu != null && themedContextMenu.isShowing()
-                            && shouldRefreshWifiContextUi() && !contextTierConfirmOpen) {
+                            && shouldRefreshWifiContextUi() && !contextTierConfirmOpen
+                            && !wifiConnectInProgress) {
                         collectWifiNetworksFromScan();
                         scheduleContextWifiScanDebounce();
                     }
@@ -1517,6 +1560,13 @@ public class MainActivity extends Activity {
         getWindow().setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN, WindowManager.LayoutParams.FLAG_FULLSCREEN);
         setContentView(R.layout.activity_main);
         initY1LayoutMetrics();
+        // #region agent log
+        try {
+            org.json.JSONObject dbg = new org.json.JSONObject();
+            dbg.put("phase", "after_setContentView");
+            DebugSessionLog.log("MainActivity.onCreate", "early startup", "H5", dbg);
+        } catch (Exception ignored) {}
+        // #endregion
 
         // 🚀 [여기서부터 새로 추가!] 메인 화면 위에 덮어씌울 '로딩 스피너 팝업창'을 생성합니다.
         android.view.ViewGroup root = findViewById(android.R.id.content);
@@ -1591,6 +1641,13 @@ public class MainActivity extends Activity {
 
         ThemeManager.ensureBundledDefault(this);
         ActiveThemeEngine.loadThemes(this);
+        // #region agent log
+        try {
+            org.json.JSONObject dbg = new org.json.JSONObject();
+            dbg.put("phase", "after_loadThemes");
+            DebugSessionLog.log("MainActivity.onCreate", "themes loaded", "H5", dbg);
+        } catch (Exception ignored) {}
+        // #endregion
         try {
             String savedPath = prefs.getString("app_theme_path", null);
             if (savedPath != null) {
@@ -1673,46 +1730,18 @@ public class MainActivity extends Activity {
             rootFolder.mkdirs();
         playback.configureStreamPaths(rootFolder, streamAppCacheRoot());
 
-        // 🚀 [추가된 부분] 앱이 켜질 때(혹은 튕기고 재시작될 때) 조용히 자동 스캔을 돌려 리스트를 복구합니다!
-        if (customLibrary.isEmpty() && !isCustomScanning) {
-            isCustomScanning = true;
-            final int gen = libraryScanGen;
-            activeLibraryScanGen = gen;
-            new Thread(new Runnable() {
-                @Override
-                public void run() {
-                    customLibrary.clear();
-                    invalidateSongPathIndex();
-                    libraryScanPaths.clear();
-                    libraryScanMetaKeys.clear();
-                    buildCustomLibrary(rootFolder);
-                    normalizeLibraryAlbumTitles();
-                    runOnUiThread(new Runnable() {
-                        @Override
-                        public void run() {
-                            isCustomScanning = false;
-                            if (soulseekActive() && soulseekSharingEnabled) {
-                                requestSoulseekShareRescan();
-                                updateSoulseekSharePolicy();
-                            }
-                            // 스캔이 끝났을 때 사용자가 이미 브라우저 화면에 진입해 있다면 화면을 새로고침해 줍니다.
-                            if (currentScreenState == STATE_BROWSER) {
-                                if (currentBrowserMode == BROWSER_ROOT) {
-                                    buildFileBrowserUI();
-                                } else if (currentBrowserMode == BROWSER_ARTISTS) {
-                                    buildVirtualCategories("ARTIST");
-                                } else if (currentBrowserMode == BROWSER_ALBUMS) {
-                                    buildVirtualCategories("ALBUM");
-                                } else if (currentBrowserMode == BROWSER_VIRTUAL_SONGS) {
-                                    buildVirtualSongs();
-                                }
-                            }
-                        }
-                    });
-                }
-            }).start();
+        // 🚀 Cold start: hydrate SQLite cache then incremental filesystem walk (no full ID3 replay).
+        if (customLibrary.isEmpty() && !libraryScanRunning) {
+            startLibraryScan(false);
         }
         layoutMainMenu = findViewById(R.id.layout_main_menu);
+        // #region agent log
+        try {
+            org.json.JSONObject dbg = new org.json.JSONObject();
+            dbg.put("phase", "after_findViewById");
+            DebugSessionLog.log("MainActivity.onCreate", "views bound", "H5", dbg);
+        } catch (Exception ignored) {}
+        // #endregion
         menuListHost = findViewById(R.id.menu_list_host);
         menuScroll = findViewById(R.id.menu_scroll);
         containerHomeMenuItems = findViewById(R.id.container_home_menu_items);
@@ -2082,7 +2111,8 @@ public class MainActivity extends Activity {
         updateStatusBarTitle();
         if (soulseekActive()) {
             requestSoulseekShareRescan();
-            updateSoulseekSharePolicy();
+            // ponytail: policy tick was blocking onCreate ~20s+ (see debug-5b1e61 H3) — defer off cold start.
+            scheduleSoulseekSharePolicyRefresh();
         }
         deezerScreen = new DeezerScreen(deezerHost);
         if (deezerActive() && DeezerAccount.hasArl(prefs)) {
@@ -2163,6 +2193,14 @@ public class MainActivity extends Activity {
 
         requestFirstHomeMenuFocus();
 
+        // #region agent log
+        try {
+            org.json.JSONObject dbg = new org.json.JSONObject();
+            dbg.put("screenState", currentScreenState);
+            dbg.put("homeVisible", layoutMainMenu != null && layoutMainMenu.getVisibility() == View.VISIBLE);
+            DebugSessionLog.log("MainActivity.onCreate", "startup complete", "H5", dbg);
+        } catch (Exception ignored) {}
+        // #endregion
 
         // 🚀 1. 메인 화면의 배경과 글자색도 테마 매니저에 맞춰 갈아입힙니다!
         applyThemeToMainMenu();
@@ -2214,6 +2252,8 @@ public class MainActivity extends Activity {
                 }
             }, 1500);
         }
+
+        scheduleAdbOpenSoulseekMessagesIfRequested();
 
         if (getIntent().getBooleanExtra("solar_adb_avrcp_harness", false)) {
             final String btAddr = getIntent().getStringExtra("solar_adb_bt_addr");
@@ -2562,7 +2602,7 @@ public class MainActivity extends Activity {
         }
         if (soulseekCharging != isCharging) {
             soulseekCharging = isCharging;
-            updateSoulseekSharePolicy();
+            scheduleSoulseekSharePolicyRefresh();
         }
     }
 
@@ -3891,7 +3931,7 @@ public class MainActivity extends Activity {
             return true;
         }
         if (SettingsScreens.SOULSEEK.equals(settingsSubScreenKey)) {
-            buildReachSettingsUI(1);
+            buildReachSettingsUI(2);
             return true;
         }
         return false;
@@ -3908,7 +3948,7 @@ public class MainActivity extends Activity {
 
     private boolean handleDeezerSettingsBack() {
         if (SettingsScreens.DEEZER.equals(settingsSubScreenKey)) {
-            buildReachSettingsUI(2);
+            buildReachSettingsUI(3);
             return true;
         }
         return false;
@@ -4133,7 +4173,7 @@ public class MainActivity extends Activity {
     private void applyReachPeerConnectivityState(ReachPeerConnectivity.State state, String reason) {
         boolean peerOk = state != ReachPeerConnectivity.State.UNAVAILABLE;
         ConnectivityHelper.setReachPeerOk(peerOk);
-        updateSoulseekSharePolicy();
+        scheduleSoulseekSharePolicyRefresh();
         buildHomeMenu();
         if (currentScreenState == STATE_BROWSER && currentBrowserMode == BROWSER_ROOT) {
             buildFileBrowserUI();
@@ -4862,7 +4902,13 @@ public class MainActivity extends Activity {
 
     private void onWifiConnectivityChanged() {
         refreshConnectivityGatedMenus();
-        updateSoulseekSharePolicy();
+        scheduleSoulseekSharePolicyRefresh();
+    }
+
+    private void scheduleSoulseekSharePolicyRefresh() {
+        soulseekPolicyDebounceHandler.removeCallbacks(soulseekPolicyDebounceRunnable);
+        soulseekPolicyDebounceHandler.postDelayed(soulseekPolicyDebounceRunnable,
+                SOULSEEK_POLICY_DEBOUNCE_MS);
     }
 
     private void triggerAutoReconnect() {
@@ -5214,7 +5260,8 @@ public class MainActivity extends Activity {
         list.setChoiceMode(ListView.CHOICE_MODE_SINGLE);
         list.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);
         list.setScrollingCacheEnabled(false);
-        list.setSmoothScrollbarEnabled(true);
+        // ponytail: smooth scrollbars NPE in View.onDrawScrollBars on API 17 (Y1 Messages inbox).
+        list.setSmoothScrollbarEnabled(false);
     }
 
     private void focusFirstReachBrowseDataRow() {
@@ -5228,6 +5275,29 @@ public class MainActivity extends Activity {
                 FocusScrollHelper.focusListPosition(listReachBrowse, pos);
                 return;
             }
+        }
+        if (ad instanceof ReachInboxAdapter) {
+            ReachInboxAdapter ia = (ReachInboxAdapter) ad;
+            if (SettingsScreens.SOULSEEK_MESSAGES.equals(settingsSubScreenKey)) {
+                focusSoulseekMessagesInbox(ia);
+                return;
+            }
+            if (ia.getDataCount() <= 0) {
+                if (!reachBrowseHeaderViews.isEmpty()) {
+                    focusReachBrowseHeaderIndex(0);
+                    return;
+                }
+                listReachBrowse.requestFocus();
+                return;
+            }
+        }
+        if (ad instanceof ReachUsersAdapter) {
+            focusFindReachUsersBrowse((ReachUsersAdapter) ad);
+            return;
+        }
+        if (ad instanceof ReachChatRoomsAdapter) {
+            focusReachChatRoomsBrowse((ReachChatRoomsAdapter) ad);
+            return;
         }
         if (ad == null || ad.getCount() == 0) {
             if (!reachBrowseHeaderViews.isEmpty()) {
@@ -5243,7 +5313,99 @@ public class MainActivity extends Activity {
             return;
         }
         int pos = reachBrowseHeaderOffset();
+        applyReachBrowseAdapterSelection(pos);
         FocusScrollHelper.focusListPosition(listReachBrowse, pos);
+    }
+
+    /** Find other Reach users — focus first directory row with adapter highlight synced. */
+    private void focusFindReachUsersBrowse(final ReachUsersAdapter ua) {
+        if (listReachBrowse == null || ua == null) return;
+        listReachBrowse.setSelectionFromTop(0, 0);
+        if (ua.getDataCount() <= 0) {
+            if (!reachBrowseHeaderViews.isEmpty()) focusReachBrowseHeaderIndex(0);
+            return;
+        }
+        final int listPos = reachBrowseHeaderOffset();
+        listReachBrowse.post(new Runnable() {
+            @Override
+            public void run() {
+                ua.setSelectedPosition(0);
+                applyReachBrowseAdapterSelection(listPos);
+                FocusScrollHelper.focusListPosition(listReachBrowse, listPos);
+            }
+        });
+    }
+
+    /** Chat rooms search results — sync highlight with first selectable room row. */
+    private void focusReachChatRoomsBrowse(final ReachChatRoomsAdapter ca) {
+        if (listReachBrowse == null || ca == null) return;
+        listReachBrowse.setSelectionFromTop(0, 0);
+        if (ca.getDataCount() <= 0) {
+            int headerIdx = 0;
+            if (SettingsScreens.SOULSEEK_CHAT_ROOMS.equals(settingsSubScreenKey)
+                    && reachBrowseHeaderViews.size() >= 2) {
+                headerIdx = 1;
+            }
+            if (!reachBrowseHeaderViews.isEmpty()) focusReachBrowseHeaderIndex(headerIdx);
+            return;
+        }
+        final int listPos = reachBrowseHeaderOffset();
+        listReachBrowse.post(new Runnable() {
+            @Override
+            public void run() {
+                ca.setSelectedPosition(0);
+                applyReachBrowseAdapterSelection(listPos);
+                FocusScrollHelper.focusListPosition(listReachBrowse, listPos);
+            }
+        });
+    }
+
+    /** Messages inbox: first conversation when present, else New message (not Back or status row). */
+    private void focusSoulseekMessagesInbox(final ReachInboxAdapter ia) {
+        if (listReachBrowse == null || ia == null) return;
+        // ponytail: reset scroll — prior Reach browse can leave the list scrolled down off-screen.
+        listReachBrowse.setSelectionFromTop(0, 0);
+        final int dataCount = ia.getDataCount();
+        if (dataCount > 0) {
+            final int listPos = reachBrowseHeaderOffset();
+            ia.setSelectedPosition(0);
+            listReachBrowse.post(new Runnable() {
+                @Override
+                public void run() {
+                    applyReachBrowseAdapterSelection(listPos);
+                    FocusScrollHelper.focusListPosition(listReachBrowse, listPos);
+                    // #region agent log
+                    try {
+                        org.json.JSONObject d = new org.json.JSONObject();
+                        d.put("mode", "first_peer");
+                        d.put("listPos", listPos);
+                        d.put("dataCount", dataCount);
+                        d.put("selected", listReachBrowse.getSelectedItemPosition());
+                        DebugSessionLog.log("MainActivity.focusSoulseekMessagesInbox",
+                                "focused", "H-M7", d);
+                    } catch (Exception ignored) {}
+                    // #endregion
+                }
+            });
+            return;
+        }
+        final int headerIdx = reachBrowseHeaderViews.size() >= 2 ? 1 : 0;
+        listReachBrowse.post(new Runnable() {
+            @Override
+            public void run() {
+                focusReachBrowseHeaderIndex(headerIdx);
+                // #region agent log
+                try {
+                    org.json.JSONObject d = new org.json.JSONObject();
+                    d.put("mode", "new_message_header");
+                    d.put("headerIdx", headerIdx);
+                    d.put("dataCount", dataCount);
+                    DebugSessionLog.log("MainActivity.focusSoulseekMessagesInbox",
+                            "focused", "H-M7", d);
+                } catch (Exception ignored) {}
+                // #endregion
+            }
+        });
     }
 
     private int indexOfReachBrowseHeader(View v) {
@@ -5255,23 +5417,88 @@ public class MainActivity extends Activity {
         return -1;
     }
 
-    private boolean focusReachBrowseHeaderIndex(int idx) {
+    private boolean focusReachBrowseHeaderIndex(final int idx) {
         if (idx < 0 || idx >= reachBrowseHeaderViews.size()) return false;
-        View h = reachBrowseHeaderViews.get(idx);
+        final View h = reachBrowseHeaderViews.get(idx);
         if (h == null || !h.isFocusable()) return false;
+        final boolean alreadyOnHeader = indexOfReachBrowseHeader(getCurrentFocus()) >= 0;
+        // ponytail: only reset list scroll/selection when entering headers from adapter rows.
+        if (!alreadyOnHeader && listReachBrowse != null) {
+            clearReachBrowseAdapterSelection(listReachBrowse.getAdapter());
+            listReachBrowse.setSelectionFromTop(0, 0);
+            listReachBrowse.post(new Runnable() {
+                @Override
+                public void run() {
+                    h.requestFocus();
+                    // #region agent log
+                    try {
+                        org.json.JSONObject d = new org.json.JSONObject();
+                        d.put("headerIdx", idx);
+                        d.put("fromList", true);
+                        DebugSessionLog.log("MainActivity.focusReachBrowseHeaderIndex",
+                                "header focus", "H-FOCUS2", d);
+                    } catch (Exception ignored) {}
+                    // #endregion
+                }
+            });
+            return true;
+        }
         boolean ok = h.requestFocus();
         // #region agent log
         try {
             org.json.JSONObject d = new org.json.JSONObject();
             d.put("headerIdx", idx);
-            d.put("headerCount", reachBrowseHeaderViews.size());
+            d.put("fromList", false);
             d.put("focused", ok);
-            d.put("screen", settingsSubScreenKey);
-            DebugAgentLog.log(this, "MainActivity.focusReachBrowseHeaderIndex",
-                    "header focus", "H-CHAT", d);
+            DebugSessionLog.log("MainActivity.focusReachBrowseHeaderIndex",
+                    "header focus", "H-FOCUS2", d);
         } catch (Exception ignored) {}
         // #endregion
         return ok;
+    }
+
+    private void clearReachBrowseAdapterSelection(android.widget.ListAdapter ad) {
+        if (ad instanceof ReachInboxAdapter) {
+            ((ReachInboxAdapter) ad).clearSelectedPosition();
+        } else if (ad instanceof ReachUsersAdapter) {
+            ((ReachUsersAdapter) ad).clearSelectedPosition();
+        } else if (ad instanceof ReachChatRoomsAdapter) {
+            ((ReachChatRoomsAdapter) ad).setSelectedPosition(-1);
+        } else if (ad instanceof ReachUsersAdapter) {
+            ((ReachUsersAdapter) ad).setSelectedPosition(-1);
+        } else if (ad instanceof ReachInterestsAdapter) {
+            ((ReachInterestsAdapter) ad).setSelectedPosition(-1);
+        }
+    }
+
+    /** List position for wheel nav — prefer adapter highlight index over ListView selection. */
+    private int reachBrowseFocusedListPosition(android.widget.ListAdapter ad) {
+        int headerCount = reachBrowseHeaderOffset();
+        if (ad instanceof ReachInboxAdapter) {
+            int sel = ((ReachInboxAdapter) ad).getSelectedPosition();
+            if (sel >= 0) return headerCount + sel;
+        } else if (ad instanceof ReachChatRoomsAdapter) {
+            int sel = ((ReachChatRoomsAdapter) ad).getSelectedPosition();
+            if (sel >= 0) return headerCount + sel;
+        } else if (ad instanceof ReachUsersAdapter) {
+            int sel = ((ReachUsersAdapter) ad).getSelectedPosition();
+            if (sel >= 0) return headerCount + sel;
+        } else if (ad instanceof ReachInterestsAdapter) {
+            int sel = ((ReachInterestsAdapter) ad).getSelectedPosition();
+            if (sel >= 0) return headerCount + sel;
+        }
+        int pos = listReachBrowse != null ? listReachBrowse.getSelectedItemPosition() : -1;
+        if (pos >= headerCount) return pos;
+        if (listReachBrowse != null) {
+            View focus = getCurrentFocus();
+            if (focus != null) {
+                int idx = listReachBrowse.getPositionForView(focus);
+                if (idx != android.widget.AdapterView.INVALID_POSITION && idx >= headerCount) {
+                    return idx;
+                }
+            }
+        }
+        return headerCount;
     }
 
     private int conversationRowWidthPx() {
@@ -5288,6 +5515,7 @@ public class MainActivity extends Activity {
     private static boolean isReachBrowseScreen(String key) {
         return SettingsScreens.SOULSEEK_CHAT_ROOMS.equals(key)
                 || SettingsScreens.SOULSEEK_CHAT_ROOM_THREAD.equals(key)
+                || SettingsScreens.SOULSEEK_CHAT_ROOM_WALL.equals(key)
                 || SettingsScreens.SOULSEEK_MESSAGES.equals(key)
                 || SettingsScreens.SOULSEEK_MESSAGES_THREAD.equals(key)
                 || SettingsScreens.SOULSEEK_FIND_REACH.equals(key)
@@ -5343,6 +5571,8 @@ public class MainActivity extends Activity {
     }
 
     private final java.util.ArrayList<View> reachBrowseHeaderViews = new java.util.ArrayList<View>();
+    /** Single ListView header hosts Back/New rows — avoids addHeaderView churn crashes on API 17. */
+    private LinearLayout reachBrowseHeaderHost;
 
     private void resetReachBrowseHeaders() {
         if (listReachBrowse == null) return;
@@ -5352,43 +5582,32 @@ public class MainActivity extends Activity {
             d.put("adapterAttached", listReachBrowse.getAdapter() != null);
             d.put("headerCount", reachBrowseHeaderViews.size());
             d.put("listHeaderViews", listReachBrowse.getHeaderViewsCount());
-            DebugAgentLog.log(this, "MainActivity.resetReachBrowseHeaders", "before reset",
-                    "H-B", d);
+            DebugSessionLog.log("MainActivity.resetReachBrowseHeaders", "before reset", "H-M1", d);
         } catch (Exception ignored) {}
         // #endregion
         listReachBrowse.setAdapter(null);
-        for (View h : reachBrowseHeaderViews) {
-            try {
-                listReachBrowse.removeHeaderView(h);
-            } catch (Exception e) {
-                // #region agent log
-                try {
-                    org.json.JSONObject d = new org.json.JSONObject();
-                    d.put("error", e.getClass().getSimpleName());
-                    d.put("msg", e.getMessage() != null ? e.getMessage() : "");
-                    DebugAgentLog.log(this, "MainActivity.resetReachBrowseHeaders",
-                            "removeHeaderView failed", "H-B", d);
-                } catch (Exception ignored) {}
-                // #endregion
-            }
+        listReachBrowse.setOnItemSelectedListener(null);
+        if (reachBrowseHeaderHost != null) {
+            reachBrowseHeaderHost.removeAllViews();
         }
         reachBrowseHeaderViews.clear();
-        // #region agent log
-        try {
-            org.json.JSONObject d = new org.json.JSONObject();
-            d.put("listHeaderViewsAfter", listReachBrowse.getHeaderViewsCount());
-            DebugAgentLog.log(this, "MainActivity.resetReachBrowseHeaders", "after reset",
-                    "H-B", d);
-        } catch (Exception ignored) {}
-        // #endregion
+    }
+
+    private void ensureReachBrowseHeaderHost() {
+        if (listReachBrowse == null || reachBrowseHeaderHost != null) return;
+        reachBrowseHeaderHost = new LinearLayout(this);
+        reachBrowseHeaderHost.setOrientation(LinearLayout.VERTICAL);
+        listReachBrowse.addHeaderView(reachBrowseHeaderHost, null, false);
     }
 
     private void addReachBrowseHeader(View header) {
-        if (listReachBrowse == null || header == null) return;
-        header.setLayoutParams(new android.widget.AbsListView.LayoutParams(
-                android.widget.AbsListView.LayoutParams.MATCH_PARENT,
-                android.widget.AbsListView.LayoutParams.WRAP_CONTENT));
-        listReachBrowse.addHeaderView(header, null, false);
+        if (header == null) return;
+        ensureReachBrowseHeaderHost();
+        if (reachBrowseHeaderHost == null) return;
+        header.setLayoutParams(new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT));
+        reachBrowseHeaderHost.addView(header);
         reachBrowseHeaderViews.add(header);
     }
 
@@ -5448,6 +5667,34 @@ public class MainActivity extends Activity {
                 && listReachBrowse.getAdapter() != null;
     }
 
+    private boolean isReachBrowseFocusValid() {
+        if (!isReachBrowseListActive()) return false;
+        View f = getCurrentFocus();
+        if (f == null || !f.isShown() || !f.isFocusable()) return false;
+        if (indexOfReachBrowseHeader(f) >= 0) return true;
+        return listReachBrowse != null && isViewDescendantOf(f, listReachBrowse);
+    }
+
+    /** Re-seed wheel focus when Reach browse list lost highlight (API 17 ListView quirk). */
+    private boolean ensureReachBrowseListFocus() {
+        if (!isReachBrowseListActive()) return false;
+        if (isReachBrowseFocusValid()) return false;
+        focusFirstReachBrowseDataRow();
+        // #region agent log
+        try {
+            org.json.JSONObject d = new org.json.JSONObject();
+            d.put("screen", settingsSubScreenKey);
+            DebugSessionLog.log("MainActivity.ensureReachBrowseListFocus", "reseed", "H-FOCUS1", d);
+        } catch (Exception ignored) {}
+        // #endregion
+        return true;
+    }
+
+    private void focusReachBrowseListPosition(int listPosition) {
+        applyReachBrowseAdapterSelection(listPosition);
+        FocusScrollHelper.focusListPosition(listReachBrowse, listPosition);
+    }
+
     private boolean moveReachBrowseListFocus(int delta) {
         if (!isReachBrowseListActive() || delta == 0) return false;
         int headerIdx = indexOfReachBrowseHeader(getCurrentFocus());
@@ -5466,13 +5713,20 @@ public class MainActivity extends Activity {
                         ReachInterestsAdapter ia = (ReachInterestsAdapter) ad;
                         int maxPos = headerCount + adapterRows - 1;
                         while (next <= maxPos && !ia.isSelectable(next - headerCount)) next++;
+                    } else if (ad instanceof ReachUsersAdapter) {
+                        ReachUsersAdapter ua = (ReachUsersAdapter) ad;
+                        int maxPos = headerCount + adapterRows - 1;
+                        while (next <= maxPos && !ua.isWheelSelectable(next - headerCount)) next++;
+                    } else if (ad instanceof ReachChatRoomsAdapter) {
+                        ReachChatRoomsAdapter ca = (ReachChatRoomsAdapter) ad;
+                        int maxPos = headerCount + adapterRows - 1;
+                        while (next <= maxPos && !ca.isWheelSelectable(next - headerCount)) next++;
                     } else {
                         int maxPos = headerCount + adapterRows - 1;
                         while (next <= maxPos && !ad.isEnabled(next - headerCount)) next++;
                     }
                     if (next <= headerCount + adapterRows - 1) {
-                        applyReachBrowseAdapterSelection(next);
-                        FocusScrollHelper.smoothScrollListToPosition(listReachBrowse, next);
+                        focusReachBrowseListPosition(next);
                         return true;
                     }
                 }
@@ -5490,8 +5744,7 @@ public class MainActivity extends Activity {
             }
             return false;
         }
-        int pos = listReachBrowse.getSelectedItemPosition();
-        if (pos < headerCount) pos = headerCount;
+        int pos = reachBrowseFocusedListPosition(ad);
         int next = pos + (delta < 0 ? -1 : 1);
         int maxPos = headerCount + adapterRows - 1;
         if (delta < 0 && next < headerCount) {
@@ -5504,14 +5757,53 @@ public class MainActivity extends Activity {
                 if (ia.isSelectable(adapterIndex)) break;
                 next += (delta < 0 ? -1 : 1);
             }
+        } else if (ad instanceof ReachUsersAdapter) {
+            ReachUsersAdapter ua = (ReachUsersAdapter) ad;
+            if (delta > 0) {
+                int adapterIndex = pos - headerCount;
+                if (adapterIndex == ua.getDataCount() - 1 && ua.hasShowMoreRow()) {
+                    ua.showMore();
+                    return true;
+                }
+            }
+            while (next >= headerCount && next <= maxPos) {
+                int adapterIndex = next - headerCount;
+                if (ua.isWheelSelectable(adapterIndex)) break;
+                next += (delta < 0 ? -1 : 1);
+            }
+        } else if (ad instanceof ReachChatRoomsAdapter) {
+            ReachChatRoomsAdapter ca = (ReachChatRoomsAdapter) ad;
+            if (delta > 0) {
+                int adapterIndex = pos - headerCount;
+                if (adapterIndex == ca.getDataCount() - 1 && ca.hasShowMoreRow()) {
+                    ca.showMore();
+                    return true;
+                }
+            }
+            while (next >= headerCount && next <= maxPos) {
+                int adapterIndex = next - headerCount;
+                if (ca.isWheelSelectable(adapterIndex)) break;
+                next += (delta < 0 ? -1 : 1);
+            }
         } else {
             while (next >= headerCount && next <= maxPos && !ad.isEnabled(next - headerCount)) {
                 next += (delta < 0 ? -1 : 1);
             }
         }
-        if (next < headerCount || next > maxPos) return false;
-        applyReachBrowseAdapterSelection(next);
-        FocusScrollHelper.smoothScrollListToPosition(listReachBrowse, next);
+        if (next < headerCount || next > maxPos) {
+            // #region agent log
+            try {
+                org.json.JSONObject d = new org.json.JSONObject();
+                d.put("delta", delta);
+                d.put("pos", pos);
+                d.put("next", next);
+                d.put("screen", settingsSubScreenKey);
+                DebugSessionLog.log("MainActivity.moveReachBrowseListFocus", "at limit", "H-FOCUS3", d);
+            } catch (Exception ignored) {}
+            // #endregion
+            return false;
+        }
+        focusReachBrowseListPosition(next);
         // #region agent log
         try {
             org.json.JSONObject d = new org.json.JSONObject();
@@ -5715,7 +6007,7 @@ public class MainActivity extends Activity {
                         ? y1RowTextColorSelected(rowKind) : y1RowTextColorNormal(rowKind));
             else if (!t.isEmpty())
                 ThemeManager.applyThemedTextStyle(value, focused
-                        ? y1RowTextColorSelected(rowKind) : ThemeManager.getTextColorSecondary());
+                        ? y1RowTextColorSelected(rowKind) : y1RowTextColorNormal(rowKind));
             enableMarquee(value);
         }
         if (arrow != null) arrow.setVisibility(focused ? View.VISIBLE : View.GONE);
@@ -6412,6 +6704,35 @@ public class MainActivity extends Activity {
         changeScreen(state);
     }
 
+    /** adb: am start -n com.solar.launcher/.MainActivity --ez solar_adb_open_soulseek_messages true */
+    private void scheduleAdbOpenSoulseekMessagesIfRequested() {
+        final boolean requested = getIntent() != null
+                && getIntent().getBooleanExtra("solar_adb_open_soulseek_messages", false);
+        // #region agent log
+        try {
+            org.json.JSONObject d = new org.json.JSONObject();
+            d.put("requested", requested);
+            DebugSessionLog.log("MainActivity.scheduleAdbOpenSoulseekMessagesIfRequested",
+                    "check extra", "H-M6", d);
+        } catch (Exception ignored) {}
+        // #endregion
+        if (!requested) return;
+        getIntent().removeExtra("solar_adb_open_soulseek_messages");
+        new Handler().postDelayed(new Runnable() {
+            @Override public void run() {
+                try {
+                    changeScreen(STATE_SETTINGS);
+                    buildReachSettingsUI(2);
+                    buildSoulseekSettingsUI();
+                    buildSoulseekMessagesUI();
+                    SolarAdbTest.pass("soulseek_messages_opened");
+                } catch (Exception e) {
+                    SolarAdbTest.fail("messages_" + e.getClass().getSimpleName());
+                }
+            }
+        }, 500);
+    }
+
     /** adb: am start -n com.solar.launcher/.MainActivity -e open_webserver true */
     private void handleLaunchIntentExtras() {
         Intent intent = getIntent();
@@ -6531,7 +6852,7 @@ public class MainActivity extends Activity {
             clearThemeGalleryPreview();
         }
         currentScreenState = state;
-        updateSoulseekSharePolicy();
+        scheduleSoulseekSharePolicyRefresh();
         layoutMainMenu.setVisibility(state == STATE_MENU ? View.VISIBLE : View.GONE);
         if (state != STATE_MENU && layoutMainMenu != null) {
             layoutMainMenu.setVisibility(View.GONE);
@@ -7009,6 +7330,15 @@ public class MainActivity extends Activity {
         return null;
     }
 
+    private String getFocusedReachRoomName() {
+        if (!SettingsScreens.SOULSEEK_CHAT_ROOMS.equals(settingsSubScreenKey)) return null;
+        if (reachChatRoomsAdapter == null) return null;
+        int sel = reachChatRoomsAdapter.getSelectedPosition();
+        if (sel < 0) return null;
+        SoulseekWire.RoomEntry entry = reachChatRoomsAdapter.roomAt(sel);
+        return entry != null && entry.name != null ? entry.name.trim() : null;
+    }
+
     private void openReachMessageContextMenu(int messagePosition) {
         if (!(listConversationThread.getAdapter() instanceof ConversationThreadAdapter)) return;
         ConversationThreadAdapter ad = (ConversationThreadAdapter) listConversationThread.getAdapter();
@@ -7051,6 +7381,14 @@ public class MainActivity extends Activity {
                 return true;
             }
         }
+        if (currentScreenState == STATE_SETTINGS
+                && SettingsScreens.SOULSEEK_CHAT_ROOMS.equals(settingsSubScreenKey)) {
+            String room = getFocusedReachRoomName();
+            if (room != null && !room.isEmpty()) {
+                pushContextReachChatRoomTier(room);
+                return true;
+            }
+        }
         return false;
     }
 
@@ -7074,6 +7412,75 @@ public class MainActivity extends Activity {
         contextReachPeerInfo = null;
         pushContextMenuTier("reach_inbox");
         rebuildContextReachInboxTier(true);
+    }
+
+    private void pushContextReachChatRoomTier(final String room) {
+        if (room == null || room.trim().isEmpty()) return;
+        contextReachChatRoomName = room.trim();
+        contextReachPeerUser = null;
+        contextReachMessagePosition = -1;
+        pushContextMenuTier("reach_chat_room");
+        rebuildContextReachChatRoomTier(true);
+    }
+
+    private String contextReachChatRoomName = "";
+
+    private void rebuildContextReachChatRoomTier(boolean focusList) {
+        final String room = contextReachChatRoomName;
+        if (room == null || room.isEmpty()) return;
+        java.util.ArrayList<String> labels = new java.util.ArrayList<String>();
+        java.util.ArrayList<String> states = new java.util.ArrayList<String>();
+        java.util.ArrayList<Boolean> headers = new java.util.ArrayList<Boolean>();
+        java.util.ArrayList<Runnable> actions = new java.util.ArrayList<Runnable>();
+
+        labels.add(room);
+        states.add(null);
+        headers.add(Boolean.TRUE);
+        actions.add(null);
+
+        labels.add(getString(R.string.soulseek_open_chat_room));
+        states.add(null);
+        headers.add(Boolean.FALSE);
+        actions.add(new Runnable() {
+            @Override
+            public void run() {
+                dismissThemedContextMenu();
+                SoulseekClient client = ensureSoulseekClient();
+                if (client != null) client.joinRoom(room);
+                buildSoulseekChatRoomUI(room);
+            }
+        });
+
+        if (!ReachCommunityRooms.isProtected(room)) {
+            labels.add(getString(R.string.soulseek_leave_chat_room));
+            states.add(null);
+            headers.add(Boolean.FALSE);
+            actions.add(new Runnable() {
+                @Override
+                public void run() {
+                    dismissThemedContextMenu();
+                    SoulseekClient client = ensureSoulseekClient();
+                    if (client != null) client.leaveRoom(room);
+                    SoulseekRoomPrefs.markLeft(MainActivity.this, prefs, room);
+                    if (reachChatRoomsAdapter != null) {
+                        String query = reachChatRoomsAdapter.getSearchQuery();
+                        if (query != null && !query.isEmpty()) {
+                            runReachChatRoomSearch(query, ++reachChatRoomsSearchGen);
+                        } else {
+                            reachChatRoomsAdapter.replaceRooms(
+                                    ReachCommunityRooms.pinInnioasis(prefs,
+                                            ReachCommunityRooms.defaultRoomList()));
+                            focusReachChatRoomsBrowse(reachChatRoomsAdapter);
+                        }
+                    }
+                    Toast.makeText(MainActivity.this,
+                            getString(R.string.soulseek_left_chat_room, room),
+                            Toast.LENGTH_SHORT).show();
+                }
+            });
+        }
+
+        showContextMenuTierInPlace(room, labels, states, null, headers, actions, focusList);
     }
 
     private void pushContextReachPeerTier(final String username,
@@ -7313,6 +7720,35 @@ public class MainActivity extends Activity {
             }
         });
 
+        labels.add(getString(R.string.soulseek_remove_conversation));
+        states.add(null);
+        headers.add(Boolean.FALSE);
+        actions.add(new Runnable() {
+            @Override
+            public void run() {
+                dismissThemedContextMenu();
+                SoulseekMessaging.deleteConversation(MainActivity.this, prefs, peer);
+                buildSoulseekMessagesUI();
+                Toast.makeText(MainActivity.this,
+                        getString(R.string.soulseek_conversation_removed, peer),
+                        Toast.LENGTH_SHORT).show();
+            }
+        });
+
+        if (last != null && preview != null && !preview.isEmpty()) {
+            final String quoteText = preview;
+            labels.add(getString(R.string.soulseek_react_to_message));
+            states.add(null);
+            headers.add(Boolean.FALSE);
+            actions.add(new Runnable() {
+                @Override
+                public void run() {
+                    contextReachPeerUser = peer;
+                    pushContextReachReactTier(quoteText);
+                }
+            });
+        }
+
         labels.add(getString(R.string.soulseek_edit_user_note));
         states.add(null);
         headers.add(Boolean.FALSE);
@@ -7393,9 +7829,22 @@ public class MainActivity extends Activity {
                 dismissThemedContextMenu();
                 soulseekMessagePeer = peer;
                 buildSoulseekConversationUI(peer);
-                openSoulseekMessageComposeWithQuote(peer, body);
+                openSoulseekMessageCompose(peer);
             }
         });
+
+        if (!body.isEmpty()) {
+            labels.add(getString(R.string.soulseek_react_to_message));
+            states.add(null);
+            headers.add(Boolean.FALSE);
+            actions.add(new Runnable() {
+                @Override
+                public void run() {
+                    contextReachPeerUser = peer;
+                    pushContextReachReactTier(body);
+                }
+            });
+        }
 
         labels.add(getString(R.string.soulseek_pm_dismiss));
         states.add(null);
@@ -8436,16 +8885,30 @@ public class MainActivity extends Activity {
         back.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) {
                 clickFeedback();
-                buildReachSettingsUI(5);
+                buildReachSettingsUI(3);
             }
         });
         containerSettingsItems.addView(back);
 
+        LinearLayout btnEnable = createSettingsRow(RowKeys.DEEZER_ENABLED,
+                R.string.common_enable, false);
+        btnEnable.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                clickFeedback();
+                deezerEnabled = !deezerEnabled;
+                prefs.edit().putBoolean(DeezerAccount.PREF_ENABLED, deezerEnabled).commit();
+                applyReachServiceState();
+                buildDeezerSettingsUI();
+                refreshSettingsPreview(RowKeys.DEEZER_ENABLED);
+            }
+        });
+        containerSettingsItems.addView(btnEnable);
+
         if (!deezerActive()) {
-            Button disabled = createListButton(getString(R.string.deezer_service_disabled));
-            disabled.setEnabled(false);
-            containerSettingsItems.addView(disabled);
-            if (containerSettingsItems.getChildCount() > 0) containerSettingsItems.getChildAt(0).requestFocus();
+            if (containerSettingsItems.getChildCount() > 1) {
+                containerSettingsItems.getChildAt(1).requestFocus();
+            }
+            refreshSettingsPreview(RowKeys.DEEZER_ENABLED);
             return;
         }
 
@@ -8672,13 +9135,16 @@ public class MainActivity extends Activity {
         final String password = typedPassword;
         final boolean open = isTargetWifiOpen;
         Toast.makeText(this, getString(R.string.toast_wifi_connecting, ssid), Toast.LENGTH_SHORT).show();
+        beginWifiConnect();
         WifiConnector.connect(this, ssid, password, open, new WifiConnector.Callback() {
             @Override
             public void onComplete(boolean success) {
+                endWifiConnect();
                 if (!success) {
                     Toast.makeText(MainActivity.this, getString(R.string.toast_wifi_connect_failed),
                             Toast.LENGTH_SHORT).show();
                 }
+                prefetchWifiConfiguredNetworksAsync();
                 changeScreen(STATE_WIFI);
             }
         });
@@ -8686,7 +9152,36 @@ public class MainActivity extends Activity {
 
     private void performWifiConnection(String ssid, String password, boolean open) {
         Toast.makeText(this, getString(R.string.toast_wifi_connecting, ssid), Toast.LENGTH_SHORT).show();
-        WifiConnector.connect(this, ssid, password, open, wifiConnectResultCallback());
+        beginWifiConnect();
+        WifiConnector.connect(this, ssid, password, open, wrapWifiConnectCallback(wifiConnectResultCallback()));
+    }
+
+    private void beginWifiConnect() {
+        wifiConnectInProgress = true;
+        WifiConnector.cancelPending();
+        // #region agent log
+        try {
+            org.json.JSONObject d = new org.json.JSONObject();
+            d.put("screen", currentScreenState);
+            d.put("tierTop", contextMenuTopTier());
+            DebugSessionLog.log("MainActivity.beginWifiConnect", "connect started", "H1", d);
+        } catch (Exception ignored) {}
+        // #endregion
+    }
+
+    private void endWifiConnect() {
+        wifiConnectInProgress = false;
+    }
+
+    private WifiConnector.Callback wrapWifiConnectCallback(final WifiConnector.Callback inner) {
+        return new WifiConnector.Callback() {
+            @Override
+            public void onComplete(boolean success) {
+                endWifiConnect();
+                prefetchWifiConfiguredNetworksAsync();
+                if (inner != null) inner.onComplete(success);
+            }
+        };
     }
 
     private boolean isWifiNetworkOpen(String capabilities) {
@@ -9246,6 +9741,7 @@ public class MainActivity extends Activity {
 
     private void startWifiScan() {
         updateStatusBarTitle();
+        prefetchWifiConfiguredNetworksAsync();
         WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
         boolean isOn = wm != null && wm.isWifiEnabled();
         updateWifiUI(null);
@@ -9373,16 +9869,23 @@ public class MainActivity extends Activity {
                     return;
                 }
 
-                if (WifiConnector.findSavedNetId(
-                        wifiManagerConfiguredNetworks(), ssid) >= 0) {
-                    Toast.makeText(MainActivity.this, getString(R.string.toast_wifi_saved_connecting), Toast.LENGTH_SHORT).show();
-                    WifiConnector.connectSaved(MainActivity.this, ssid, wifiConnectResultCallback());
-                } else if (isOpen) {
-                    performWifiConnection(ssid, "", true);
-                } else {
-                    isTargetWifiOpen = false;
-                    openWifiKeyboard(ssid);
-                }
+                Toast.makeText(MainActivity.this, getString(R.string.toast_wifi_connecting, ssid),
+                        Toast.LENGTH_SHORT).show();
+                beginWifiConnect();
+                WifiConnector.connectFromMenu(MainActivity.this, ssid, isOpen, null,
+                        new WifiConnector.MenuCallback() {
+                            @Override
+                            public void onNeedPassword() {
+                                endWifiConnect();
+                                isTargetWifiOpen = false;
+                                openWifiKeyboard(ssid);
+                            }
+
+                            @Override
+                            public void onComplete(boolean success) {
+                                wrapWifiConnectCallback(wifiConnectResultCallback()).onComplete(success);
+                            }
+                        });
             }
         });
         containerWifiItems.addView(btnWifi);
@@ -10099,7 +10602,7 @@ public class MainActivity extends Activity {
                     ThemeManager.applyThemedTextStyle(tvTitle, hasFocus
                             ? y1RowTextColorSelected(rowKind) : y1RowTextColorNormal(rowKind));
                     ThemeManager.applyThemedTextStyle(tvSub, hasFocus
-                            ? y1RowTextColorSelected(rowKind) : ThemeManager.getTextColorSecondary());
+                            ? y1RowTextColorSelected(rowKind) : y1RowTextColorNormal(rowKind));
                     tvTitle.setSelected(hasFocus);
                     tvSub.setSelected(hasFocus);
                     if (hasFocus) showFastScrollLetter(title);
@@ -10366,9 +10869,11 @@ public class MainActivity extends Activity {
             }
             return getString(R.string.soulseek_reach_enabled) + "\n\n" + stateOnOff(true);
         }
-        if (RowKeys.SOULSEEK_ENABLED.equals(rowKey)) {
-            return getString(R.string.soulseek_enabled_hint) + "\n\n" + stateOnOff(soulseekEnabled);
-        }
+        return null;
+    }
+
+    private String resolveDeezerSettingsPreviewText(String rowKey) {
+        if (!SettingsScreens.DEEZER.equals(settingsSubScreenKey) || rowKey == null) return null;
         if (RowKeys.DEEZER_ENABLED.equals(rowKey)) {
             return getString(R.string.deezer_enabled_hint) + "\n\n" + stateOnOff(deezerEnabled);
         }
@@ -10378,6 +10883,9 @@ public class MainActivity extends Activity {
     private String resolveSoulseekSettingsPreviewText(String rowKey) {
         if (!SettingsScreens.isSoulseek(settingsSubScreenKey) || rowKey == null) return null;
         if (SettingsScreens.SOULSEEK.equals(settingsSubScreenKey)) {
+            if (RowKeys.SOULSEEK_ENABLED.equals(rowKey)) {
+                return getString(R.string.soulseek_enabled_hint) + "\n\n" + stateOnOff(soulseekEnabled);
+            }
             if (RowKeys.SOULSEEK_SHARING.equals(rowKey)) {
                 return getString(R.string.soulseek_sharing_hint) + "\n\n" + stateOnOff(soulseekSharingEnabled);
             }
@@ -10763,10 +11271,6 @@ public class MainActivity extends Activity {
         }
     }
 
-    private String resolveDeezerSettingsPreviewText(String rowKey) {
-        return null;
-    }
-
     private String formatStorageLines(long total, long used, long avail) {
         return getString(R.string.common_storage_total, formatBytes(total), formatBytes(used), formatBytes(avail));
     }
@@ -11074,7 +11578,24 @@ public class MainActivity extends Activity {
                 break;
             }
         }
-        if (currentIdx < 0) return false;
+        if (currentIdx < 0) {
+            for (int i = 0; i < containerSettingsItems.getChildCount(); i++) {
+                View row = containerSettingsItems.getChildAt(i);
+                if (row == null || row.getVisibility() != View.VISIBLE || !row.isEnabled()
+                        || !row.isFocusable()) {
+                    continue;
+                }
+                if (row.requestFocus()) {
+                    if (containerSettingsItems.getParent() instanceof android.widget.ScrollView) {
+                        ((android.widget.ScrollView) containerSettingsItems.getParent())
+                                .requestChildFocus(containerSettingsItems, row);
+                    }
+                    lastSettingsFocusIndex = i;
+                    return true;
+                }
+            }
+            return false;
+        }
         int step = delta < 0 ? -1 : 1;
         for (int i = currentIdx + step; i >= 0 && i < containerSettingsItems.getChildCount(); i += step) {
             View next = containerSettingsItems.getChildAt(i);
@@ -11365,6 +11886,7 @@ public class MainActivity extends Activity {
         setContextNetworkTier(tier);
         if ("wifi".equals(tier)) {
             resetWifiContextScanPacing();
+            prefetchWifiConfiguredNetworksAsync();
             refreshContextWifiTierImmediate(true, true);
             scheduleWifiContextScanFollowUps();
         } else {
@@ -12051,6 +12573,7 @@ public class MainActivity extends Activity {
         @Override
         public void run() {
             if (contextTierConfirmOpen) return;
+            if (wifiConnectInProgress) return;
             if (themedContextMenu == null || !themedContextMenu.isShowing()) return;
             if (!shouldRefreshWifiContextUi()) return;
             refreshContextWifiTierImmediate(false, true);
@@ -12233,6 +12756,8 @@ public class MainActivity extends Activity {
     private void refreshContextWifiTierImmediate(boolean resetFocus, boolean force) {
         // ponytail: never stomp in-tier confirm (Turn off Wi-Fi?) — scans use debounced refresh.
         if (contextTierConfirmOpen) return;
+        // During join, skip scan/ticker rebuilds — broadcasts fire faster than wpa_supplicant settles.
+        if (wifiConnectInProgress && !resetFocus) return;
         // ponytail: Wi-Fi scan refresh must not replace power tier rows.
         if (!"wifi".equals(contextMenuTopTier())) {
             // #region agent log
@@ -12263,6 +12788,7 @@ public class MainActivity extends Activity {
         if (resetFocus && isWifiContextExpanded()) {
             scheduleWifiContextScanFollowUps();
         }
+        final long wifiTierRebuildStartMs = System.currentTimeMillis();
         rebuildWifiScanCache();
         String focusLabel = !resetFocus && themedContextMenu != null
                 ? themedContextMenu.focusItemLabel() : null;
@@ -12339,6 +12865,16 @@ public class MainActivity extends Activity {
         // #region agent log
         try {
             org.json.JSONObject d = new org.json.JSONObject();
+            d.put("elapsedMs", System.currentTimeMillis() - wifiTierRebuildStartMs);
+            d.put("rowCount", labels.size());
+            d.put("wifiConnectInProgress", wifiConnectInProgress);
+            d.put("resetFocus", resetFocus);
+            DebugSessionLog.log("MainActivity.refreshContextWifiTierImmediate", "tier rebuilt", "H4", d);
+        } catch (Exception ignored) {}
+        // #endregion
+        // #region agent log
+        try {
+            org.json.JSONObject d = new org.json.JSONObject();
             d.put("rowCount", labels.size());
             d.put("tierTop", contextMenuTopTier());
             d.put("wifiOn", isWifiPowerOn());
@@ -12387,31 +12923,52 @@ public class MainActivity extends Activity {
     }
 
     private void connectWifiFromContextMenu(final String ssid) {
-        if (WifiConnector.findSavedNetId(wifiManagerConfiguredNetworks(), ssid) >= 0) {
-            Toast.makeText(this, getString(R.string.toast_wifi_saved_connecting), Toast.LENGTH_SHORT).show();
-            WifiConnector.connectSaved(this, ssid, wifiConnectResultCallback());
-            return;
-        }
-        String caps = wifiCapabilitiesForSsid(ssid);
-        if (isWifiNetworkOpen(caps)) {
-            performWifiConnection(ssid, "", true);
-            return;
-        }
-        dismissThemedContextMenu();
-        isTargetWifiOpen = false;
-        keyboardReturnState = currentScreenState;
-        openWifiKeyboard(ssid);
+        final String caps = wifiCapabilitiesForSsid(ssid);
+        final boolean open = isWifiNetworkOpen(caps);
+        Toast.makeText(this, getString(R.string.toast_wifi_connecting, ssid), Toast.LENGTH_SHORT).show();
+        beginWifiConnect();
+        WifiConnector.connectFromMenu(this, ssid, open, null, new WifiConnector.MenuCallback() {
+            @Override
+            public void onNeedPassword() {
+                endWifiConnect();
+                dismissThemedContextMenu();
+                isTargetWifiOpen = false;
+                keyboardReturnState = currentScreenState;
+                openWifiKeyboard(ssid);
+            }
+
+            @Override
+            public void onComplete(boolean success) {
+                wrapWifiConnectCallback(wifiConnectResultCallback()).onComplete(success);
+            }
+        });
+    }
+
+    /** ponytail: prefetch on background — getConfiguredNetworks() blocks the UI thread for seconds on Y1. */
+    private void prefetchWifiConfiguredNetworksAsync() {
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    WifiManager wm = (WifiManager) getApplicationContext()
+                            .getSystemService(Context.WIFI_SERVICE);
+                    wifiConfiguredNetworksCache = wm != null ? wm.getConfiguredNetworks() : null;
+                    wifiConfiguredNetworksCacheAtMs = System.currentTimeMillis();
+                } catch (Exception e) {
+                    SolarLog.e("MainActivity", "prefetchWifiConfiguredNetworks", e);
+                }
+            }
+        }, "WifiCfgPrefetch").start();
     }
 
     @android.annotation.SuppressLint("MissingPermission")
     private List<WifiConfiguration> wifiManagerConfiguredNetworks() {
-        try {
-            WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
-            return wm != null ? wm.getConfiguredNetworks() : null;
-        } catch (Exception e) {
-            SolarLog.e("MainActivity", "getConfiguredNetworks", e);
-            return null;
+        long age = System.currentTimeMillis() - wifiConfiguredNetworksCacheAtMs;
+        if (wifiConfiguredNetworksCache != null && age >= 0 && age < WIFI_CONFIGURED_CACHE_TTL_MS) {
+            return wifiConfiguredNetworksCache;
         }
+        prefetchWifiConfiguredNetworksAsync();
+        return wifiConfiguredNetworksCache;
     }
 
     private WifiConnector.Callback wifiConnectResultCallback() {
@@ -13611,12 +14168,16 @@ public class MainActivity extends Activity {
     }
 
     private List<ArtistBrowsePolicy.Track> policyTracksFromLibrary() {
+        if (cachedPolicyTracks != null) return cachedPolicyTracks;
         List<ArtistBrowsePolicy.Track> out = new ArrayList<>();
-        for (SongItem song : customLibrary) {
-            out.add(new ArtistBrowsePolicy.Track(song.artist, song.album, song.albumArtist,
-                    song.file.lastModified()));
+        synchronized (customLibrary) {
+            for (SongItem song : customLibrary) {
+                out.add(new ArtistBrowsePolicy.Track(song.artist, song.album, song.albumArtist,
+                        song.file.lastModified()));
+            }
         }
-        return out;
+        cachedPolicyTracks = out;
+        return cachedPolicyTracks;
     }
 
     private void refreshLibraryBrowseIfVisible() {
@@ -14979,6 +15540,13 @@ public class MainActivity extends Activity {
             }
         }
         if (currentScreenState == STATE_WIFI) {
+            addContextAction(getString(R.string.context_action_refresh_mac), new Runnable() {
+                @Override
+                public void run() {
+                    dismissThemedContextMenu();
+                    refreshWifiMacAddress();
+                }
+            });
             final String wifiSsid = wifiFocusedSsid();
             if (wifiSsid != null && isWifiNetworkSaved(wifiSsid)) {
                 addContextAction(getString(R.string.context_action_forget_wifi), new Runnable() {
@@ -17288,6 +17856,25 @@ public class MainActivity extends Activity {
         buildHomeMenu();
     }
 
+    private java.util.Map<String, Integer> shareDurationCache() {
+        java.util.Map<String, Integer> cached = cachedShareDurations;
+        if (cached != null) return cached;
+        cached = MusicLibraryStore.getInstance(getApplicationContext()).durationSecByPath();
+        cachedShareDurations = cached;
+        // #region agent log
+        try {
+            org.json.JSONObject d = new org.json.JSONObject();
+            d.put("count", cached != null ? cached.size() : 0);
+            DebugSessionLog.log("MainActivity.shareDurationCache", "loaded", "H-CRASH1", d);
+        } catch (Exception ignored) {}
+        // #endregion
+        return cached;
+    }
+
+    private void invalidateShareDurationCache() {
+        cachedShareDurations = null;
+    }
+
     /** Reach hub: Soulseek + Deezer settings submenus. */
     private void buildReachSettingsUI() {
         buildReachSettingsUI(1);
@@ -17337,36 +17924,6 @@ public class MainActivity extends Activity {
             return;
         }
 
-        LinearLayout btnSoulseekEnable = createSettingsRow(RowKeys.SOULSEEK_ENABLED,
-                R.string.soulseek_enabled, false);
-        btnSoulseekEnable.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                clickFeedback();
-                soulseekEnabled = !soulseekEnabled;
-                prefs.edit().putBoolean(SoulseekAccount.PREF_SOULSEEK_ENABLED, soulseekEnabled).commit();
-                applyReachServiceState();
-                buildReachSettingsUI(2);
-                refreshSettingsPreview(RowKeys.SOULSEEK_ENABLED);
-            }
-        });
-        containerSettingsItems.addView(btnSoulseekEnable);
-
-        LinearLayout btnDeezerEnable = createSettingsRow(RowKeys.DEEZER_ENABLED,
-                R.string.deezer_enabled, false);
-        btnDeezerEnable.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                clickFeedback();
-                deezerEnabled = !deezerEnabled;
-                prefs.edit().putBoolean(DeezerAccount.PREF_ENABLED, deezerEnabled).commit();
-                applyReachServiceState();
-                buildReachSettingsUI(3);
-                refreshSettingsPreview(RowKeys.DEEZER_ENABLED);
-            }
-        });
-        containerSettingsItems.addView(btnDeezerEnable);
-
         LinearLayout btnSoulseek = createSettingsRow(RowKeys.SOULSEEK, R.string.settings_soulseek, true);
         btnSoulseek.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -17409,18 +17966,31 @@ public class MainActivity extends Activity {
             @Override
             public void onClick(View v) {
                 clickFeedback();
-                buildReachSettingsUI(4);
+                buildReachSettingsUI(2);
             }
         });
         containerSettingsItems.addView(btnBack);
 
+        LinearLayout btnEnable = createSettingsRow(RowKeys.SOULSEEK_ENABLED,
+                R.string.common_enable, false);
+        btnEnable.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                clickFeedback();
+                soulseekEnabled = !soulseekEnabled;
+                prefs.edit().putBoolean(SoulseekAccount.PREF_SOULSEEK_ENABLED, soulseekEnabled).commit();
+                applyReachServiceState();
+                buildSoulseekSettingsUI();
+                refreshSettingsPreview(RowKeys.SOULSEEK_ENABLED);
+            }
+        });
+        containerSettingsItems.addView(btnEnable);
+
         if (!soulseekActive()) {
-            Button disabled = createListButton(getString(R.string.soulseek_service_disabled));
-            disabled.setEnabled(false);
-            containerSettingsItems.addView(disabled);
             if (containerSettingsItems.getChildCount() > 1) {
                 containerSettingsItems.getChildAt(1).requestFocus();
             }
+            refreshSettingsPreview(RowKeys.SOULSEEK_ENABLED);
             return;
         }
 
@@ -17602,16 +18172,8 @@ public class MainActivity extends Activity {
             containerSettingsItems.addView(btnHideHighBitrate);
         }
 
-        Button btnSoulseekRegen = createListButton(getString(R.string.soulseek_regenerate_account));
-        btnSoulseekRegen.setTag(RowKeys.SOULSEEK_REGENERATE);
-        btnSoulseekRegen.setOnFocusChangeListener(new View.OnFocusChangeListener() {
-            @Override
-            public void onFocusChange(View v, boolean hasFocus) {
-                if (hasFocus && currentScreenState == STATE_SETTINGS && !isFullWidthMenus) {
-                    updateSettingsPreview(RowKeys.SOULSEEK_REGENERATE);
-                }
-            }
-        });
+        LinearLayout btnSoulseekRegen = createSettingsRow(RowKeys.SOULSEEK_REGENERATE,
+                getString(R.string.soulseek_regenerate_account), false, false);
         btnSoulseekRegen.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -18606,10 +19168,11 @@ public class MainActivity extends Activity {
         try {
             org.json.JSONObject d = new org.json.JSONObject();
             d.put("subKey", settingsSubScreenKey);
-            DebugAgentLog.log(this, "MainActivity.buildSoulseekMessagesUI", "enter", "H-A", d);
+            DebugSessionLog.log("MainActivity.buildSoulseekMessagesUI", "enter", "H-M1", d);
         } catch (Exception ignored) {}
         // #endregion
         showSoulseekConversationPanel(false);
+        showSoulseekRoomPanel(false);
         showReachBrowseList(false);
         setSettingsSubScreen(SettingsScreens.SOULSEEK_MESSAGES);
         updateStatusBarTitle();
@@ -18698,14 +19261,18 @@ public class MainActivity extends Activity {
             public void run() {
                 java.util.List<ReachDatabase.InboxRow> inbox =
                         new java.util.ArrayList<ReachDatabase.InboxRow>();
+                java.util.HashMap<String, String> notes =
+                        new java.util.HashMap<String, String>();
                 String loadError = null;
                 try {
                     ReachDatabase.getInstance(app).ensureMigrated(prefs);
                     inbox = ReachDatabase.getInstance(app).loadInboxSync();
+                    notes = ReachDatabase.getInstance(app).loadAllPeerNotesSync();
                 } catch (Exception e) {
                     loadError = e.getClass().getSimpleName() + ": " + e.getMessage();
                 }
                 final java.util.List<ReachDatabase.InboxRow> inboxFinal = inbox;
+                final java.util.HashMap<String, String> notesFinal = notes;
                 final String errFinal = loadError;
                 runOnUiThread(new Runnable() {
                     @Override
@@ -18715,9 +19282,10 @@ public class MainActivity extends Activity {
                             org.json.JSONObject d = new org.json.JSONObject();
                             d.put("gen", gen);
                             d.put("inboxSize", inboxFinal.size());
+                            d.put("notes", notesFinal.size());
                             d.put("error", errFinal != null ? errFinal : "");
-                            DebugAgentLog.log(MainActivity.this, "MainActivity.loadReachInboxData",
-                                    "ui result", errFinal != null ? "H-C" : "H-A", d);
+                            DebugSessionLog.log("MainActivity.loadReachInboxData",
+                                    "ui result", errFinal != null ? "H-M5" : "H-M1", d);
                         } catch (Exception ignored) {}
                         // #endregion
                         if (gen != reachInboxLoadGen) return;
@@ -18734,7 +19302,7 @@ public class MainActivity extends Activity {
                             reachInboxAdapter.setStatus(
                                     getString(R.string.soulseek_messages_empty_hint));
                         } else {
-                            reachInboxAdapter.setInbox(inboxFinal);
+                            reachInboxAdapter.setInbox(inboxFinal, notesFinal);
                         }
                         reachInboxAdapter.setRowWidthPx(messagingRowWidthPx());
                         focusReachBrowseList(gen);
@@ -19244,7 +19812,8 @@ public class MainActivity extends Activity {
             reachChatRoomsAdapter.setLoading(getString(R.string.soulseek_chat_rooms_loading));
             runReachChatRoomSearch(savedQuery, gen);
         } else {
-            reachChatRoomsAdapter.setAwaitingSearch(getString(R.string.soulseek_chat_rooms_empty));
+            reachChatRoomsAdapter.replaceRooms(
+                    ReachCommunityRooms.pinInnioasis(prefs, ReachCommunityRooms.defaultRoomList()));
         }
         if (listReachBrowse != null) {
             listReachBrowse.setAdapter(reachChatRoomsAdapter);
@@ -19267,6 +19836,15 @@ public class MainActivity extends Activity {
             });
         }
         syncReachChatRoomListInBackground();
+        ensureInnioasisRoomJoined();
+    }
+
+    /** Community room — auto-join for every Reach user; always pinned in the list. */
+    private void ensureInnioasisRoomJoined() {
+        SoulseekClient client = ensureSoulseekClient();
+        if (client != null) {
+            client.joinRoom(ReachCommunityRooms.INNIOASIS);
+        }
     }
 
     private void syncReachChatRoomListInBackground() {
@@ -19303,7 +19881,8 @@ public class MainActivity extends Activity {
             }
         });
         int limit = Math.min(ReachChatRoomsAdapter.PAGE_SIZE, sorted.size());
-        reachChatRoomsAdapter.setRooms(sorted.subList(0, limit));
+        reachChatRoomsAdapter.replaceRooms(
+                ReachCommunityRooms.pinInnioasis(prefs, sorted.subList(0, limit)));
     }
 
     private void openSoulseekRoomSearchKeyboard() {
@@ -19365,7 +19944,8 @@ public class MainActivity extends Activity {
                         if (results.isEmpty()) {
                             reachChatRoomsAdapter.setJoinByNameFallback(query);
                         } else {
-                            reachChatRoomsAdapter.setSearchResults(query, results);
+                            reachChatRoomsAdapter.setSearchResults(query,
+                                    ReachCommunityRooms.pinInnioasis(prefs, results));
                         }
                         if (listReachBrowse != null) {
                             listReachBrowse.post(new Runnable() {
@@ -21009,44 +21589,212 @@ public class MainActivity extends Activity {
         }
     }
 
-    // 💡 1. 안드로이드 스캐너를 버리고, 앱이 직접 MP3 태그를 추출하여 분류하는 함수!
+    // 💡 1. Incremental library scan — SQLite cache + ID3 only for new/changed files.
     // ponytail: dedupe by path; secondary by title+artist+duration hash — may collapse distinct files
     private final java.util.HashSet<String> libraryScanPaths = new java.util.HashSet<String>();
     private final java.util.HashSet<String> libraryScanMetaKeys = new java.util.HashSet<String>();
 
-    private void buildCustomLibrary(File folder) {
-        if (libraryScanGen != activeLibraryScanGen) return;
-        File[] files = folder.listFiles();
-        if (files != null) {
-            for (File f : files) {
-                if (f.isDirectory()) {
-                    buildCustomLibrary(f);
-                } else if (isAudioFile(f)) {
-                    if (blacklist.contains(f.getAbsolutePath())) continue;
-                    String normPath = f.getAbsolutePath().toLowerCase(java.util.Locale.US);
-                    if (!libraryScanPaths.add(normPath)) continue;
-                    try {
-                        AudioTags.Info tags = AudioTags.read(f, prefs);
-                        String title = tags.title;
-                        String artist = tags.artist;
-                        String album = tags.album;
-                        String genre = tags.genre;
-                        String albumArtist = tags.albumArtist;
-                        String duration = tags.durationMs;
+    private static final class LibraryScanResolved {
+        SongItem item;
+        String metaKey;
+    }
 
-                        if (artist.isEmpty()) artist = "Unknown Artist";
-                        if (album.isEmpty()) album = "Unknown Album";
-
-                        String metaKey = (title + "\0" + artist + "\0" + duration).toLowerCase(java.util.Locale.US);
-                        if (!libraryScanMetaKeys.add(metaKey)) {
-                            continue;
-                        }
-
-                        customLibrary.add(new SongItem(f, title, artist, album, genre, albumArtist));
-                    } catch (Exception e) {
-                    }
-                }
+    /** Shared worker for onCreate, manual scan, and post-download refresh. */
+    private void startLibraryScan(final boolean userInitiated) {
+        if (libraryScanRunning) return;
+        libraryScanRunning = true;
+        isCustomScanning = customLibrary.isEmpty();
+        final int gen = libraryScanGen;
+        activeLibraryScanGen = gen;
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                runLibraryScanWorker(gen, userInitiated);
             }
+        }, "LibraryScan").start();
+    }
+
+    private void runLibraryScanWorker(final int gen, final boolean userInitiated) {
+        final MusicLibraryStore store = MusicLibraryStore.getInstance(getApplicationContext());
+        if (customLibrary.isEmpty()) {
+            java.util.List<MusicLibraryStore.Track> cached = store.loadAll();
+            if (libraryScanGen != gen) {
+                abortLibraryScanWorker(gen);
+                return;
+            }
+            if (!cached.isEmpty()) {
+                applyCachedTracks(cached);
+                postLibraryCacheHydrated(gen);
+            }
+        }
+        libraryScanPaths.clear();
+        libraryScanMetaKeys.clear();
+        java.util.HashSet<String> seenPaths = MusicLibraryStore.newKeepSet();
+        java.util.ArrayList<SongItem> scanned = new java.util.ArrayList<SongItem>();
+        buildCustomLibraryIncremental(rootFolder, store, seenPaths, scanned, gen);
+        if (libraryScanGen != gen) {
+            abortLibraryScanWorker(gen);
+            return;
+        }
+        store.deleteExcept(seenPaths);
+        reconcileCustomLibrary(scanned);
+        normalizeLibraryAlbumTitles();
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                finishLibraryScan(gen, userInitiated);
+            }
+        });
+    }
+
+    private void applyCachedTracks(java.util.List<MusicLibraryStore.Track> cached) {
+        synchronized (customLibrary) {
+            customLibrary.clear();
+            for (MusicLibraryStore.Track t : cached) {
+                File f = new File(t.path);
+                if (!f.isFile()) continue;
+                if (blacklist.contains(t.path)) continue;
+                customLibrary.add(songItemFromStoreTrack(t, f));
+            }
+        }
+        invalidateSongPathIndex();
+    }
+
+    private static SongItem songItemFromStoreTrack(MusicLibraryStore.Track t, File f) {
+        String genre = t.genre != null && t.genre.trim().length() > 0 ? t.genre.trim() : "Unknown Genre";
+        return new SongItem(f, t.title, t.artist, t.album, genre, t.albumArtist);
+    }
+
+    private void postLibraryCacheHydrated(final int gen) {
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                if (libraryScanGen != gen) return;
+                isCustomScanning = false;
+                refreshLibraryBrowseIfVisible();
+            }
+        });
+    }
+
+    private void reconcileCustomLibrary(java.util.ArrayList<SongItem> scanned) {
+        synchronized (customLibrary) {
+            customLibrary.clear();
+            customLibrary.addAll(scanned);
+        }
+        invalidateSongPathIndex();
+        invalidateShareDurationCache();
+        clearArtistOwnAlbumCache();
+    }
+
+    private void finishLibraryScan(int gen, boolean userInitiated) {
+        if (libraryScanGen != gen) return;
+        libraryScanRunning = false;
+        isCustomScanning = false;
+        requestSoulseekShareRescan();
+        if (soulseekActive() && soulseekSharingEnabled) {
+            updateSoulseekSharePolicy();
+        }
+        refreshLibraryBrowseIfVisible();
+        if (userInitiated) {
+            Toast.makeText(this,
+                    "Scan Complete! " + customLibrary.size() + " songs found.", Toast.LENGTH_SHORT).show();
+            refreshBrowserAfterLibraryScan();
+        } else if (currentScreenState == STATE_BROWSER) {
+            refreshBrowserAfterLibraryScan();
+        }
+    }
+
+    private void refreshBrowserAfterLibraryScan() {
+        if (currentScreenState != STATE_BROWSER) return;
+        if (currentBrowserMode == BROWSER_ROOT) {
+            buildFileBrowserUI();
+        } else if (currentBrowserMode == BROWSER_ARTISTS) {
+            buildVirtualCategories("ARTIST");
+        } else if (currentBrowserMode == BROWSER_ALBUMS) {
+            buildVirtualCategories("ALBUM");
+        } else if (currentBrowserMode == BROWSER_GENRES) {
+            buildVirtualCategories("GENRE");
+        } else if (currentBrowserMode == BROWSER_ARTIST_ALBUMS) {
+            buildArtistAlbums();
+        } else if (currentBrowserMode == BROWSER_PLAYLISTS) {
+            buildPlaylistsUI();
+        } else if (currentBrowserMode == BROWSER_VIRTUAL_SONGS) {
+            buildVirtualSongs();
+        }
+    }
+
+    private void abortLibraryScanWorker(final int gen) {
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                if (activeLibraryScanGen != gen) return;
+                libraryScanRunning = false;
+                isCustomScanning = false;
+            }
+        });
+    }
+
+    private void buildCustomLibraryIncremental(File folder, MusicLibraryStore store,
+            java.util.HashSet<String> seenPaths, java.util.ArrayList<SongItem> out, int gen) {
+        if (libraryScanGen != gen) return;
+        File[] files = folder.listFiles();
+        if (files == null) return;
+        for (File f : files) {
+            if (libraryScanGen != gen) return;
+            if (f.isDirectory()) {
+                buildCustomLibraryIncremental(f, store, seenPaths, out, gen);
+            } else if (isAudioFile(f)) {
+                if (blacklist.contains(f.getAbsolutePath())) continue;
+                seenPaths.add(f.getAbsolutePath());
+                String normPath = f.getAbsolutePath().toLowerCase(java.util.Locale.US);
+                if (!libraryScanPaths.add(normPath)) continue;
+                LibraryScanResolved resolved = resolveSongItemForScan(f, store);
+                if (resolved == null || resolved.item == null) continue;
+                if (!libraryScanMetaKeys.add(resolved.metaKey)) continue;
+                out.add(resolved.item);
+            }
+        }
+    }
+
+    private LibraryScanResolved resolveSongItemForScan(File f, MusicLibraryStore store) {
+        try {
+            String title;
+            String artist;
+            String album;
+            String genre;
+            String albumArtist;
+            String durationMs;
+            if (store.isFresh(f)) {
+                MusicLibraryStore.Track cached = store.get(f.getAbsolutePath());
+                if (cached == null) return null;
+                title = cached.title;
+                artist = cached.artist;
+                album = cached.album;
+                genre = cached.genre;
+                albumArtist = cached.albumArtist;
+                durationMs = cached.durationMs;
+            } else {
+                AudioTags.Info tags = AudioTags.read(f, prefs, AudioTags.READ_SKIP_EMBEDDED_ART);
+                title = tags.title;
+                artist = tags.artist;
+                album = tags.album;
+                genre = tags.genre;
+                albumArtist = tags.albumArtist;
+                durationMs = tags.durationMs;
+                if (artist.isEmpty()) artist = "Unknown Artist";
+                if (album.isEmpty()) album = "Unknown Album";
+                store.upsert(f, title, artist, album, genre, albumArtist, durationMs);
+            }
+            LibraryScanResolved resolved = new LibraryScanResolved();
+            resolved.item = songItemFromStoreTrack(
+                    new MusicLibraryStore.Track(f.getAbsolutePath(), f.lastModified(), f.length(),
+                            title, artist, album, genre, albumArtist, durationMs),
+                    f);
+            resolved.metaKey = (title + "\0" + artist + "\0" + durationMs)
+                    .toLowerCase(java.util.Locale.US);
+            return resolved;
+        } catch (Exception e) {
+            return null;
         }
     }
 
@@ -21354,51 +22102,10 @@ public class MainActivity extends Activity {
             btnScan.setTextColor(isCustomScanning ? 0xFF000000 : 0xFFFFFFFF);
             btnScan.setOnClickListener(v -> {
                 clickFeedback();
-                if (isCustomScanning)
-                    return;
-
-                isCustomScanning = true;
+                if (isCustomScanning) return;
                 btnScan.setText(getString(R.string.browser_scanning));
                 btnScan.setTextColor(0xFF000000);
-                final int gen = libraryScanGen;
-                activeLibraryScanGen = gen;
-
-                new Thread(new Runnable() {
-                    @Override
-                    public void run() {
-                        customLibrary.clear();
-                        invalidateSongPathIndex();
-                        buildCustomLibrary(rootFolder);
-                        normalizeLibraryAlbumTitles();
-
-                        runOnUiThread(new Runnable() {
-                            @Override
-                            public void run() {
-                                isCustomScanning = false;
-                                Toast.makeText(MainActivity.this,
-                                                "Scan Complete! " + customLibrary.size() + " songs found.", Toast.LENGTH_SHORT)
-                                        .show();
-                                if (currentScreenState == STATE_BROWSER) {
-                                    if (currentBrowserMode == BROWSER_ROOT) {
-                                        buildFileBrowserUI();
-                                    } else if (currentBrowserMode == BROWSER_ARTISTS) {
-                                        buildVirtualCategories("ARTIST");
-                                    } else if (currentBrowserMode == BROWSER_ALBUMS) {
-                                        buildVirtualCategories("ALBUM");
-                                    } else if (currentBrowserMode == BROWSER_GENRES) {
-                                        buildVirtualCategories("GENRE");
-                                    } else if (currentBrowserMode == BROWSER_ARTIST_ALBUMS) {
-                                        buildArtistAlbums();
-                                    } else if (currentBrowserMode == BROWSER_PLAYLISTS) {
-                                        buildPlaylistsUI();
-                                    } else if (currentBrowserMode == BROWSER_VIRTUAL_SONGS) {
-                                        buildVirtualSongs();
-                                    }
-                                }
-                            }
-                        });
-                    }
-                }).start();
+                startLibraryScan(true);
             });
             containerBrowserItems.addView(btnScan);
             if (hasInternetConnection() && GetMusicSources.anyAvailable(prefs, soulseekActive(), deezerActive())) {
@@ -22078,6 +22785,11 @@ public class MainActivity extends Activity {
                 if (title != null && !title.trim().isEmpty()) song.title = title.trim();
                 if (artist != null && !artist.trim().isEmpty()) song.artist = artist.trim();
                 if (album != null && !album.trim().isEmpty()) song.album = album.trim();
+                if (song.file.isFile()) {
+                    MusicLibraryStore.getInstance(getApplicationContext()).upsert(
+                            song.file, song.title, song.artist, song.album, song.genre,
+                            song.albumArtist, "");
+                }
                 invalidateSongPathIndex();
                 if (currentScreenState == STATE_BROWSER && currentBrowserMode == BROWSER_VIRTUAL_SONGS) {
                     buildVirtualSongs();
@@ -22121,6 +22833,7 @@ public class MainActivity extends Activity {
 
     private void invalidateSongPathIndex() {
         songPathIndex = null;
+        cachedPolicyTracks = null;
     }
 
 
@@ -22374,6 +23087,25 @@ public class MainActivity extends Activity {
         return WifiConnector.findSavedNetId(wifiManagerConfiguredNetworks(), ssid) >= 0;
     }
 
+    /** Wi-Fi settings context menu only — re-randomizes MTK NVRAM MAC via su. */
+    private void refreshWifiMacAddress() {
+        Toast.makeText(this, getString(R.string.toast_wifi_mac_refreshing), Toast.LENGTH_SHORT).show();
+        WifiMacRandomizer.refreshManual(this, new WifiMacRandomizer.Callback() {
+            @Override
+            public void onComplete(boolean success, String macFormatted) {
+                if (success) {
+                    Toast.makeText(MainActivity.this,
+                            getString(R.string.toast_wifi_mac_refreshed, macFormatted),
+                            Toast.LENGTH_LONG).show();
+                    if (currentScreenState == STATE_WIFI) startWifiScan();
+                } else {
+                    Toast.makeText(MainActivity.this, getString(R.string.toast_wifi_mac_failed),
+                            Toast.LENGTH_LONG).show();
+                }
+            }
+        });
+    }
+
     private void forgetWifiNetwork(String ssid) {
         if (ssid == null) return;
         WifiConnector.forget(this, ssid, new WifiConnector.Callback() {
@@ -22448,15 +23180,13 @@ public class MainActivity extends Activity {
             else if (virtualQueryType.equals("ARTIST_ALBUM")
                     && ArtistParser.containsArtist(song.artist, virtualQueryArtist)
                     && AlbumNames.equals(song.album, virtualQueryValue)) match = true;
-            if (match) {
-                targetSongs.add(song);
-                virtualSongList.add(song.file);
-                currentScrollIndexList.add(song.title);
-            }
+            if (match) targetSongs.add(song);
         }
         sortSongItems(targetSongs);
-        virtualSongList.clear();
-        for (SongItem s : targetSongs) virtualSongList.add(s.file);
+        for (SongItem s : targetSongs) {
+            virtualSongList.add(s.file);
+            currentScrollIndexList.add(s.title);
+        }
         SongListAdapter adapter = new SongListAdapter(targetSongs, false);
         listVirtualSongs.setAdapter(adapter);
         listVirtualSongs.post(new Runnable() {
@@ -23439,15 +24169,30 @@ public class MainActivity extends Activity {
 
     private void runSoulseekShareScanIfNeeded() {
         if (soulseekShareScanRunning) return;
-        if (!soulseekShareRescanPending && !(soulseekSharingEnabled && soulseekActive())) return;
+        // ponytail: only rescan when library changed or index empty — was re-walking disk every policy tick.
+        if (!soulseekShareRescanPending) {
+            if (soulseekSharingEnabled && soulseekActive() && soulseekShareIndex.fileCount() == 0) {
+                soulseekShareRescanPending = true;
+            } else {
+                return;
+            }
+        }
         soulseekShareRescanPending = false;
         soulseekShareScanRunning = true;
         final SoulseekAccount account = SoulseekAccount.load(prefs, MainActivity.this);
+        final java.util.ArrayList<File> musicFiles = new java.util.ArrayList<File>();
+        synchronized (customLibrary) {
+            for (SongItem s : customLibrary) {
+                if (s.file != null && s.file.isFile()) musicFiles.add(s.file);
+            }
+        }
+        final java.util.Map<String, Integer> durations = shareDurationCache();
         new Thread(new Runnable() {
             @Override
             public void run() {
                 try {
-                    soulseekShareIndex.scan(account.username, rootFolder, PodcastLibrary.ROOT);
+                    soulseekShareIndex.scan(account.username, rootFolder, PodcastLibrary.ROOT,
+                            durations, musicFiles);
                     SoulseekClient c = soulseekClient;
                     try {
                         org.json.JSONObject d = new org.json.JSONObject();
@@ -23479,6 +24224,7 @@ public class MainActivity extends Activity {
     }
 
     private void updateSoulseekSharePolicy() {
+        final long policyStartMs = System.currentTimeMillis();
         if (!soulseekActive()) {
             soulseekSharePolicy.setReachMasterEnabled(false);
             if (soulseekClient != null) {
@@ -23549,6 +24295,15 @@ public class MainActivity extends Activity {
         } else {
             client.setShareIndex(soulseekShareIndex);
         }
+        // #region agent log
+        try {
+            org.json.JSONObject d = new org.json.JSONObject();
+            d.put("elapsedMs", System.currentTimeMillis() - policyStartMs);
+            d.put("wifi", hasInternetConnection());
+            d.put("wifiConnectInProgress", wifiConnectInProgress);
+            DebugSessionLog.log("MainActivity.updateSoulseekSharePolicy", "policy tick done", "H3", d);
+        } catch (Exception ignored) {}
+        // #endregion
     }
 
     private String soulseekSharingStatusLabel() {
@@ -23799,7 +24554,6 @@ public class MainActivity extends Activity {
                     buildHomeMenu();
                     registerReachDirectoryPresence();
                     requestSoulseekShareRescan();
-                    updateSoulseekSharePolicy();
                     soulseekListenPort = listenPort;
                     if (isSoulseekUiActive() && tvBrowserPath != null && soulseekUiMode == SOULSEEK_UI_SEARCH) {
                         SoulseekAccount account = SoulseekAccount.load(prefs);
@@ -23810,6 +24564,10 @@ public class MainActivity extends Activity {
                         prefs.edit().putBoolean("soulseek_port_warn_shown", true).commit();
                         Toast.makeText(MainActivity.this, getString(R.string.soulseek_port_warning, listenPort),
                                 Toast.LENGTH_LONG).show();
+                    }
+                    SoulseekClient client = soulseekClient;
+                    if (client != null) {
+                        ensureInnioasisRoomJoined();
                     }
                 }
             });
@@ -23933,7 +24691,7 @@ public class MainActivity extends Activity {
                                     }
                                     buildSoulseekResultsUI();
                                     finalizeSoulseekSearch(toSort.size());
-                                    updateSoulseekSharePolicy();
+                                    scheduleSoulseekSharePolicyRefresh();
                                     if (toSort.isEmpty()) {
                                         Toast.makeText(MainActivity.this,
                                                 getString(R.string.soulseek_no_results),
@@ -24455,7 +25213,7 @@ public class MainActivity extends Activity {
                     ThemeManager.applyThemedTextStyle(tvTitle, hasFocus
                             ? y1RowTextColorSelected(rowKind) : y1RowTextColorNormal(rowKind));
                     ThemeManager.applyThemedTextStyle(tvSub, hasFocus
-                            ? y1RowTextColorSelected(rowKind) : ThemeManager.getTextColorSecondary());
+                            ? y1RowTextColorSelected(rowKind) : y1RowTextColorNormal(rowKind));
                     tvTitle.setSelected(hasFocus);
                     tvSub.setSelected(hasFocus);
                     if (hasFocus) showFastScrollLetter(title);
@@ -25803,7 +26561,7 @@ public class MainActivity extends Activity {
         buildSoulseekDownloadUI(r, action);
         File dest = action == SOULSEEK_ACTION_SAVE ? rootFolder : reachCacheDir();
         ensureSoulseekClient().download(r, dest);
-        updateSoulseekSharePolicy();
+        scheduleSoulseekSharePolicyRefresh();
     }
 
     private void watchDownloadPeerSharing(final String peer) {
@@ -26227,7 +26985,7 @@ public class MainActivity extends Activity {
         reachGrowingTotalBytes = 0;
         progressHandler.removeCallbacks(reachGrowingEdgePoll);
         purgeUnreferencedReachCache();
-        updateSoulseekSharePolicy();
+        scheduleSoulseekSharePolicyRefresh();
     }
 
     private boolean reachDownloadInProgress() {
@@ -27311,27 +28069,7 @@ public class MainActivity extends Activity {
     }
 
     private void scanMediaLibraryAsync() {
-        if (isCustomScanning) return;
-        isCustomScanning = true;
-        final int gen = libraryScanGen;
-        activeLibraryScanGen = gen;
-        new Thread(new Runnable() {
-            @Override
-            public void run() {
-                customLibrary.clear();
-                invalidateSongPathIndex();
-                libraryScanPaths.clear();
-                libraryScanMetaKeys.clear();
-                buildCustomLibrary(rootFolder);
-                runOnUiThread(new Runnable() {
-                    @Override
-                    public void run() {
-                        isCustomScanning = false;
-                        requestSoulseekShareRescan();
-                    }
-                });
-            }
-        }).start();
+        startLibraryScan(false);
     }
 
     private boolean isWifiConnectedForStream() {
@@ -29903,6 +30641,20 @@ public class MainActivity extends Activity {
                 clickFeedback();
                 return true;
             }
+            // #region agent log
+            if (currentScreenState == STATE_SETTINGS && isReachBrowseListActive()
+                    && event.getRepeatCount() == 0
+                    && (Y1InputKeys.isWheelKey(keyCode) || keyCode == 19 || keyCode == 20)) {
+                try {
+                    org.json.JSONObject d = new org.json.JSONObject();
+                    d.put("keyCode", keyCode);
+                    d.put("isWheelKey", Y1InputKeys.isWheelKey(keyCode));
+                    d.put("isWheelUp", Y1InputKeys.isWheelUp(keyCode));
+                    d.put("screen", settingsSubScreenKey);
+                    DebugSessionLog.log("MainActivity.onKeyDown", "reach browse wheel key", "H-WHEEL1", d);
+                } catch (Exception ignored) {}
+            }
+            // #endregion
             if (currentScreenState == STATE_SETTINGS && Y1InputKeys.isWheelKey(keyCode)) {
                 // #region agent log
                 if (isConversationThreadActive()) {
@@ -29922,7 +30674,8 @@ public class MainActivity extends Activity {
                     return true;
                 }
                 if (isReachBrowseListActive()) {
-                    if (moveReachBrowseListFocus(Y1InputKeys.isWheelUp(keyCode) ? -1 : 1)) {
+                    int delta = Y1InputKeys.isWheelUp(keyCode) ? -1 : 1;
+                    if (moveReachBrowseListFocus(delta) || ensureReachBrowseListFocus()) {
                         clickFeedback();
                     }
                     return true;
@@ -30169,6 +30922,7 @@ public class MainActivity extends Activity {
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
+        scheduleAdbOpenSoulseekMessagesIfRequested();
         if (intent != null && intent.getBooleanExtra("solar_adb_goto", false)) {
             final int screen = intent.getIntExtra("solar_adb_screen", STATE_MENU);
             intent.removeExtra("solar_adb_goto");
@@ -30199,6 +30953,11 @@ public class MainActivity extends Activity {
         if (!launchExtrasHandled) {
             launchExtrasHandled = true;
             handleLaunchIntentExtras();
+        }
+        // ponytail: Y1 HOME + singleTop often skips onNewIntent when adb brings task to front.
+        if (getIntent() != null
+                && getIntent().getBooleanExtra("solar_adb_open_soulseek_messages", false)) {
+            scheduleAdbOpenSoulseekMessagesIfRequested();
         }
     }
 

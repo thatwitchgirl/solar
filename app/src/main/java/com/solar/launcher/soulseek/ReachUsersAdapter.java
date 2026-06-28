@@ -48,7 +48,26 @@ public final class ReachUsersAdapter extends BaseAdapter {
         allUsers = users != null ? new ArrayList<ReachDirectoryUser>(users) : new ArrayList<ReachDirectoryUser>();
         if (visibleCount < PAGE_SIZE) visibleCount = PAGE_SIZE;
         if (visibleCount > allUsers.size()) visibleCount = allUsers.size();
+        selectedPosition = -1;
         notifyDataSetChanged();
+    }
+
+    public void clearSelectedPosition() {
+        if (selectedPosition < 0) return;
+        selectedPosition = -1;
+        notifyDataSetChanged();
+    }
+
+    /** Wheel/selectable user rows only — not the Show more footer. */
+    public boolean isWheelSelectable(int adapterIndex) {
+        return adapterIndex >= 0 && adapterIndex < getDataCount();
+    }
+
+    public void showMore() {
+        if (!hasShowMoreRow()) return;
+        visibleCount = Math.min(visibleCount + PAGE_SIZE, allUsers.size());
+        notifyDataSetChanged();
+        if (listener != null) listener.onShowMore();
     }
 
     public int getSelectedPosition() {
@@ -90,6 +109,11 @@ public final class ReachUsersAdapter extends BaseAdapter {
     }
 
     @Override
+    public boolean isEnabled(int position) {
+        return position < getDataCount();
+    }
+
+    @Override
     public int getViewTypeCount() {
         return 2;
     }
@@ -113,12 +137,11 @@ public final class ReachUsersAdapter extends BaseAdapter {
                 ThemeManager.applyThemedTextStyle(tv, ThemeManager.getItemTextColorNormal());
             }
             tv.setText(activity.getString(R.string.soulseek_show_more, visibleCount, allUsers.size()));
+            tv.setFocusable(false);
             tv.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View v) {
-                    visibleCount = Math.min(visibleCount + PAGE_SIZE, allUsers.size());
-                    notifyDataSetChanged();
-                    if (listener != null) listener.onShowMore();
+                    showMore();
                 }
             });
             return tv;

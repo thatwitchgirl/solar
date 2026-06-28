@@ -24,6 +24,16 @@ tasks.register("syncY1Assets") {
     }
 }
 
+tasks.register("syncReleaseVersion") {
+    doLast {
+        exec {
+            workingDir rootProject.projectDir
+            environment "SOLAR_RELEASE_CHANNEL", System.getenv("SOLAR_RELEASE_CHANNEL") ?: ""
+            commandLine "bash", "solar-rom/scripts/sync-gradle-version.sh"
+        }
+    }
+}
+
 tasks.named("preBuild").configure { dependsOn("ensurePlatformKeystore", "syncY1Assets") }
 
 android {
@@ -43,8 +53,8 @@ android {
         applicationId "com.solar.launcher"
         minSdk 17
         targetSdk 35
-        versionCode 3413419
-        versionName "nightly-20260628-1019"
+        versionCode 3414082
+        versionName "nightly-20260628-2122"
         buildConfigField "boolean", "FEATURE_OTA_UPDATE", "true"
         buildConfigField "String", "OTA_UPDATES_URL", "\"https://thesolarproject.github.io/solar-update/updates.xml\""
         def podcastIndexKey = project.findProperty("PODCAST_INDEX_API_KEY") ?: ""
@@ -82,6 +92,10 @@ android {
             java.srcDirs += 'src/api21/java'
         }
     }
+}
+
+afterEvaluate {
+    tasks.named("preReleaseBuild").configure { dependsOn("syncReleaseVersion") }
 }
 
 dependencies {

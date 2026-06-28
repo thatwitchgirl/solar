@@ -98,6 +98,13 @@ public final class SoulseekMessaging {
         return ReachDatabase.getInstance(ctx).lastMessageForPeerSync(peer);
     }
 
+    /** Remove all PM history for a peer — inbox row disappears. */
+    public static void deleteConversation(Context ctx, SharedPreferences prefs, String peer) {
+        if (ctx == null || peer == null || peer.trim().isEmpty()) return;
+        ReachDatabase.getInstance(ctx).ensureMigrated(prefs);
+        ReachDatabase.getInstance(ctx).deletePmThreadSync(peer.trim());
+    }
+
     public static String formatTimestamp(int unixSeconds) {
         if (unixSeconds <= 0) return "";
         try {

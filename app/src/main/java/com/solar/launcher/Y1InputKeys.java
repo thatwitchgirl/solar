@@ -4,7 +4,8 @@ import android.view.KeyEvent;
 
 /**
  * Y1 hardware keys — InputReader uses Generic.kl for mtk-kpd/mtk-tpd-kpd on Y1 firmware.
- * wheel 105/106 → MEDIA_PLAY/PAUSE (126/127); side 165/163 → MEDIA_PREVIOUS/NEXT (88/87).
+ * Wheel: scancode 114/115 → DPAD_UP/DOWN (19/20); 105/106 → MEDIA_PLAY/PAUSE (126/127).
+ * Accept both — firmware paths differ; side 165/163 → MEDIA_PREVIOUS/NEXT (88/87).
  */
 public final class Y1InputKeys {
 
@@ -32,14 +33,16 @@ public final class Y1InputKeys {
                 || keyCode == KeyEvent.KEYCODE_MEDIA_STOP || keyCode == 86;
     }
 
-    /** Wheel up — Rockbox.kl 105/103 → MEDIA_PLAY (126). */
+    /** Wheel up — Y1-Rockbox.kl 114 → DPAD_UP (19) or 105 → MEDIA_PLAY (126). */
     public static boolean isWheelUp(int keyCode) {
-        return keyCode == KEY_WHEEL_UP || keyCode == 126;
+        return keyCode == KEY_WHEEL_UP || keyCode == 126
+                || keyCode == KeyEvent.KEYCODE_DPAD_UP || keyCode == 19;
     }
 
-    /** Wheel down — Rockbox.kl 106/108 → MEDIA_PAUSE (127). */
+    /** Wheel down — Y1-Rockbox.kl 115 → DPAD_DOWN (20) or 106 → MEDIA_PAUSE (127). */
     public static boolean isWheelDown(int keyCode) {
-        return keyCode == KEY_WHEEL_DOWN || keyCode == 127;
+        return keyCode == KEY_WHEEL_DOWN || keyCode == 127
+                || keyCode == KeyEvent.KEYCODE_DPAD_DOWN || keyCode == 20;
     }
 
     /** Side previous — mtk-kpd scancode 165 → MEDIA_PREVIOUS (88). */
@@ -62,14 +65,14 @@ public final class Y1InputKeys {
         return 0;
     }
 
-    /** AVRCP PASSTHROUGH PLAY → same Android keycode as wheel up; only remap when device is AVRCP. */
+    /** AVRCP PASSTHROUGH PLAY → MEDIA_PLAY (126) only; not DPAD_UP (19) from Y1 wheel. */
     public static boolean isDiscreteMediaPlay(int keyCode) {
-        return isWheelUp(keyCode);
+        return keyCode == KEY_WHEEL_UP || keyCode == 126;
     }
 
-    /** AVRCP PASSTHROUGH PAUSE → same Android keycode as wheel down; only remap when device is AVRCP. */
+    /** AVRCP PASSTHROUGH PAUSE → MEDIA_PAUSE (127) only; not DPAD_DOWN (20) from Y1 wheel. */
     public static boolean isDiscreteMediaPause(int keyCode) {
-        return isWheelDown(keyCode);
+        return keyCode == KEY_WHEEL_DOWN || keyCode == 127;
     }
 
     /** Discrete skip from AVRCP.kl — same keycodes as Y1 side keys (87/88). */
@@ -116,6 +119,10 @@ public final class Y1InputKeys {
     static void selfCheckWheelMapping() {
         if (wheelMenuDelta(126) != -1) throw new AssertionError("wheel MEDIA_PLAY");
         if (wheelMenuDelta(127) != 1) throw new AssertionError("wheel MEDIA_PAUSE");
+        if (wheelMenuDelta(19) != -1) throw new AssertionError("wheel DPAD_UP");
+        if (wheelMenuDelta(20) != 1) throw new AssertionError("wheel DPAD_DOWN");
+        if (isDiscreteMediaPlay(19)) throw new AssertionError("dpad up not avrcp play");
+        if (isDiscreteMediaPause(20)) throw new AssertionError("dpad down not avrcp pause");
         if (wheelMenuDelta(88) != 0) throw new AssertionError("track prev not wheel");
         if (wheelMenuDelta(87) != 0) throw new AssertionError("track next not wheel");
         if (!isTrackPreviousKey(88)) throw new AssertionError("track prev media");

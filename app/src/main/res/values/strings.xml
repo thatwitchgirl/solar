@@ -4,6 +4,7 @@
 
     <!-- Common -->
     <string name="common_back">Back</string>
+    <string name="common_enable">Enable</string>
     <string name="common_cancel_back">〈 CANCEL &amp; BACK</string>
     <string name="common_back_short">〈 BACK</string>
     <string name="common_on">On</string>
@@ -553,6 +554,12 @@
     <string name="soulseek_chat_rooms_empty">Search for a chat room to join.</string>
     <string name="soulseek_chat_rooms_search">Search chat rooms</string>
     <string name="soulseek_chat_rooms_search_hint">Enter room name</string>
+    <string name="soulseek_community_room_badge">Reach community room</string>
+    <string name="soulseek_open_chat_room">Open chat room</string>
+    <string name="soulseek_leave_chat_room">Leave chat room</string>
+    <string name="soulseek_left_chat_room">Left %1$s</string>
+    <string name="soulseek_remove_conversation">Remove conversation</string>
+    <string name="soulseek_conversation_removed">Removed conversation with %1$s</string>
     <string name="soulseek_chat_rooms_no_results">No rooms match your search.</string>
     <string name="soulseek_room_list_updated">Room list updated</string>
     <string name="soulseek_room_join_by_name">Join by name</string>
@@ -844,6 +851,7 @@
     <string name="context_action_cancel_download">Cancel download</string>
     <string name="context_action_refresh_scan">Refresh scan</string>
     <string name="context_action_forget_wifi">Forget network</string>
+    <string name="context_action_refresh_mac">Refresh MAC</string>
     <string name="context_action_forget_bluetooth">Forget device</string>
     <string name="context_action_edit_home">Edit Home Screen</string>
     <string name="context_action_open_player">Open player</string>
@@ -996,6 +1004,9 @@
     <string name="toast_wifi_saved_connecting">Connecting to saved network…</string>
     <string name="toast_wifi_forgotten">Forgot network: %1$s</string>
     <string name="toast_wifi_forget_failed">Could not forget network.</string>
+    <string name="toast_wifi_mac_refreshing">Refreshing Wi-Fi MAC…</string>
+    <string name="toast_wifi_mac_refreshed">Wi-Fi MAC: %1$s</string>
+    <string name="toast_wifi_mac_failed">Could not change Wi-Fi MAC.</string>
     <string name="toast_wifi_connect_failed">Could not connect to Wi-Fi.</string>
     <string name="toast_bt_forgotten">Forgot device: %1$s</string>
     <string name="toast_bt_forget_failed">Could not forget device.</string>

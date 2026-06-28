@@ -51,16 +51,40 @@ public final class SoulseekShareIndex {
     }
 
     public synchronized void scan(String username, File musicRoot, File podcastRoot) {
+        scan(username, musicRoot, podcastRoot, null, null);
+    }
+
+    /** @param cachedDurationSecByPath lower-case absolute path → duration seconds from library cache */
+    public synchronized void scan(String username, File musicRoot, File podcastRoot,
+            Map<String, Integer> cachedDurationSecByPath) {
+        scan(username, musicRoot, podcastRoot, cachedDurationSecByPath, null);
+    }
+
+    /**
+     * @param knownMusicFiles when non-empty, index Music from this list instead of re-walking the tree
+     *        (ponytail: avoids a second O(files) filesystem walk after library scan).
+     */
+    public synchronized void scan(String username, File musicRoot, File podcastRoot,
+            Map<String, Integer> cachedDurationSecByPath, List<File> knownMusicFiles) {
         List<Entry> newEntries = new ArrayList<Entry>();
         Map<String, File> newByVirtualPath = new HashMap<String, File>();
         Map<String, List<Entry>> newByDir = new LinkedHashMap<String, List<Entry>>();
         if (username != null && !username.trim().isEmpty()) {
             String user = username.trim();
             if (musicRoot != null && musicRoot.isDirectory()) {
-                scanRoot(user, "Music", musicRoot, musicRoot, newEntries, newByVirtualPath);
+                if (knownMusicFiles != null && !knownMusicFiles.isEmpty()) {
+                    for (File f : knownMusicFiles) {
+                        addShareableFile(user, "Music", musicRoot, f, newEntries, newByVirtualPath,
+                                cachedDurationSecByPath);
+                    }
+                } else {
+                    scanRoot(user, "Music", musicRoot, musicRoot, newEntries, newByVirtualPath,
+                            cachedDurationSecByPath);
+                }
             }
             if (podcastRoot != null && podcastRoot.isDirectory()) {
-                scanRoot(user, "Podcasts", podcastRoot, podcastRoot, newEntries, newByVirtualPath);
+                scanRoot(user, "Podcasts", podcastRoot, podcastRoot, newEntries, newByVirtualPath,
+                        cachedDurationSecByPath);
             }
             for (Entry e : newEntries) {
                 List<Entry> list = newByDir.get(e.dir);
@@ -80,26 +104,35 @@ public final class SoulseekShareIndex {
     }
 
     private void scanRoot(String user, String libName, File root, File dir,
-            List<Entry> outEntries, Map<String, File> outByVirtualPath) {
+            List<Entry> outEntries, Map<String, File> outByVirtualPath,
+            Map<String, Integer> cachedDurationSecByPath) {
         File[] kids = dir.listFiles();
         if (kids == null) return;
         for (File f : kids) {
             if (f.isDirectory()) {
-                scanRoot(user, libName, root, f, outEntries, outByVirtualPath);
-            } else if (isShareableAudio(f.getName())) {
-                String rel = relativize(root, f);
-                String virtual = "@@" + user + "\\" + libName + "\\" + rel.replace('/', '\\');
-                int slash = virtual.lastIndexOf('\\');
-                String parent = slash > 0 ? virtual.substring(0, slash) : virtual;
-                String name = f.getName();
-                long size = f.length();
-                String ext = extension(name);
-                int[] meta = readAudioMetadata(f);
-                Entry e = new Entry(virtual, parent, name, f, size, ext, meta[0], meta[1]);
-                outEntries.add(e);
-                outByVirtualPath.put(normalizePath(virtual), f);
+                scanRoot(user, libName, root, f, outEntries, outByVirtualPath, cachedDurationSecByPath);
+            } else {
+                addShareableFile(user, libName, root, f, outEntries, outByVirtualPath,
+                        cachedDurationSecByPath);
             }
         }
+    }
+
+    private static void addShareableFile(String user, String libName, File root, File f,
+            List<Entry> outEntries, Map<String, File> outByVirtualPath,
+            Map<String, Integer> cachedDurationSecByPath) {
+        if (f == null || !f.isFile() || !isShareableAudio(f.getName())) return;
+        String rel = relativize(root, f);
+        String virtual = "@@" + user + "\\" + libName + "\\" + rel.replace('/', '\\');
+        int slash = virtual.lastIndexOf('\\');
+        String parent = slash > 0 ? virtual.substring(0, slash) : virtual;
+        String name = f.getName();
+        long size = f.length();
+        String ext = extension(name);
+        int[] meta = readAudioMetadata(f, cachedDurationSecByPath);
+        Entry e = new Entry(virtual, parent, name, f, size, ext, meta[0], meta[1]);
+        outEntries.add(e);
+        outByVirtualPath.put(normalizePath(virtual), f);
     }
 
     private static String relativize(File root, File file) {
@@ -209,6 +242,20 @@ public final class SoulseekShareIndex {
             }
         }
         return bos.toByteArray();
+    }
+
+    private static int[] readAudioMetadata(File file, Map<String, Integer> cachedDurationSecByPath) {
+        int[] out = new int[] { 0, 0 };
+        if (file == null || !file.isFile()) return out;
+        if (cachedDurationSecByPath != null) {
+            Integer cached = cachedDurationSecByPath.get(
+                    file.getAbsolutePath().toLowerCase(Locale.US));
+            if (cached != null && cached > 0) {
+                out[1] = cached;
+                return out;
+            }
+        }
+        return readAudioMetadata(file);
     }
 
     private static int[] readAudioMetadata(File file) {

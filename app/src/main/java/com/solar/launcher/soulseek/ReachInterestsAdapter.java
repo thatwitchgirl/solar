@@ -133,7 +133,7 @@ public final class ReachInterestsAdapter extends BaseAdapter {
                 tv.setLayoutParams(new AbsListView.LayoutParams(
                         AbsListView.LayoutParams.MATCH_PARENT,
                         AbsListView.LayoutParams.WRAP_CONTENT));
-                ThemeManager.applyThemedTextStyle(tv, ThemeManager.getHintTextColor());
+                ThemeManager.applyThemedTextStyle(tv, ThemeManager.getSubtitleTextColor());
             }
             tv.setText(item.label);
             return tv;

@@ -14,7 +14,10 @@ import com.solar.launcher.soulseek.store.ReachDatabase;
 import com.solar.launcher.theme.ThemeManager;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 
 /** Virtualized Reach messages inbox (peer list). */
 public final class ReachInboxAdapter extends BaseAdapter {
@@ -29,6 +32,7 @@ public final class ReachInboxAdapter extends BaseAdapter {
     private final Activity activity;
     private final Listener listener;
     private List<ReachDatabase.InboxRow> rows = new ArrayList<ReachDatabase.InboxRow>();
+    private Map<String, String> peerNotesByUser = new HashMap<String, String>();
     private int selectedPosition = -1;
     private int rowWidthPx;
     private int rowHeightPx;
@@ -63,7 +67,13 @@ public final class ReachInboxAdapter extends BaseAdapter {
     }
 
     public void setInbox(List<ReachDatabase.InboxRow> inbox) {
+        setInbox(inbox, null);
+    }
+
+    public void setInbox(List<ReachDatabase.InboxRow> inbox, Map<String, String> notesByUser) {
         rows = inbox != null ? new ArrayList<ReachDatabase.InboxRow>(inbox) : new ArrayList<ReachDatabase.InboxRow>();
+        peerNotesByUser.clear();
+        if (notesByUser != null) peerNotesByUser.putAll(notesByUser);
         statusMode = false;
         statusText = "";
         selectedPosition = -1;
@@ -77,6 +87,13 @@ public final class ReachInboxAdapter extends BaseAdapter {
     public void setSelectedPosition(int pos) {
         if (pos == selectedPosition) return;
         selectedPosition = pos;
+        notifyDataSetChanged();
+    }
+
+    /** Clear row highlight when wheel focus moves to ListView header buttons. */
+    public void clearSelectedPosition() {
+        if (selectedPosition < 0) return;
+        selectedPosition = -1;
         notifyDataSetChanged();
     }
 
@@ -138,10 +155,7 @@ public final class ReachInboxAdapter extends BaseAdapter {
                 text = activity.getString(R.string.soulseek_messages_loading);
             }
             tv.setText(text);
-            ThemeManager.applyThemedTextStyle(tv,
-                    statusMode
-                            ? ThemeManager.getHintTextColor()
-                            : ThemeManager.getTextColorSecondary());
+            ThemeManager.applyThemedTextStyle(tv, ThemeManager.getSubtitleTextColor());
             return tv;
         }
 
@@ -170,7 +184,11 @@ public final class ReachInboxAdapter extends BaseAdapter {
         }
         final String timestamp = SoulseekMessaging.formatTimestamp(row.timestamp);
         String preview = ReachMessageFormat.previewText(row.text);
-        String note = SoulseekPeerNotes.getNoteSync(activity, row.peer);
+        String noteKey = row.peer != null ? row.peer.toLowerCase(java.util.Locale.US) : "";
+        String note = peerNotesByUser.get(noteKey);
+        if (note == null || note.trim().isEmpty()) {
+            note = peerNotesByUser.get(row.peer);
+        }
         if (note != null && !note.trim().isEmpty()) {
             String line = note.trim().split("\n")[0];
             if (line.length() > 24) line = line.substring(0, 24) + "\u2026";

@@ -35,6 +35,26 @@ public class SoulseekShareIndexTest {
     deleteTree(podcasts);
   }
 
+  @Test
+  public void scanFromKnownMusicFilesSkipsTreeWalk() throws Exception {
+    File music = new File(System.getProperty("java.io.tmpdir"), "share_known_music");
+    deleteTree(music);
+    new File(music, "Artist").mkdirs();
+    File track = new File(music, "Artist/song.mp3");
+    writeEmpty(track);
+
+    java.util.ArrayList<File> known = new java.util.ArrayList<File>();
+    known.add(track);
+
+    SoulseekShareIndex idx = new SoulseekShareIndex();
+    idx.scan("testuser", music, null, null, known);
+    if (idx.fileCount() != 1) throw new AssertionError("count=" + idx.fileCount());
+    File resolved = idx.resolve("@@testuser\\Music\\Artist\\song.mp3");
+    if (resolved == null || !resolved.equals(track)) throw new AssertionError("known file path");
+
+    deleteTree(music);
+  }
+
   private static void writeEmpty(File f) throws Exception {
     f.getParentFile().mkdirs();
     FileOutputStream out = new FileOutputStream(f);

@@ -13,6 +13,9 @@ import java.util.Locale;
 
 /** Read MP3/FLAC tags for library + player; prefs overlay and album-artist fallback. */
 public final class AudioTags {
+    /** Skip embedded art bytes — library scans only need text tags. */
+    public static final int READ_SKIP_EMBEDDED_ART = 1;
+
     public static final class Info {
         public String title = "";
         public String artist = "";
@@ -29,8 +32,14 @@ public final class AudioTags {
 
     /** Read embedded tags, overlay saved fetch/Deezer metadata, resolve display artist. */
     public static Info read(File file, SharedPreferences prefs) {
+        return read(file, prefs, 0);
+    }
+
+    /** {@link #read(File, SharedPreferences)} with {@link #READ_SKIP_EMBEDDED_ART} for bulk scans. */
+    public static Info read(File file, SharedPreferences prefs, int flags) {
         Info info = new Info();
         if (file == null || !file.isFile()) return info;
+        final boolean skipArt = (flags & READ_SKIP_EMBEDDED_ART) != 0;
 
         MediaMetadataRetriever mmr = null;
         try {
@@ -46,7 +55,9 @@ public final class AudioTags {
                 info.albumArtist = safe(mmr.extractMetadata(
                         MediaMetadataRetriever.METADATA_KEY_ALBUMARTIST));
             }
-            info.embeddedArt = mmr.getEmbeddedPicture();
+            if (!skipArt) {
+                info.embeddedArt = mmr.getEmbeddedPicture();
+            }
         } catch (Exception ignored) {
         } finally {
             if (mmr != null) {
@@ -71,18 +82,20 @@ public final class AudioTags {
         resolveArtist(info, file.getName());
 
         // #region agent log
-        try {
-            JSONObject d = new JSONObject();
-            d.put("file", file.getName());
-            d.put("title", info.title);
-            d.put("artist", info.artist);
-            d.put("album", info.album);
-            d.put("albumArtist", info.albumArtist);
-            d.put("artistSource", info.artistSource);
-            d.put("hasArt", info.embeddedArt != null && info.embeddedArt.length > 0);
-            d.put("hasValidTags", hasValidTags(info));
-            DebugAgentLog.log(null, "AudioTags.read", "tags resolved", "H-A", d);
-        } catch (Exception ignored) {}
+        if (DebugAgentLog.ENABLED) {
+            try {
+                JSONObject d = new JSONObject();
+                d.put("file", file.getName());
+                d.put("title", info.title);
+                d.put("artist", info.artist);
+                d.put("album", info.album);
+                d.put("albumArtist", info.albumArtist);
+                d.put("artistSource", info.artistSource);
+                d.put("hasArt", info.embeddedArt != null && info.embeddedArt.length > 0);
+                d.put("hasValidTags", hasValidTags(info));
+                DebugAgentLog.log(null, "AudioTags.read", "tags resolved", "H-A", d);
+            } catch (Exception ignored) {}
+        }
         // #endregion
 
         return info;

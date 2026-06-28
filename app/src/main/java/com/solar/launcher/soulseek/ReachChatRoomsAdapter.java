@@ -5,7 +5,6 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.AbsListView;
 import android.widget.BaseAdapter;
-import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.TextView;
 
@@ -81,7 +80,8 @@ public final class ReachChatRoomsAdapter extends BaseAdapter {
         statusText = "";
         searchQuery = "";
         joinByNameFallback = null;
-        allRooms = rooms != null ? new ArrayList<SoulseekWire.RoomEntry>(rooms) : new ArrayList<SoulseekWire.RoomEntry>();
+        allRooms = rooms != null ? new ArrayList<SoulseekWire.RoomEntry>(rooms)
+                : new ArrayList<SoulseekWire.RoomEntry>();
         if (visibleCount < PAGE_SIZE) visibleCount = PAGE_SIZE;
         if (visibleCount > allRooms.size()) visibleCount = allRooms.size();
         selectedPosition = -1;
@@ -100,7 +100,8 @@ public final class ReachChatRoomsAdapter extends BaseAdapter {
         statusText = "";
         searchQuery = query != null ? query.trim() : "";
         joinByNameFallback = null;
-        allRooms = rooms != null ? new ArrayList<SoulseekWire.RoomEntry>(rooms) : new ArrayList<SoulseekWire.RoomEntry>();
+        allRooms = rooms != null ? new ArrayList<SoulseekWire.RoomEntry>(rooms)
+                : new ArrayList<SoulseekWire.RoomEntry>();
         visibleCount = PAGE_SIZE;
         if (visibleCount > allRooms.size()) visibleCount = allRooms.size();
         selectedPosition = -1;
@@ -132,8 +133,29 @@ public final class ReachChatRoomsAdapter extends BaseAdapter {
         notifyDataSetChanged();
     }
 
+    /** Replace list contents — caller passes Innioasis-pinned list when needed. */
+    public void replaceRooms(List<SoulseekWire.RoomEntry> rooms) {
+        statusMode = false;
+        statusText = "";
+        joinByNameFallback = null;
+        allRooms = rooms != null ? new ArrayList<SoulseekWire.RoomEntry>(rooms)
+                : new ArrayList<SoulseekWire.RoomEntry>();
+        if (visibleCount < allRooms.size() && visibleCount < PAGE_SIZE) {
+            visibleCount = Math.min(PAGE_SIZE, allRooms.size());
+        }
+        if (visibleCount > allRooms.size()) visibleCount = allRooms.size();
+        selectedPosition = -1;
+        notifyDataSetChanged();
+    }
+
+    /** Wheel/selectable room rows only — not Show more footer. */
+    public boolean isWheelSelectable(int adapterIndex) {
+        if (statusMode || joinByNameFallback != null) return adapterIndex == 0;
+        return adapterIndex >= 0 && adapterIndex < getDataCount();
+    }
+
     public boolean hasShowMoreRow() {
-        return !statusMode && visibleCount < allRooms.size();
+        return !statusMode && joinByNameFallback == null && visibleCount < allRooms.size();
     }
 
     public int getDataCount() {
@@ -203,33 +225,30 @@ public final class ReachChatRoomsAdapter extends BaseAdapter {
                 text = activity.getString(R.string.soulseek_chat_rooms_loading);
             }
             tv.setText(text);
-            ThemeManager.applyThemedTextStyle(tv,
-                    statusMode
-                            ? ThemeManager.getHintTextColor()
-                            : ThemeManager.getTextColorSecondary());
+            ThemeManager.applyThemedTextStyle(tv, ThemeManager.getSubtitleTextColor());
             return tv;
         }
         if (type == TYPE_SHOW_MORE) {
-            Button btn;
-            if (convertView instanceof Button) {
-                btn = (Button) convertView;
+            TextView tv;
+            if (convertView instanceof TextView) {
+                tv = (TextView) convertView;
             } else {
-                btn = new Button(activity);
-                btn.setLayoutParams(new AbsListView.LayoutParams(
+                tv = new TextView(activity);
+                tv.setLayoutParams(new AbsListView.LayoutParams(
                         AbsListView.LayoutParams.MATCH_PARENT,
                         AbsListView.LayoutParams.WRAP_CONTENT));
+                ThemeManager.applyThemedTextStyle(tv, ThemeManager.getSubtitleTextColor());
             }
-            btn.setText(activity.getString(R.string.soulseek_show_more,
+            tv.setText(activity.getString(R.string.soulseek_show_more,
                     visibleCount, allRooms.size()));
-            btn.setOnClickListener(new View.OnClickListener() {
+            tv.setFocusable(false);
+            tv.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View v) {
-                    visibleCount = Math.min(visibleCount + PAGE_SIZE, allRooms.size());
-                    notifyDataSetChanged();
-                    if (listener != null) listener.onShowMore();
+                    showMore();
                 }
             });
-            return btn;
+            return tv;
         }
 
         final SoulseekWire.RoomEntry entry = roomAt(position);
@@ -243,9 +262,14 @@ public final class ReachChatRoomsAdapter extends BaseAdapter {
             row = ReachMessageRow.create(activity, rowHeightPx);
         }
         final boolean joinFallback = joinByNameFallback != null;
-        final String subtitle = joinFallback
-                ? activity.getString(R.string.soulseek_room_join_by_name)
-                : activity.getString(R.string.soulseek_room_users, entry.userCount);
+        final String subtitle;
+        if (joinFallback) {
+            subtitle = activity.getString(R.string.soulseek_room_join_by_name);
+        } else if (ReachCommunityRooms.isProtected(entry.name)) {
+            subtitle = activity.getString(R.string.soulseek_community_room_badge);
+        } else {
+            subtitle = activity.getString(R.string.soulseek_room_users, entry.userCount);
+        }
         final FrameLayout rowView = row;
         ReachMessageRow.attachFocusHighlight(row, new ReachMessageRow.HighlightBind() {
             @Override
@@ -276,5 +300,6 @@ public final class ReachChatRoomsAdapter extends BaseAdapter {
         if (!hasShowMoreRow()) return;
         visibleCount = Math.min(visibleCount + PAGE_SIZE, allRooms.size());
         notifyDataSetChanged();
+        if (listener != null) listener.onShowMore();
     }
 }

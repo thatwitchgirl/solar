@@ -1,0 +1,258 @@
+package com.solar.launcher;
+
+import android.content.Context;
+import android.database.Cursor;
+import android.database.sqlite.SQLiteDatabase;
+import android.database.sqlite.SQLiteOpenHelper;
+import android.database.sqlite.SQLiteStatement;
+
+import java.io.File;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
+
+/**
+ * SQLite cache for local Music library metadata — avoids re-reading ID3 on every scan.
+ * ponytail: keyed by path + mtime + size; stale rows purged after each walk.
+ */
+public class MusicLibraryStore extends SQLiteOpenHelper {
+    private static final String DB_NAME = "music_library.db";
+    private static final int DB_VERSION = 1;
+
+    private static MusicLibraryStore instance;
+
+    /** Cached row — maps to {@link MainActivity}'s SongItem fields. */
+    public static final class Track {
+        public final String path;
+        public final long mtime;
+        public final long size;
+        public final String title;
+        public final String artist;
+        public final String album;
+        public final String genre;
+        public final String albumArtist;
+        public final String durationMs;
+
+        Track(String path, long mtime, long size, String title, String artist, String album,
+                String genre, String albumArtist, String durationMs) {
+            this.path = path;
+            this.mtime = mtime;
+            this.size = size;
+            this.title = title != null ? title : "";
+            this.artist = artist != null ? artist : "";
+            this.album = album != null ? album : "";
+            this.genre = genre != null ? genre : "";
+            this.albumArtist = albumArtist != null ? albumArtist : "";
+            this.durationMs = durationMs != null ? durationMs : "";
+        }
+
+        /** Duration in whole seconds for Soulseek share attributes; 0 when unknown. */
+        public int durationSec() {
+            if (durationMs == null || durationMs.trim().isEmpty()) return 0;
+            try {
+                int ms = Integer.parseInt(durationMs.trim());
+                return ms > 0 ? ms / 1000 : 0;
+            } catch (NumberFormatException e) {
+                return 0;
+            }
+        }
+    }
+
+    private MusicLibraryStore(Context ctx) {
+        super(ctx.getApplicationContext(), DB_NAME, null, DB_VERSION);
+    }
+
+    public static synchronized MusicLibraryStore getInstance(Context ctx) {
+        if (instance == null) {
+            instance = new MusicLibraryStore(ctx.getApplicationContext());
+        }
+        return instance;
+    }
+
+    static void resetInstanceForTest() {
+        if (instance != null) {
+            instance.close();
+            instance = null;
+        }
+    }
+
+    /** In-memory DB for unit tests. */
+    public static MusicLibraryStore openForTest(Context ctx) {
+        resetInstanceForTest();
+        final SQLiteDatabase[] mem = new SQLiteDatabase[1];
+        instance = new MusicLibraryStore(ctx.getApplicationContext()) {
+            @Override
+            public synchronized SQLiteDatabase getWritableDatabase() {
+                if (mem[0] == null) {
+                    mem[0] = SQLiteDatabase.create(null);
+                    onCreate(mem[0]);
+                }
+                return mem[0];
+            }
+
+            @Override
+            public synchronized SQLiteDatabase getReadableDatabase() {
+                return getWritableDatabase();
+            }
+        };
+        return instance;
+    }
+
+    @Override
+    public void onCreate(SQLiteDatabase db) {
+        db.execSQL("CREATE TABLE tracks ("
+                + "path TEXT PRIMARY KEY,"
+                + "mtime INTEGER NOT NULL DEFAULT 0,"
+                + "size INTEGER NOT NULL DEFAULT 0,"
+                + "title TEXT NOT NULL DEFAULT '',"
+                + "artist TEXT NOT NULL DEFAULT '',"
+                + "album TEXT NOT NULL DEFAULT '',"
+                + "genre TEXT NOT NULL DEFAULT '',"
+                + "album_artist TEXT NOT NULL DEFAULT '',"
+                + "duration_ms TEXT NOT NULL DEFAULT '')");
+        db.execSQL("CREATE INDEX idx_tracks_mtime ON tracks(mtime)");
+    }
+
+    @Override
+    public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
+        // ponytail: v1 only — future migrations add columns here.
+    }
+
+    /** All cached tracks (may include files removed from disk until next purge). */
+    public List<Track> loadAll() {
+        List<Track> out = new ArrayList<Track>();
+        SQLiteDatabase db = getReadableDatabase();
+        Cursor c = null;
+        try {
+            c = db.query("tracks", null, null, null, null, null, "path ASC");
+            while (c.moveToNext()) {
+                out.add(rowToTrack(c));
+            }
+        } finally {
+            if (c != null) c.close();
+        }
+        return out;
+    }
+
+    /** Lookup by absolute path; null when not cached. */
+    public Track get(String path) {
+        if (path == null) return null;
+        SQLiteDatabase db = getReadableDatabase();
+        Cursor c = null;
+        try {
+            c = db.query("tracks", null, "path=?", new String[] { path }, null, null, null);
+            if (c.moveToFirst()) return rowToTrack(c);
+        } finally {
+            if (c != null) c.close();
+        }
+        return null;
+    }
+
+    /** True when cached row matches current file stat — skip MediaMetadataRetriever. */
+    public boolean isFresh(File file) {
+        if (file == null || !file.isFile()) return false;
+        Track t = get(file.getAbsolutePath());
+        return t != null && t.mtime == file.lastModified() && t.size == file.length();
+    }
+
+    public void upsert(File file, String title, String artist, String album,
+            String genre, String albumArtist, String durationMs) {
+        if (file == null || !file.isFile()) return;
+        SQLiteDatabase db = getWritableDatabase();
+        SQLiteStatement st = db.compileStatement(
+                "INSERT OR REPLACE INTO tracks"
+                        + " (path,mtime,size,title,artist,album,genre,album_artist,duration_ms)"
+                        + " VALUES (?,?,?,?,?,?,?,?,?)");
+        st.bindString(1, file.getAbsolutePath());
+        st.bindLong(2, file.lastModified());
+        st.bindLong(3, file.length());
+        st.bindString(4, title != null ? title : "");
+        st.bindString(5, artist != null ? artist : "");
+        st.bindString(6, album != null ? album : "");
+        st.bindString(7, genre != null ? genre : "");
+        st.bindString(8, albumArtist != null ? albumArtist : "");
+        st.bindString(9, durationMs != null ? durationMs : "");
+        st.executeInsert();
+    }
+
+    /** Remove DB rows whose paths were not seen in the latest filesystem walk. */
+    public void deleteExcept(Set<String> keepPaths) {
+        if (keepPaths == null) return;
+        SQLiteDatabase db = getWritableDatabase();
+        db.beginTransaction();
+        try {
+            Cursor c = db.query("tracks", new String[] { "path" }, null, null, null, null, null);
+            List<String> stale = new ArrayList<String>();
+            while (c.moveToNext()) {
+                String p = c.getString(0);
+                if (!keepPaths.contains(p)) stale.add(p);
+            }
+            c.close();
+            for (String p : stale) {
+                db.delete("tracks", "path=?", new String[] { p });
+            }
+            db.setTransactionSuccessful();
+        } finally {
+            db.endTransaction();
+        }
+    }
+
+    /** path → durationSec for Soulseek share scan (avoids second MMR pass). */
+    public Map<String, Integer> durationSecByPath() {
+        Map<String, Integer> out = new HashMap<String, Integer>();
+        SQLiteDatabase db = getReadableDatabase();
+        Cursor c = null;
+        try {
+            c = db.query("tracks", new String[] { "path", "duration_ms" }, null, null, null, null, null);
+            final int pathCol = c.getColumnIndex("path");
+            final int durCol = c.getColumnIndex("duration_ms");
+            while (c.moveToNext()) {
+                String path = c.getString(pathCol);
+                int sec = durationSecFromMs(c.getString(durCol));
+                if (sec > 0) {
+                    out.put(normPath(path), sec);
+                }
+            }
+        } finally {
+            if (c != null) c.close();
+        }
+        return out;
+    }
+
+    /** Parse duration_ms column without full row projection. */
+    static int durationSecFromMs(String durationMs) {
+        if (durationMs == null || durationMs.trim().isEmpty()) return 0;
+        try {
+            int ms = Integer.parseInt(durationMs.trim());
+            return ms > 0 ? ms / 1000 : 0;
+        } catch (NumberFormatException e) {
+            return 0;
+        }
+    }
+
+    static String normPath(String path) {
+        if (path == null) return "";
+        return path.toLowerCase(Locale.US);
+    }
+
+    public static HashSet<String> newKeepSet() {
+        return new HashSet<String>();
+    }
+
+    private static Track rowToTrack(Cursor c) {
+        return new Track(
+                c.getString(c.getColumnIndex("path")),
+                c.getLong(c.getColumnIndex("mtime")),
+                c.getLong(c.getColumnIndex("size")),
+                c.getString(c.getColumnIndex("title")),
+                c.getString(c.getColumnIndex("artist")),
+                c.getString(c.getColumnIndex("album")),
+                c.getString(c.getColumnIndex("genre")),
+                c.getString(c.getColumnIndex("album_artist")),
+                c.getString(c.getColumnIndex("duration_ms")));
+    }
+}

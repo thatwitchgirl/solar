@@ -54,7 +54,12 @@ public final class SolarUpdateClient {
 
         public boolean matchesInstalled(int localCode, String localName) {
             String local = localName == null ? "" : localName.trim();
-            if (nightly) return local.startsWith("nightly-") && tag.equals(local);
+            if (nightly) {
+                if (!local.startsWith("nightly-")) return false;
+                if (tag.equals(local)) return true;
+                // ponytail: same catalog row if versionName matches even when tag string differs.
+                return versionName != null && versionName.equals(local);
+            }
             if (local.startsWith("nightly-")) return false;
             return local.equals(versionName);
         }

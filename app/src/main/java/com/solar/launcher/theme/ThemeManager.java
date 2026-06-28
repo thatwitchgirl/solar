@@ -548,12 +548,8 @@ public class ThemeManager {
 
     public static int getTextColorSecondary() {
         if (ActiveThemeEngine.isJjMode()) return JjThemeManager.getTextColorSecondary();
-        JSONObject dialog = getCurrentTheme().root.optJSONObject("dialogConfig");
-        if (dialog != null) {
-            int c = parseColorOpt(dialog, "dialogTextColor");
-            if (c != Integer.MIN_VALUE) return c;
-        }
-        return 0xFF888888;
+        // ponytail: artist/subtitle/hint lines follow unselected list text — not dialog white on light themes
+        return getItemTextColorNormal();
     }
 
     public static int getOverlayBackgroundColor() {
@@ -619,9 +615,14 @@ public class ThemeManager {
         return 0xFFFFFFFF;
     }
 
-    /** Passive hints, tooltips, helper lines — same chain as status bar clock text. */
+    /** Passive hints, tooltips, helper lines — unselected item text (not status bar white on light themes). */
     public static int getHintTextColor() {
-        return getStatusBarTextColor();
+        return getItemTextColorNormal();
+    }
+
+    /** Second lines on list rows — artist, preview, Reach subtitles. */
+    public static int getSubtitleTextColor() {
+        return getItemTextColorNormal();
     }
 
     /** Section headings / de-emphasized labels — status bar hue at reduced alpha. */
@@ -1994,7 +1995,7 @@ public class ThemeManager {
             if ((getHomeMenuTextColorNormal() & 0xFFFFFF) != 0xE4FC3F) throw new AssertionError("homePage normal");
             if ((getHomeMenuTextColorSelected() & 0xFFFFFF) != 0xCC0F9D) throw new AssertionError("homePage selected");
             if ((getStatusBarTextColor() & 0xFFFFFF) != 0x00FF00) throw new AssertionError("statusBarTextColor");
-            if ((getHintTextColor() & 0xFFFFFF) != 0x00FF00) throw new AssertionError("hintTextColor");
+            if ((getSubtitleTextColor() & 0xFFFFFF) != 0xE4FC3F) throw new AssertionError("subtitleTextColor");
             if ((getSectionHeaderTextColor() >>> 24) != 0xBB) throw new AssertionError("sectionHeader alpha");
             if ((getDimmedTextColor(0x55) >>> 24) != 0x55) throw new AssertionError("dimmed alpha");
             root.getJSONObject("solarConfig").remove("statusBarTextColor");
