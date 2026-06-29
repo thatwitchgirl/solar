@@ -11,6 +11,7 @@ import com.solar.launcher.deezer.DeezerScreen;
 import com.solar.launcher.deezer.DeezerSearch;
 import com.solar.launcher.deezer.DeezerPlaylist;
 import com.solar.launcher.deezer.DeezerPlaylistSaver;
+import com.solar.launcher.deezer.DeezerBackgroundQueue;
 import com.solar.launcher.deezer.DeezerDownloader;
 import com.solar.launcher.deezer.DeezerTrackData;
 import com.solar.launcher.soulseek.ConversationDisplayBuilder;
@@ -200,6 +201,7 @@ public class MainActivity extends Activity {
     private static final int KEYBOARD_DEEZER_SEARCH = 12;
     /** Must not collide with KEYBOARD_SOULSEEK_FIND (4) — shared value broke podcast search. */
     private static final int KEYBOARD_PODCAST_SEARCH = 13;
+    private static final int KEYBOARD_PLAYLIST_NAME = 14;
     /** ponytail: stock Y1 row art — home=itemConfig, settings/menu lists=menuConfig, file lists=itemConfig */
     private static final int Y1_ROW_HOME = 0;
     private static final int Y1_ROW_MENU = 1;
@@ -227,6 +229,10 @@ public class MainActivity extends Activity {
     private int appsListGen = 0;
     private long suppressListClickUntil = 0;
     private List<PlaylistManager.Entry> libraryPlaylists = new ArrayList<PlaylistManager.Entry>();
+    /** Tracks pending append/create while playlist-name keyboard is open. */
+    private java.util.List<File> pendingPlaylistTracks;
+    /** True when keyboard creates an empty shell M3U (Library → Playlists → New playlist). */
+    private boolean playlistKeyboardCreateOnly;
     private List<File> virtualSongList = new ArrayList<>();
     // 💡 백그라운드 미디어 제어권(스크린 오프) 변수
     private Object mediaSessionShim;
@@ -622,6 +628,10 @@ public class MainActivity extends Activity {
     private long deezerProgressDebugLastMs = 0;
     private int deezerProgressDebugLastPct = -1;
     private long deezerLastProgressUiMs = 0;
+    private DeezerBackgroundQueue deezerBackgroundQueue;
+    /** Per-file download % for background album queue rows (absolute path → 0–100). */
+    private final java.util.HashMap<String, Integer> deezerQueueProgressByPath =
+            new java.util.HashMap<String, Integer>();
     private int deezerReturnScreen = STATE_MENU;
     private DeezerScreen deezerScreen;
     private String pendingSearchPickerQuery;
@@ -972,6 +982,14 @@ public class MainActivity extends Activity {
             updateSoulseekSharePolicy();
         }
     };
+    /** Turn Wi-Fi off after this long while screen is asleep and not on charger. */
+    private static final long WIFI_SLEEP_OFF_MS = 15L * 60L * 1000L;
+    private final Runnable wifiSleepOffRunnable = new Runnable() {
+        @Override
+        public void run() {
+            tryWifiSleepPowerOff();
+        }
+    };
     private final Runnable networkRescanTick = new Runnable() {
         @Override
         public void run() {
@@ -1266,9 +1284,11 @@ public class MainActivity extends Activity {
 
             if (Intent.ACTION_SCREEN_OFF.equals(action)) {
                 isScreenSleeping = true;
+                scheduleWifiSleepOff();
                 scheduleSoulseekSharePolicyRefresh();
             } else if (Intent.ACTION_SCREEN_ON.equals(action)) {
                 isScreenSleeping = false;
+                cancelWifiSleepOff();
                 lastScreenOnTime = System.currentTimeMillis();
                 scheduleSoulseekSharePolicyRefresh();
             } else if (Intent.ACTION_BATTERY_CHANGED.equals(action)) {
@@ -1631,7 +1651,6 @@ public class MainActivity extends Activity {
         mediaSuite = new MediaSuiteHost(new MediaSuiteHostAdapter(this));
         avrcpTrackInfoWriter = AvrcpTrackInfoWriter.getInstance(this);
         DeezerAccount.migrateLegacyArl(this, prefs);
-        DeezerAccount.seedBundledDemoArlIfNeeded(prefs);
         refreshDeezerSessionFromPrefs(false);
         final SharedPreferences reachPrefs = prefs;
         ReachDbExecutor.run(new Runnable() {
@@ -2108,7 +2127,11 @@ public class MainActivity extends Activity {
             ReachPeerConnectivity.setCallback(new ReachPeerConnectivity.Callback() {
                 @Override
                 public void onReachPeerStateChanged(ReachPeerConnectivity.State state, String reason) {
-                    applyReachPeerConnectivityState(state, reason);
+                    runOnUiThread(new Runnable() {
+                        @Override public void run() {
+                            applyReachPeerConnectivityState(state, reason);
+                        }
+                    });
                 }
             });
         } catch (Exception e) {}
@@ -2606,6 +2629,11 @@ public class MainActivity extends Activity {
         }
         if (soulseekCharging != isCharging) {
             soulseekCharging = isCharging;
+            if (isCharging) {
+                cancelWifiSleepOff();
+            } else if (isScreenSleeping) {
+                scheduleWifiSleepOff();
+            }
             scheduleSoulseekSharePolicyRefresh();
         }
     }
@@ -4178,7 +4206,7 @@ public class MainActivity extends Activity {
         boolean peerOk = state != ReachPeerConnectivity.State.UNAVAILABLE;
         ConnectivityHelper.setReachPeerOk(peerOk);
         scheduleSoulseekSharePolicyRefresh();
-        buildHomeMenu();
+        scheduleRebuildHomeMenuIfVisible();
         if (currentScreenState == STATE_BROWSER && currentBrowserMode == BROWSER_ROOT) {
             buildFileBrowserUI();
         }
@@ -4914,6 +4942,51 @@ public class MainActivity extends Activity {
                 SOULSEEK_POLICY_DEBOUNCE_MS);
     }
 
+    /** ponytail: after 15 min asleep off-charger, drop Wi-Fi unless transfers need it. */
+    private void scheduleWifiSleepOff() {
+        soulseekUiHandler.removeCallbacks(wifiSleepOffRunnable);
+        if (!isScreenSleeping || soulseekCharging) return;
+        soulseekUiHandler.postDelayed(wifiSleepOffRunnable, WIFI_SLEEP_OFF_MS);
+    }
+
+    private void cancelWifiSleepOff() {
+        soulseekUiHandler.removeCallbacks(wifiSleepOffRunnable);
+    }
+
+    /** Silent Wi-Fi off for sleep policy — no toast while screen is off. */
+    private void tryWifiSleepPowerOff() {
+        if (!isScreenSleeping || soulseekCharging) return;
+        WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+        if (wm == null || !wm.isWifiEnabled()) return;
+        if (wifiDisableNeedsWarning()) return;
+        wifiContextPendingEnable = false;
+        wifiContextPendingDisable = true;
+        cancelWifiContextScanFollowUps();
+        wm.setWifiEnabled(false);
+        // #region agent log
+        try {
+            org.json.JSONObject d = new org.json.JSONObject();
+            d.put("screenSleeping", isScreenSleeping);
+            d.put("charging", soulseekCharging);
+            DebugSessionLog.log("MainActivity.tryWifiSleepPowerOff", "wifi sleep off", "H-WIFI", d);
+        } catch (Exception ignored) {}
+        // #endregion
+    }
+
+    /** Reach/Soulseek stays connected on charger; sleep when screen off unless transfers active. */
+    private boolean shouldKeepSoulseekAwakeForTransfers() {
+        if (hasActiveReachDownload() || reachDownloadInProgress()) return true;
+        if (isDeezerStreamDownloadInProgress()) return true;
+        if (reachPartialPlaybackStarted) return true;
+        if (soulseekSearchInProgress) return true;
+        if (soulseekClient != null && soulseekClient.isBusy()) return true;
+        return false;
+    }
+
+    private boolean shouldSoulseekSleepForScreen() {
+        return isScreenSleeping && !soulseekCharging && !shouldKeepSoulseekAwakeForTransfers();
+    }
+
     private void triggerAutoReconnect() {
         try {
             WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
@@ -5427,7 +5500,11 @@ public class MainActivity extends Activity {
             reachBrowseHeaderFocusIdx = idx;
             return idx;
         }
-        return reachBrowseHeaderFocusIdx;
+        if (reachBrowseHeaderFocusIdx >= 0 && reachBrowseHeaderFocusIdx < reachBrowseHeaderViews.size()) {
+            View h = reachBrowseHeaderViews.get(reachBrowseHeaderFocusIdx);
+            if (h != null && (h.hasFocus() || h.isFocused())) return reachBrowseHeaderFocusIdx;
+        }
+        return -1;
     }
 
     private boolean focusReachBrowseHeaderIndex(final int idx) {
@@ -5654,6 +5731,9 @@ public class MainActivity extends Activity {
 
     private void applyReachBrowseAdapterSelection(int listPosition) {
         if (listReachBrowse == null) return;
+        if (listPosition >= reachBrowseHeaderOffset()) {
+            reachBrowseHeaderFocusIdx = -1;
+        }
         int adapterIndex = reachBrowseAdapterIndex(listPosition);
         android.widget.ListAdapter ad = listReachBrowse.getAdapter();
         if (ad instanceof ReachChatRoomsAdapter) {
@@ -6108,6 +6188,12 @@ public class MainActivity extends Activity {
 
     private void buildHomeMenu() {
         if (containerHomeMenuItems == null) return;
+        if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) {
+            runOnUiThread(new Runnable() {
+                @Override public void run() { buildHomeMenu(); }
+            });
+            return;
+        }
         // #region agent log
         try {
             org.json.JSONObject d = new org.json.JSONObject();
@@ -6238,7 +6324,19 @@ public class MainActivity extends Activity {
             }
             d.put("countMismatch", childCount != totalRows);
             d.put("panelSolid", false);
+            d.put("thread", Thread.currentThread().getName());
             DebugAgentLog.log(this, "MainActivity.buildHomeMenu", "home menu built", "H-HOME", d);
+            // #region agent log
+            try {
+                org.json.JSONObject ds = new org.json.JSONObject();
+                ds.put("childCount", childCount);
+                ds.put("totalRows", totalRows);
+                ds.put("entryCount", homeMenuEntries.size());
+                ds.put("focusedIndex", focusedHomeMenuIndex);
+                ds.put("buildGen", buildGen);
+                DebugSessionLog.log("MainActivity.buildHomeMenu", "home built", "H-HOME", ds);
+            } catch (Exception ignored) {}
+            // #endregion
         } catch (Exception ignored) {}
         // #endregion
         if (childCount != totalRows) {
@@ -6260,6 +6358,12 @@ public class MainActivity extends Activity {
 
     /** JJ experimental home: absolute {@code main_menu[]} layout from active JJ theme. */
     private void buildJjHomeMenu() {
+        if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) {
+            runOnUiThread(new Runnable() {
+                @Override public void run() { buildJjHomeMenu(); }
+            });
+            return;
+        }
         final int buildGen = ++homeMenuBuildGen;
         containerHomeMenuItems.removeAllViews();
         if (menuScroll != null) menuScroll.setVisibility(View.GONE);
@@ -6734,6 +6838,9 @@ public class MainActivity extends Activity {
         }
         if (keyboardPurpose == KEYBOARD_PODCAST_SEARCH) {
             return getString(R.string.status_podcast_search);
+        }
+        if (keyboardPurpose == KEYBOARD_PLAYLIST_NAME) {
+            return getString(R.string.keyboard_playlist_name);
         }
         return getString(R.string.keyboard_soulseek_password);
     }
@@ -8447,7 +8554,8 @@ public class MainActivity extends Activity {
 
     private boolean isTextEntryKeyboardPurpose() {
         return isSoulseekKeyboardPurpose() || isPodcastKeyboardPurpose()
-                || keyboardPurpose == KEYBOARD_DEEZER_SEARCH;
+                || keyboardPurpose == KEYBOARD_DEEZER_SEARCH
+                || keyboardPurpose == KEYBOARD_PLAYLIST_NAME;
     }
 
     private String keyboardDisplayChar(String ch) {
@@ -8791,7 +8899,7 @@ public class MainActivity extends Activity {
             return;
         }
         DeezerAccount.migrateLegacyArl(this, prefs);
-        if (!DeezerAccount.hasArl(prefs)) {
+        if (!DeezerAccount.hasUsableDeezer(prefs)) {
             if (redirectToSetupIfUnconfigured) {
                 openDeezerSetupScreen(preserveReturn);
                 return;
@@ -8866,7 +8974,7 @@ public class MainActivity extends Activity {
 
     /** Re-run initSession when ARL exists but username was not persisted yet. */
     private void refreshDeezerSessionFromPrefs(final boolean rebuildSettings) {
-        if (!DeezerAccount.hasArl(prefs)) return;
+        if (!DeezerAccount.hasUsableDeezer(prefs)) return;
         new Thread(new Runnable() {
             @Override public void run() {
                 boolean ok = false;
@@ -9013,7 +9121,7 @@ public class MainActivity extends Activity {
             return;
         }
 
-        final boolean hasArl = DeezerAccount.hasArl(prefs);
+        final boolean userConfigured = DeezerAccount.isUserArlConfigured(prefs);
 
         Button search = createListButton(getString(R.string.deezer_search_row));
         search.setOnClickListener(new View.OnClickListener() {
@@ -9025,7 +9133,7 @@ public class MainActivity extends Activity {
         });
         containerSettingsItems.addView(search);
 
-        Button setup = createListButton(getString(hasArl
+        Button setup = createListButton(getString(userConfigured
                 ? R.string.deezer_change_account_pc : R.string.deezer_setup_pc));
         setup.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) {
@@ -9036,19 +9144,18 @@ public class MainActivity extends Activity {
         });
         containerSettingsItems.addView(setup);
 
-        boolean demo = DeezerAccount.isUsingDemoArl(prefs);
         String status;
-        if (!hasArl) {
+        if (!userConfigured) {
             status = getString(R.string.deezer_account_not_logged_in);
         } else {
             status = getString(R.string.deezer_account_status);
-            if (!demo && DeezerAccount.displayUser(prefs).isEmpty()) refreshDeezerSessionFromPrefs(true);
+            if (DeezerAccount.displayUser(prefs).isEmpty()) refreshDeezerSessionFromPrefs(true);
         }
         Button account = createListButton(status);
         account.setEnabled(false);
         containerSettingsItems.addView(account);
 
-        if (!demo && hasArl) {
+        if (userConfigured) {
             Button clear = createListButton(getString(R.string.deezer_reset_to_demo));
             clear.setOnClickListener(new View.OnClickListener() {
                 @Override public void onClick(View v) {
@@ -9130,6 +9237,8 @@ public class MainActivity extends Activity {
             tvKeyboardInput.setText(typedPassword.length() == 0 ? getString(R.string.soulseek_chat_rooms_search_hint) : typedPassword);
         } else if (keyboardPurpose == KEYBOARD_PODCAST_SEARCH) {
             tvKeyboardInput.setText(typedPassword.length() == 0 ? getString(R.string.podcasts_type_search) : typedPassword);
+        } else if (keyboardPurpose == KEYBOARD_PLAYLIST_NAME) {
+            tvKeyboardInput.setText(typedPassword.length() == 0 ? getString(R.string.keyboard_playlist_name) : typedPassword);
         } else {
             tvKeyboardInput.setText(typedPassword.length() == 0 ? getString(R.string.keyboard_enter_password) : typedPassword);
         }
@@ -9199,6 +9308,7 @@ public class MainActivity extends Activity {
         else if (keyboardPurpose == KEYBOARD_SOULSEEK_ROOM_SEARCH) finishSoulseekRoomSearchEntry();
         else if (keyboardPurpose == KEYBOARD_DEEZER_SEARCH) finishDeezerSearchEntry();
         else if (keyboardPurpose == KEYBOARD_PODCAST_SEARCH) finishPodcastSearchEntry();
+        else if (keyboardPurpose == KEYBOARD_PLAYLIST_NAME) finishPlaylistNameEntry();
         else finishSoulseekPassEntry();
     }
 
@@ -13846,6 +13956,10 @@ public class MainActivity extends Activity {
     private int streamDownloadPercentForFile(File file) {
         if (file == null) return -1;
         if (DeezerCache.isTempFile(streamAppCacheRoot(), file)) {
+            Integer bgPct = deezerQueueProgressByPath.get(file.getAbsolutePath());
+            if (bgPct != null && bgPct >= 0) {
+                return Math.min(100, bgPct);
+            }
             if (isActiveReachDownloadFile(file)) {
                 if (deezerActiveDownloadPercent >= 0) {
                     return Math.min(100, deezerActiveDownloadPercent);
@@ -15360,6 +15474,14 @@ public class MainActivity extends Activity {
                         appendTrackToMusicQueue(audio);
                     }
                 });
+                if (!"PLAYLIST".equals(virtualQueryType)) {
+                    addContextAction(getString(R.string.context_action_add_to_playlist), new Runnable() {
+                        @Override
+                        public void run() {
+                            openAddToPlaylistFlow(java.util.Collections.singletonList(audio));
+                        }
+                    });
+                }
             }
             if (!"PLAYLIST".equals(virtualQueryType)) {
                 addContextAction(getString(R.string.library_sort_label, librarySortLabel()), new Runnable() {
@@ -15378,6 +15500,40 @@ public class MainActivity extends Activity {
                     cycleLibrarySort();
                 }
             });
+        }
+        if (currentScreenState == STATE_BROWSER && currentBrowserMode == BROWSER_ARTISTS) {
+            final String artistName = focusedCategoryName();
+            if (artistName != null) {
+                addContextAction(getString(R.string.context_action_add_artist_to_playlist), new Runnable() {
+                    @Override
+                    public void run() {
+                        openAddToPlaylistFlow(collectTracksForQuery("ARTIST", artistName, null));
+                    }
+                });
+            }
+        }
+        if (currentScreenState == STATE_BROWSER && currentBrowserMode == BROWSER_ALBUMS) {
+            final String albumName = focusedCategoryName();
+            if (albumName != null) {
+                addContextAction(getString(R.string.context_action_add_album_to_playlist), new Runnable() {
+                    @Override
+                    public void run() {
+                        openAddToPlaylistFlow(collectTracksForQuery("ALBUM", albumName, null));
+                    }
+                });
+            }
+        }
+        if (currentScreenState == STATE_BROWSER && currentBrowserMode == BROWSER_ARTIST_ALBUMS) {
+            final String albumName = focusedCategoryName();
+            if (albumName != null) {
+                addContextAction(getString(R.string.context_action_add_album_to_playlist), new Runnable() {
+                    @Override
+                    public void run() {
+                        openAddToPlaylistFlow(collectTracksForQuery(
+                                "ARTIST_ALBUM", albumName, virtualQueryArtist));
+                    }
+                });
+            }
         }
         if (isLibraryArtistBrowseContext()) {
             addContextAction(getString(R.string.lib_context_sort_artists,
@@ -16491,6 +16647,10 @@ public class MainActivity extends Activity {
             playDeezerPlaylistFromIndex(new ArrayList<DeezerResult>(tracks), 0);
             return;
         }
+        if (action == DeezerScreen.ACTION_QUEUE) {
+            startDeezerAlbumBackgroundQueue(tracks);
+            return;
+        }
         deezerBatchTransfer = new ArrayList<DeezerResult>(tracks);
         deezerBatchTransferIndex = 0;
         deezerBatchTransferAction = action;
@@ -16510,6 +16670,112 @@ public class MainActivity extends Activity {
         deezerBatchTransferIndex = index;
         if (deezerScreen == null) deezerScreen = new DeezerScreen(deezerHost);
         deezerScreen.startTransfer(deezerBatchTransfer.get(index), deezerBatchTransferAction);
+    }
+
+    /** Queue every album track immediately; download sequentially in the background. */
+    private void startDeezerAlbumBackgroundQueue(final List<DeezerResult> tracks) {
+        if (tracks == null || tracks.isEmpty()) return;
+        deezerBatchTransfer = null;
+        deezerBatchTransferIndex = -1;
+        deezerBatchTransferAction = 0;
+        final File cacheDir = DeezerCache.dir(streamAppCacheRoot());
+        String ext = "mp3";
+        try {
+            DeezerClient probe = new DeezerClient(prefs);
+            if (!probe.isSessionValid()) probe.initSession();
+            ext = probe.fileExtension();
+        } catch (Exception ignored) {}
+        final ArrayList<DeezerBackgroundQueue.Job> jobs = new ArrayList<DeezerBackgroundQueue.Job>();
+        for (DeezerResult r : tracks) {
+            if (r == null) continue;
+            try {
+                File dest = DeezerBackgroundQueue.reservePlaceholder(cacheDir, r, ext);
+                playback.queueDeezerAfterCurrent(dest, r.displayTitle(), r.id);
+                deezerQueueProgressByPath.put(dest.getAbsolutePath(), 0);
+                jobs.add(new DeezerBackgroundQueue.Job(r, dest));
+            } catch (Exception e) {
+                android.util.Log.w("SolarDeezer", "queue placeholder failed: " + r.displayTitle(), e);
+            }
+        }
+        if (jobs.isEmpty()) {
+            Toast.makeText(this, getString(R.string.deezer_error_unknown), Toast.LENGTH_SHORT).show();
+            return;
+        }
+        persistPlaybackQueue();
+        refreshStreamProgressUi();
+        ensureDeezerBackgroundQueue();
+        deezerBackgroundQueue.enqueue(jobs);
+        Toast.makeText(this, getString(R.string.deezer_album_queued), Toast.LENGTH_SHORT).show();
+        // #region agent log
+        try {
+            org.json.JSONObject d = new org.json.JSONObject();
+            d.put("trackCount", jobs.size());
+            DebugAgentLog.log(this, "MainActivity.startDeezerAlbumBackgroundQueue",
+                    "album queued for bg download", "H-ALB-Q", d);
+        } catch (Exception ignored) {}
+        // #endregion
+        if (isGetMusicUnifiedUi() && currentScreenState == STATE_SOULSEEK) {
+            getMusicEmbeddedInDeezer = false;
+            buildGetMusicResultsUI();
+        } else if (deezerScreen != null && deezerScreen.uiMode() == DeezerScreen.UI_ACTION) {
+            deezerScreen.popToResults();
+        }
+    }
+
+    private void ensureDeezerBackgroundQueue() {
+        if (deezerBackgroundQueue != null) return;
+        deezerBackgroundQueue = new DeezerBackgroundQueue(prefs,
+                new DeezerBackgroundQueue.Listener() {
+                    @Override public void onTrackProgress(final DeezerBackgroundQueue.Job job,
+                            final int percent) {
+                        if (job == null || job.dest == null) return;
+                        deezerQueueProgressByPath.put(job.dest.getAbsolutePath(), percent);
+                        runOnUiThread(new Runnable() {
+                            @Override public void run() {
+                                refreshStreamProgressUi();
+                            }
+                        });
+                    }
+
+                    @Override public void onTrackComplete(final DeezerBackgroundQueue.Job job) {
+                        if (job == null || job.dest == null || job.track == null) return;
+                        deezerQueueProgressByPath.put(job.dest.getAbsolutePath(), 100);
+                        DeezerMetadata.saveForResult(MainActivity.this, job.dest, job.track);
+                        prefetchDeezerCoverBg(job.dest);
+                        runOnUiThread(new Runnable() {
+                            @Override public void run() {
+                                refreshStreamProgressUi();
+                                persistPlaybackQueue();
+                            }
+                        });
+                    }
+
+                    @Override public void onTrackFailed(final DeezerBackgroundQueue.Job job,
+                            String error) {
+                        if (job == null || job.dest == null) return;
+                        deezerQueueProgressByPath.remove(job.dest.getAbsolutePath());
+                        android.util.Log.w("SolarDeezer", "bg queue track failed: "
+                                + job.track.displayTitle() + " — " + error);
+                    }
+
+                    @Override public void onAlbumComplete() {
+                        runOnUiThread(new Runnable() {
+                            @Override public void run() {
+                                refreshStreamProgressUi();
+                            }
+                        });
+                    }
+                });
+    }
+
+    private void prefetchDeezerCoverBg(final File track) {
+        if (track == null) return;
+        final File cover = coverFileForTrack(track);
+        new Thread(new Runnable() {
+            @Override public void run() {
+                DeezerMetadata.prefetchCoverFile(prefs, track, cover);
+            }
+        }, "DeezerCover").start();
     }
 
     private boolean advanceDeezerBatchTransfer(DeezerResult finished) {
@@ -19677,12 +19943,53 @@ public class MainActivity extends Activity {
         FocusScrollHelper.focusListPosition(listConversationThread, listPosition);
     }
 
+    private boolean isConversationBackButtonFocused() {
+        if (btnConversationBack == null) return false;
+        View f = getCurrentFocus();
+        return f == btnConversationBack || isViewDescendantOf(f, btnConversationBack);
+    }
+
+    private boolean focusConversationBackButton() {
+        if (btnConversationBack == null || !btnConversationBack.isFocusable()) return false;
+        conversationHeaderFocusIdx = -1;
+        clearConversationAdapterSelection();
+        boolean ok = btnConversationBack.requestFocus();
+        // #region agent log
+        try {
+            org.json.JSONObject d = new org.json.JSONObject();
+            d.put("focused", ok);
+            d.put("screen", settingsSubScreenKey);
+            DebugSessionLog.log("MainActivity.focusConversationBackButton",
+                    "back focus", "H-CONV-BACK", d);
+        } catch (Exception ignored) {}
+        // #endregion
+        return ok;
+    }
+
     private boolean moveConversationListFocus(int delta) {
         if (!isConversationThreadActive() || delta == 0) return false;
+
+        if (isConversationBackButtonFocused()) {
+            if (delta > 0) {
+                if (isRoomConversationScreen() && !conversationHeaderViews.isEmpty()) {
+                    return focusConversationHeaderIndex(0);
+                }
+                android.widget.ListAdapter ad = listConversationThread.getAdapter();
+                if (ad != null && ad.getCount() > 0) {
+                    focusConversationListPosition(conversationHeaderOffset());
+                    return true;
+                }
+            }
+            return false;
+        }
+
         android.widget.ListAdapter ad = listConversationThread.getAdapter();
         if (ad == null) return false;
         int count = ad.getCount();
-        if (count <= 0 && conversationHeaderViews.isEmpty()) return false;
+        if (count <= 0 && conversationHeaderViews.isEmpty()) {
+            if (delta < 0) return focusConversationBackButton();
+            return false;
+        }
 
         if (isRoomConversationScreen() && !conversationHeaderViews.isEmpty()) {
             int headerIdx = conversationActiveHeaderIndex();
@@ -19690,6 +19997,9 @@ public class MainActivity extends Activity {
                 int nextHeader = headerIdx + (delta < 0 ? -1 : 1);
                 if (nextHeader >= 0 && nextHeader < conversationHeaderViews.size()) {
                     return focusConversationHeaderIndex(nextHeader);
+                }
+                if (delta < 0 && nextHeader < 0) {
+                    return focusConversationBackButton();
                 }
                 if (delta > 0) {
                     int headerCount = conversationHeaderOffset();
@@ -19718,11 +20028,14 @@ public class MainActivity extends Activity {
             return true;
         }
 
-        if (count <= 0) return false;
-        int pos = listConversationThread.getSelectedItemPosition();
-        if (pos < 0) pos = 0;
+        int headerCount = conversationHeaderOffset();
+        int maxPos = headerCount + count - 1;
+        int pos = conversationFocusedListPosition(ad);
         int next = pos + (delta < 0 ? -1 : 1);
-        if (next < 0 || next >= count) return false;
+        if (delta < 0 && next < headerCount) {
+            return focusConversationBackButton();
+        }
+        if (next < headerCount || next > maxPos) return false;
         focusConversationListPosition(next);
         // #region agent log
         try {
@@ -19731,6 +20044,7 @@ public class MainActivity extends Activity {
             d.put("from", pos);
             d.put("to", next);
             d.put("count", count);
+            d.put("screen", settingsSubScreenKey);
             DebugSessionLog.log("MainActivity.moveConversationListFocus",
                     "conv list wheel", "H3-fix", d);
         } catch (Exception ignored) {}
@@ -22726,6 +23040,17 @@ public class MainActivity extends Activity {
             containerBrowserItems.addView(unavailable);
         }
 
+        Button newPlaylist = createListButton(getString(R.string.library_new_playlist));
+        newPlaylist.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                clickFeedback();
+                pendingPlaylistTracks = null;
+                openPlaylistNameKeyboard(true);
+            }
+        });
+        containerBrowserItems.addView(newPlaylist);
+
         Button saveQueue = createListButton(getString(R.string.library_save_queue_m3u));
         saveQueue.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -23252,6 +23577,12 @@ public class MainActivity extends Activity {
                 }
             });
         }
+        addContextAction(getString(R.string.context_action_add_to_playlist), new Runnable() {
+            @Override
+            public void run() {
+                openAddToPlaylistFlow(java.util.Collections.singletonList(trackFile));
+            }
+        });
         if (playlistNameIfAny != null && !playlistNameIfAny.isEmpty()
                 && !isOnSameMusicListing("PLAYLIST", playlistNameIfAny, null)) {
             addContextAction(getString(R.string.context_browse_playlist, playlistNameIfAny), new Runnable() {
@@ -23312,6 +23643,137 @@ public class MainActivity extends Activity {
                 }
             }
         }
+    }
+
+    /** Collect library files matching a virtual browse query (artist/album/etc.). */
+    private java.util.List<File> collectTracksForQuery(String type, String value, String artistForAlbum) {
+        java.util.ArrayList<File> out = new java.util.ArrayList<File>();
+        if (type == null || value == null) return out;
+        for (SongItem song : customLibrary) {
+            boolean match = false;
+            if ("ALL".equals(type)) match = true;
+            else if ("ARTIST".equals(type) && ArtistParser.containsArtist(song.artist, value)) match = true;
+            else if ("ALBUM".equals(type) && AlbumNames.equals(song.album, value)) match = true;
+            else if ("GENRE".equals(type) && song.genre.equals(value)) match = true;
+            else if ("ARTIST_ALBUM".equals(type)
+                    && ArtistParser.containsArtist(song.artist, artistForAlbum)
+                    && AlbumNames.equals(song.album, value)) match = true;
+            if (match && song.file != null && song.file.isFile()) out.add(song.file);
+        }
+        return out;
+    }
+
+    /** Focused category row on artist/album browse lists. */
+    private String focusedCategoryName() {
+        if (listVirtualSongs == null) return null;
+        android.widget.ListAdapter ad = listVirtualSongs.getAdapter();
+        if (!(ad instanceof CategoryListAdapter)) return null;
+        int pos = virtualListFocusPosition();
+        if (pos < 0 || pos >= ad.getCount()) return null;
+        Object item = ad.getItem(pos);
+        return item != null ? item.toString() : null;
+    }
+
+    private void openPlaylistNameKeyboard(boolean createOnly) {
+        dismissThemedContextMenu();
+        playlistKeyboardCreateOnly = createOnly;
+        keyboardPurpose = KEYBOARD_PLAYLIST_NAME;
+        keyboardReturnState = STATE_BROWSER;
+        keyboardPrefill = "";
+        changeScreen(STATE_WIFI_KEYBOARD);
+    }
+
+    private void finishPlaylistNameEntry() {
+        final String name = typedPassword != null ? typedPassword.trim() : "";
+        if (name.isEmpty()) {
+            Toast.makeText(this, getString(R.string.library_playlist_name_empty), Toast.LENGTH_SHORT).show();
+            return;
+        }
+        final boolean createOnly = playlistKeyboardCreateOnly;
+        final java.util.List<File> tracks = pendingPlaylistTracks;
+        try {
+            PlaylistManager.Entry created = PlaylistManager.createPlaylist(
+                    rootFolder, name, createOnly ? null : tracks);
+            libraryPlaylists = PlaylistManager.scan(rootFolder);
+            if (createOnly) {
+                Toast.makeText(this, getString(R.string.library_playlist_created, created.name),
+                        Toast.LENGTH_SHORT).show();
+            } else {
+                int count = tracks != null ? tracks.size() : 0;
+                Toast.makeText(this, getString(R.string.library_playlist_added, count, created.name),
+                        Toast.LENGTH_SHORT).show();
+            }
+        } catch (Exception e) {
+            Toast.makeText(this, getString(R.string.library_playlist_save_failed), Toast.LENGTH_SHORT).show();
+        }
+        pendingPlaylistTracks = null;
+        playlistKeyboardCreateOnly = false;
+        changeScreen(STATE_BROWSER);
+    }
+
+    private void openAddToPlaylistFlow(java.util.List<File> tracks) {
+        if (tracks == null || tracks.isEmpty()) {
+            Toast.makeText(this, getString(R.string.library_queue_empty), Toast.LENGTH_SHORT).show();
+            return;
+        }
+        pendingPlaylistTracks = new java.util.ArrayList<File>(tracks);
+        java.util.List<PlaylistManager.Entry> lists = PlaylistManager.scan(rootFolder);
+        libraryPlaylists = lists;
+        if (lists.isEmpty()) {
+            openPlaylistNameKeyboard(false);
+            return;
+        }
+        showAddToPlaylistPickerTier(lists);
+    }
+
+    private void showAddToPlaylistPickerTier(final java.util.List<PlaylistManager.Entry> lists) {
+        if (themedContextMenu == null || !themedContextMenu.isShowing()) {
+            showThemedContextMenu();
+        }
+        pushContextMenuTier("playlist_pick");
+        java.util.ArrayList<String> labels = new java.util.ArrayList<String>();
+        java.util.ArrayList<String> states = new java.util.ArrayList<String>();
+        java.util.ArrayList<Boolean> headers = new java.util.ArrayList<Boolean>();
+        java.util.ArrayList<Runnable> actions = new java.util.ArrayList<Runnable>();
+        labels.add(getString(R.string.context_add_to_playlist_title));
+        states.add("");
+        headers.add(Boolean.TRUE);
+        actions.add(null);
+        for (final PlaylistManager.Entry pl : lists) {
+            labels.add(pl.name);
+            states.add("");
+            headers.add(Boolean.FALSE);
+            actions.add(new Runnable() {
+                @Override public void run() {
+                    try {
+                        PlaylistManager.appendTracks(pl.sourceFile, rootFolder, pendingPlaylistTracks);
+                        libraryPlaylists = PlaylistManager.scan(rootFolder);
+                        int count = pendingPlaylistTracks != null ? pendingPlaylistTracks.size() : 0;
+                        Toast.makeText(MainActivity.this,
+                                getString(R.string.library_playlist_added, count, pl.name),
+                                Toast.LENGTH_SHORT).show();
+                        pendingPlaylistTracks = null;
+                        dismissThemedContextMenu();
+                    } catch (Exception e) {
+                        Toast.makeText(MainActivity.this,
+                                getString(R.string.library_playlist_save_failed),
+                                Toast.LENGTH_SHORT).show();
+                    }
+                }
+            });
+        }
+        labels.add(getString(R.string.context_playlist_new));
+        states.add("");
+        headers.add(Boolean.FALSE);
+        actions.add(new Runnable() {
+            @Override public void run() {
+                openPlaylistNameKeyboard(false);
+            }
+        });
+        showContextMenuTierInPlace(getString(R.string.context_add_to_playlist_title),
+                labels, states, headers, actions, true);
+        themedContextMenu.focusSubmenuList();
+        themedContextMenu.requestOverlayFocus();
     }
 
     private void saveMusicQueueAsM3u() {
@@ -24543,6 +25005,27 @@ public class MainActivity extends Activity {
                 soulseekClient.shutdown();
                 soulseekClient = null;
             }
+            return;
+        }
+        if (shouldSoulseekSleepForScreen()) {
+            soulseekSharePolicy.setReachMasterEnabled(false);
+            if (soulseekClient != null) {
+                soulseekClient.cancelSearch();
+                if (!soulseekClient.isBusy()) {
+                    soulseekClient.pauseWhenIdle();
+                    soulseekClient = null;
+                }
+            }
+            // #region agent log
+            try {
+                org.json.JSONObject d = new org.json.JSONObject();
+                d.put("screenSleeping", isScreenSleeping);
+                d.put("charging", soulseekCharging);
+                d.put("clientAlive", soulseekClient != null);
+                DebugSessionLog.log("MainActivity.updateSoulseekSharePolicy",
+                        "soulseek screen sleep", "H-SLEEP", d);
+            } catch (Exception ignored) {}
+            // #endregion
             return;
         }
         boolean wifi = hasInternetConnection();

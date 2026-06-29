@@ -128,6 +128,8 @@ public final class DeezerScreen {
     private boolean partialPlaybackStarted;
     private long transferStartMs;
     private boolean downloadAutoRetryUsed;
+    private DeezerAccount.ArlFallbackTier downloadArlFallbackTier = DeezerAccount.ArlFallbackTier.USER;
+    private boolean usingArlOverride;
     private boolean downloadAutoRetryPending;
     private int lastFailedAction = ACTION_PLAY;
     private final Handler downloadRetryHandler = new Handler(Looper.getMainLooper());
@@ -180,7 +182,7 @@ public final class DeezerScreen {
             public void run() {
                 boolean ok = false;
                 try {
-                    if (DeezerAccount.hasArl(host.prefs())) {
+                    if (DeezerAccount.hasUsableDeezer(host.prefs())) {
                         ok = client.initSession();
                     }
                 } catch (Exception ignored) {}
@@ -249,7 +251,7 @@ public final class DeezerScreen {
     public void fetchResults(final String query) {
         if (query == null || query.trim().isEmpty()) return;
         if (!host.requireInternet(R.string.deezer_wifi_required)) return;
-        if (!ConnectivityHelper.isDeezerLoginOk() && !DeezerAccount.hasArl(host.prefs())) {
+        if (!ConnectivityHelper.isDeezerLoginOk() && !DeezerAccount.hasUsableDeezer(host.prefs())) {
             Toast.makeText(host.context(), host.string(R.string.deezer_not_configured), Toast.LENGTH_LONG).show();
             return;
         }
@@ -666,14 +668,24 @@ public final class DeezerScreen {
 
     public void startTransfer(final DeezerResult r, final int action) {
         if (!host.requireInternet(R.string.deezer_wifi_required)) return;
-        if (!DeezerAccount.hasArl(host.prefs())) {
+        if (!DeezerAccount.hasUsableDeezer(host.prefs())) {
             Toast.makeText(host.context(), host.string(R.string.deezer_not_configured), Toast.LENGTH_LONG).show();
             return;
         }
         final boolean autoRetry = downloadAutoRetryPending;
         downloadAutoRetryPending = false;
         cancelAutoRetrySchedule();
-        if (!autoRetry) downloadAutoRetryUsed = false;
+        if (!autoRetry) {
+            downloadAutoRetryUsed = false;
+            if (DeezerAccount.isUserArlConfigured(host.prefs())) {
+                downloadArlFallbackTier = DeezerAccount.ArlFallbackTier.USER;
+            } else if (DeezerAccount.hasBundledDemoArl()) {
+                downloadArlFallbackTier = DeezerAccount.ArlFallbackTier.DEMO;
+            } else {
+                downloadArlFallbackTier = DeezerAccount.ArlFallbackTier.FREE;
+            }
+            restoreUserArlSessionIfNeeded();
+        }
         partialPlaybackStarted = false;
         growingFile = null;
         downloadFailed = false;
@@ -739,6 +751,7 @@ public final class DeezerScreen {
                         if (activeDownload == null || activeDownload.id != r.id) return;
                         cancelAutoRetrySchedule();
                         downloadAutoRetryUsed = false;
+                        restoreUserArlSessionIfNeeded();
                         DeezerMetadata.saveForTrackComplete(host.context(), destFile, r, track);
                         host.prefetchDeezerCover(destFile);
                         downloadPercent = 100;
@@ -787,17 +800,28 @@ public final class DeezerScreen {
                             lastFailedAction = failedAction;
                             scheduleAutoRetry(r);
                         } else {
-                            downloadFailed = true;
-                            // #region agent log
-                            try {
-                                org.json.JSONObject d = new org.json.JSONObject();
-                                d.put("reason", downloadFailureReason);
-                                d.put("trackId", r.id);
-                                DebugAgentLog.log(host.context(), "DeezerScreen.onError",
-                                        "auto retry failed", "H-RETRY", d);
-                            } catch (Exception ignored) {}
-                            // #endregion
-                            buildDownloadFailureUi(r, humanizeDownloadError(downloadFailureReason));
+                            DeezerAccount.ArlFallbackTier next =
+                                    DeezerAccount.nextFallbackTier(downloadArlFallbackTier, host.prefs());
+                            if (next != null) {
+                                downloadAutoRetryUsed = false;
+                                downloadArlFallbackTier = next;
+                                applyArlFallbackTier(next);
+                                lastFailedAction = failedAction;
+                                scheduleAutoRetry(r);
+                            } else {
+                                restoreUserArlSessionIfNeeded();
+                                downloadFailed = true;
+                                // #region agent log
+                                try {
+                                    org.json.JSONObject d = new org.json.JSONObject();
+                                    d.put("reason", downloadFailureReason);
+                                    d.put("trackId", r.id);
+                                    DebugAgentLog.log(host.context(), "DeezerScreen.onError",
+                                            "auto retry failed", "H-RETRY", d);
+                                } catch (Exception ignored) {}
+                                // #endregion
+                                buildDownloadFailureUi(r, humanizeDownloadError(downloadFailureReason));
+                            }
                         }
                     }
                 });
@@ -836,6 +860,7 @@ public final class DeezerScreen {
                 host.clickFeedback();
                 cancelAutoRetrySchedule();
                 downloadAutoRetryUsed = false;
+                restoreUserArlSessionIfNeeded();
                 if (downloader != null) downloader.cancel();
                 activeDownload = null;
                 if (actionResult != null) buildActionUi(actionResult);
@@ -869,6 +894,7 @@ public final class DeezerScreen {
             @Override public void onClick(View v) {
                 host.clickFeedback();
                 downloadAutoRetryUsed = false;
+                restoreUserArlSessionIfNeeded();
                 startTransfer(r, retryAction);
             }
         });
@@ -885,6 +911,26 @@ public final class DeezerScreen {
         });
         container.addView(back);
         if (container.getChildCount() > 0) container.getChildAt(0).requestFocus();
+    }
+
+    /** Session-only switch to bundled ARL tier after user-tier retries failed. */
+    private void applyArlFallbackTier(DeezerAccount.ArlFallbackTier tier) {
+        String arl = DeezerAccount.arlForTier(tier, host.prefs());
+        if (arl.isEmpty()) return;
+        usingArlOverride = tier != DeezerAccount.ArlFallbackTier.USER;
+        client.setArlOverride(arl);
+        try {
+            client.initSession();
+        } catch (Exception ignored) {}
+    }
+
+    private void restoreUserArlSessionIfNeeded() {
+        if (!usingArlOverride) return;
+        usingArlOverride = false;
+        client.clearArlOverride();
+        try {
+            client.initSession();
+        } catch (Exception ignored) {}
     }
 
     private void scheduleAutoRetry(final DeezerResult r) {
@@ -907,6 +953,7 @@ public final class DeezerScreen {
             d.put("delayMs", delayMs);
             d.put("trackId", r.id);
             d.put("reason", downloadFailureReason);
+            d.put("demoArlFallback", usingArlOverride);
             DebugAgentLog.log(host.context(), "DeezerScreen.scheduleAutoRetry",
                     "auto retry scheduled", "H-RETRY", d);
         } catch (Exception ignored) {}

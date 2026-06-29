@@ -22,7 +22,7 @@ public class DeezerLoginDeviceTest {
         }
         Context ctx = InstrumentationRegistry.getInstrumentation().getTargetContext();
         SharedPreferences prefs = ctx.getSharedPreferences("solar_prefs", Context.MODE_PRIVATE);
-        DeezerAccount.saveArl(prefs, arl.trim());
+        DeezerAccount.saveUserArl(prefs, arl.trim());
         DeezerClient client = new DeezerClient(prefs);
         boolean ok = client.initSession();
         org.json.JSONObject d = new org.json.JSONObject();

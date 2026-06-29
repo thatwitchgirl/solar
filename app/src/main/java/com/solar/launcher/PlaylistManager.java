@@ -52,7 +52,7 @@ public final class PlaylistManager {
         String key = f.getAbsolutePath();
         if (seen.add(key)) {
           Entry e = parse(f, musicRoot);
-          if (!e.tracks.isEmpty()) out.add(e);
+          out.add(e);
         }
       }
     }
@@ -160,5 +160,81 @@ public final class PlaylistManager {
 
   public static Entry fromTracks(String name, List<File> tracks) {
     return new Entry(name, null, new ArrayList<File>(tracks));
+  }
+
+  /** Filesystem-safe base name for a new M3U (no extension). */
+  public static String safeFileName(String displayName) {
+    if (displayName == null) return "Playlist";
+    String s = displayName.trim();
+    if (s.isEmpty()) return "Playlist";
+    s = s.replaceAll("[\\\\/:*?\"<>|]", "_");
+    s = s.replaceAll("\\s+", " ").trim();
+    if (s.isEmpty()) return "Playlist";
+    if (s.length() > 80) s = s.substring(0, 80).trim();
+    return s;
+  }
+
+  /** Unique .m3u path under dir — appends (n) on collision. */
+  public static File uniqueM3uFile(File dir, String baseName) {
+    String safe = safeFileName(baseName);
+    File m3u = new File(dir, safe + ".m3u");
+    int n = 1;
+    while (m3u.exists()) {
+      m3u = new File(dir, safe + " (" + n + ").m3u");
+      n++;
+    }
+    return m3u;
+  }
+
+  /** Create a new playlist under musicRoot/Playlists/. */
+  public static Entry createPlaylist(File musicRoot, String displayName, List<File> tracks)
+      throws Exception {
+    if (musicRoot == null || !musicRoot.isDirectory()) {
+      throw new IllegalArgumentException("musicRoot");
+    }
+    File dir = playlistsDir(musicRoot);
+    if (!dir.exists() && !dir.mkdirs()) {
+      throw new IllegalStateException("mkdir Playlists");
+    }
+    String label = displayName != null ? displayName.trim() : "";
+    if (label.isEmpty()) label = "Playlist";
+    File dest = uniqueM3uFile(dir, label);
+    List<File> list = tracks != null ? new ArrayList<File>(tracks) : new ArrayList<File>();
+    Entry entry = new Entry(label, dest, list);
+    saveM3u(entry, dest);
+    return new Entry(label, dest, list);
+  }
+
+  /** Merge tracks into an existing M3U — skips duplicate paths. */
+  public static Entry appendTracks(File m3u, File musicRoot, List<File> toAdd) throws Exception {
+    if (m3u == null || !m3u.isFile()) throw new IllegalArgumentException("m3u");
+    Entry existing = parse(m3u, musicRoot);
+    java.util.LinkedHashSet<String> seen = new java.util.LinkedHashSet<String>();
+    List<File> merged = new ArrayList<File>();
+    for (File t : existing.tracks) {
+      if (t == null || !t.isFile()) continue;
+      String key = canonicalKey(t);
+      if (seen.add(key)) merged.add(t);
+    }
+    if (toAdd != null) {
+      for (File t : toAdd) {
+        if (t == null || !t.isFile()) continue;
+        String key = canonicalKey(t);
+        if (seen.add(key)) {
+          merged.add(t);
+        }
+      }
+    }
+    Entry out = new Entry(existing.name, m3u, merged);
+    saveM3u(out, m3u);
+    return out;
+  }
+
+  private static String canonicalKey(File f) {
+    try {
+      return f.getCanonicalPath();
+    } catch (Exception ignored) {
+      return f.getAbsolutePath();
+    }
   }
 }

@@ -374,6 +374,10 @@
     <string name="library_queue_empty">Queue is empty</string>
     <string name="library_playlist_saved">Saved %1$s</string>
     <string name="library_playlist_save_failed">Could not save playlist</string>
+    <string name="library_new_playlist">New playlist…</string>
+    <string name="library_playlist_created">Created %1$s</string>
+    <string name="library_playlist_added">Added %1$d track(s) to %2$s</string>
+    <string name="library_playlist_name_empty">Enter a playlist name</string>
     <string name="library_edit_queue">View Queue</string>
     <string name="library_edit_playlist">Edit playlist</string>
     <string name="library_queue_remove">Remove from queue</string>
@@ -755,6 +759,7 @@
     <string name="soulseek_profile_no_bio">No bio</string>
     <string name="soulseek_profile_interests_unavailable">Interests not available</string>
     <string name="keyboard_soulseek_interest">Interest</string>
+    <string name="keyboard_playlist_name">Playlist name…</string>
     <string name="context_add_to_interests">Add to Reach interests</string>
     <string name="context_like_interest">Like: %1$s</string>
     <string name="context_dislike_interest">Dislike: %1$s</string>
@@ -842,6 +847,11 @@
     <string name="context_action_refresh_library">Refresh library</string>
     <string name="context_action_play_folder">Play folder</string>
     <string name="context_action_add_to_queue">Add to queue</string>
+    <string name="context_action_add_to_playlist">Add to playlist</string>
+    <string name="context_action_add_album_to_playlist">Add album to playlist</string>
+    <string name="context_action_add_artist_to_playlist">Add artist to playlist</string>
+    <string name="context_add_to_playlist_title">Add to playlist</string>
+    <string name="context_playlist_new">New playlist…</string>
     <string name="context_action_move">Move</string>
     <string name="context_action_remove_from_playlist">Remove from playlist</string>
     <string name="context_action_open_saved">Saved on device</string>

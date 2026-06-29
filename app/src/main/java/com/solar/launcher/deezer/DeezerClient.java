@@ -25,6 +25,8 @@ public final class DeezerClient {
 
     private final SharedPreferences prefs;
     private String arl = "";
+    /** ponytail: transient download fallback — does not mutate prefs ARL. */
+    private String arlOverride = null;
     private String licenseToken = "";
     private String soundFormat = "MP3_128";
     private boolean premium = false;
@@ -60,9 +62,24 @@ public final class DeezerClient {
         return arl;
     }
 
+    /** Use bundled/demo ARL for this session only — cleared via {@link #clearArlOverride()}. */
+    public void setArlOverride(String arl) {
+        arlOverride = arl != null && arl.trim().length() >= 64 ? arl.trim() : null;
+        sessionValid = false;
+    }
+
+    public void clearArlOverride() {
+        arlOverride = null;
+        sessionValid = false;
+    }
+
+    public boolean isUsingArlOverride() {
+        return arlOverride != null;
+    }
+
     /** Initialize session from prefs; returns true if license token obtained. */
     public boolean initSession() throws IOException {
-        arl = DeezerAccount.loadArl(prefs);
+        arl = arlOverride != null ? arlOverride : DeezerAccount.defaultSessionArl(prefs);
         if (arl.isEmpty()) {
             sessionValid = false;
             return false;
@@ -80,7 +97,9 @@ public final class DeezerClient {
             userName = user.optString("BLOG_NAME", user.optString("USER_ID", ""));
             userId = String.valueOf(user.optLong("USER_ID", 0));
             setSongQuality(quality, premium);
-            DeezerAccount.saveSessionInfo(prefs, userName, userId, premium);
+            if (arlOverride == null) {
+                DeezerAccount.saveSessionInfo(prefs, userName, userId, premium);
+            }
             sessionValid = true;
             return true;
         } catch (Exception e) {

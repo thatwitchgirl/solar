@@ -89,6 +89,46 @@ public final class DeezerDownloader {
         downloadThread.start();
     }
 
+    /** Download into an exact file path (background album queue placeholders). */
+    public void downloadToFile(final DeezerResult result, final File dest, final Listener listener) {
+        cancel.set(false);
+        if (downloadThread != null && downloadThread.isAlive()) {
+            downloadThread.interrupt();
+        }
+        downloadThread = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    if (!client.isSessionValid()) client.initSession();
+                    DeezerTrackData track = resolver.resolveTrack(result.id);
+                    String cdnUrl = null;
+                    try {
+                        cdnUrl = media.resolveUrl(track.trackToken);
+                    } catch (IOException e) {
+                        if (track.fallback != null) {
+                            track = track.fallback;
+                            cdnUrl = media.resolveUrl(track.trackToken);
+                        } else {
+                            throw e;
+                        }
+                    }
+                    if (dest.getParentFile() != null && !dest.getParentFile().exists()) {
+                        dest.getParentFile().mkdirs();
+                    }
+                    String ext = dest.getName();
+                    int dot = ext.lastIndexOf('.');
+                    ext = dot > 0 ? ext.substring(dot + 1) : "mp3";
+                    streamDecrypt(cdnUrl, dest, String.valueOf(track.sngId), listener, track);
+                } catch (Exception e) {
+                    if (listener != null) {
+                        listener.onError(e.getMessage() != null ? e.getMessage() : "Download failed");
+                    }
+                }
+            }
+        }, "DeezerDownload");
+        downloadThread.start();
+    }
+
     private void streamDecrypt(String url, File dest, String sngId, Listener listener,
             DeezerTrackData track) throws IOException {
         TlsHelper.ensureSecurityProvider();

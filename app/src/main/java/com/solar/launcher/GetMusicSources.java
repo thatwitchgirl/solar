@@ -38,7 +38,7 @@ public final class GetMusicSources {
 
     /** Deezer opted in and ARL saved — session may still be warming up. */
     public static boolean deezerConfiguredForGetMusic(SharedPreferences prefs, boolean deezerActive) {
-        return deezerActive && DeezerAccount.hasArl(prefs);
+        return deezerActive && DeezerAccount.hasUsableDeezer(prefs);
     }
 
     /** Deezer download / play / queue in Get Music (needs valid session). */
