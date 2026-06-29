@@ -35,6 +35,27 @@ public final class SolarHttp {
         }
     }
 
+    /** Theme gallery assets — many small files in one session; use extended read timeout. */
+    public static byte[] getBytesTheme(String urlStr, String accept, String userAgent) throws IOException {
+        TlsHelper.ensureSecurityProvider();
+        Request.Builder b = new Request.Builder().url(urlStr);
+        b.header("User-Agent", userAgent != null ? userAgent : DEFAULT_UA);
+        if (accept != null && !accept.isEmpty()) b.header("Accept", accept);
+        OkHttpClient client = longReadClient();
+        Response resp = client.newCall(b.build()).execute();
+        if (!resp.isSuccessful()) {
+            int code = resp.code();
+            resp.close();
+            throw new IOException("HTTP " + code + " for " + urlStr);
+        }
+        try {
+            if (resp.body() == null) throw new IOException("Empty body for " + urlStr);
+            return resp.body().bytes();
+        } finally {
+            if (resp.body() != null) resp.body().close();
+        }
+    }
+
     /** Try URLs in order — https first, then http fallback for legacy feeds. */
     public static byte[] getBytesFirstOk(String[] urls, String accept, String userAgent) throws IOException {
         IOException last = null;

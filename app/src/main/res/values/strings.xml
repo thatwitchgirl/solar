@@ -369,12 +369,13 @@
     <string name="library_sort_album">Album</string>
     <string name="library_sort_date">Date added</string>
     <string name="library_sort_now">Sort: %1$s</string>
-    <string name="library_playlists_empty">No playlists — save queue or add .m3u files</string>
+    <string name="library_playlists_local_section">Local playlists</string>
+    <string name="library_playlists_empty">No local playlists yet</string>
     <string name="library_save_queue_m3u">💾 Save playback queue as playlist</string>
     <string name="library_queue_empty">Queue is empty</string>
     <string name="library_playlist_saved">Saved %1$s</string>
     <string name="library_playlist_save_failed">Could not save playlist</string>
-    <string name="library_new_playlist">New playlist…</string>
+    <string name="library_new_playlist">New local playlist…</string>
     <string name="library_playlist_created">Created %1$s</string>
     <string name="library_playlist_added">Added %1$d track(s) to %2$s</string>
     <string name="library_playlist_name_empty">Enter a playlist name</string>
@@ -851,7 +852,7 @@
     <string name="context_action_add_album_to_playlist">Add album to playlist</string>
     <string name="context_action_add_artist_to_playlist">Add artist to playlist</string>
     <string name="context_add_to_playlist_title">Add to playlist</string>
-    <string name="context_playlist_new">New playlist…</string>
+    <string name="context_playlist_new">New local playlist…</string>
     <string name="context_action_move">Move</string>
     <string name="context_action_remove_from_playlist">Remove from playlist</string>
     <string name="context_action_open_saved">Saved on device</string>
@@ -875,7 +876,10 @@
     <string name="context_hold_back_hint">Hold back button for Options</string>
     <string name="context_quick_power">Power</string>
     <string name="context_quick_queue">Queue</string>
-    <string name="queue_tutorial_line_ok">OK — play this track.</string>
+    <string name="playlist_move_tutorial_title">Move tracks in playlist</string>
+    <string name="playlist_move_tutorial_body">Hold OK on a track to pick it up.\n\nScroll the wheel to move it — the tracks above and below show where it will land.\n\nPress OK again to place it.\n\nPress Back to cancel and restore the original order.</string>
+    <string name="playlist_move_tutorial_got_it">Got it</string>
+    <string name="queue_tutorial_line_ok">Press OK again to place the track.</string>
     <string name="queue_tutorial_line_hold">Hold OK — pick up the track, then scroll to move it in the queue.</string>
     <string name="queue_tutorial_got_it">Got it</string>
     <string name="context_tier_wifi">Wi-Fi</string>

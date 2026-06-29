@@ -7,7 +7,6 @@ import com.solar.launcher.PlaylistManager;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 /** Sequential Deezer playlist download + relative M3U write. */
 public final class DeezerPlaylistSaver {
@@ -28,52 +27,42 @@ public final class DeezerPlaylistSaver {
         }
         new Thread(new Runnable() {
             @Override public void run() {
-                final AtomicBoolean cancel = new AtomicBoolean(false);
                 try {
-                    DeezerClient client = new DeezerClient(prefs);
-                    if (!client.isSessionValid()) client.initSession();
-                    DeezerDownloader downloader = new DeezerDownloader(client);
-                    String ext = client.fileExtension();
+                    String ext = "mp3";
+                    try {
+                        DeezerClient probe = new DeezerClient(prefs);
+                        if (!probe.isSessionValid()) probe.initSession();
+                        ext = probe.fileExtension();
+                    } catch (Exception ignored) {}
                     List<File> saved = new ArrayList<File>();
                     int total = tracks.size();
+                    int skipped = 0;
+                    String lastErr = null;
                     for (int i = 0; i < total; i++) {
-                        if (cancel.get()) return;
                         final DeezerResult track = tracks.get(i);
-                        if (track == null || track.id <= 0) continue;
-                        final int done = i;
+                        if (track == null || track.id <= 0) {
+                            skipped++;
+                            continue;
+                        }
                         if (listener != null) {
-                            listener.onProgress(done, total, track.title);
+                            listener.onProgress(i, total, track.title);
                         }
-                        final Object lock = new Object();
-                        final boolean[] ok = {false};
-                        final String[] err = {null};
-                        final File[] dest = {null};
-                        downloader.download(track, musicRoot, ext, new DeezerDownloader.Listener() {
-                            @Override public void onProgress(long doneBytes, long totalBytes) {}
-                            @Override public void onPartialReady(File d, long bytesRead) {}
-                            @Override public void onComplete(File d, DeezerTrackData t) {
-                                dest[0] = d;
-                                ok[0] = true;
-                                synchronized (lock) { lock.notifyAll(); }
-                            }
-                            @Override public void onError(String message) {
-                                err[0] = message;
-                                synchronized (lock) { lock.notifyAll(); }
-                            }
-                        });
-                        synchronized (lock) {
-                            while (!ok[0] && err[0] == null) {
-                                lock.wait(300000);
-                            }
+                        File dest = uniqueTrackFile(musicRoot, track, ext);
+                        DeezerDownloadRunner.Progress progress = new DeezerDownloadRunner.Progress() {
+                            @Override public void onProgress(int percent, long done, long totalBytes) {}
+                        };
+                        String err = DeezerDownloadRunner.downloadWithFallback(
+                                prefs, track, dest, ext, progress);
+                        if (err != null) {
+                            lastErr = err;
+                            skipped++;
+                            continue;
                         }
-                        if (err[0] != null) {
-                            if (listener != null) listener.onError(err[0]);
-                            return;
-                        }
-                        if (dest[0] != null && dest[0].isFile()) saved.add(dest[0]);
+                        if (dest.isFile()) saved.add(dest);
                     }
                     if (saved.isEmpty()) {
-                        if (listener != null) listener.onError("No tracks saved");
+                        String msg = lastErr != null ? lastErr : "No tracks saved";
+                        if (listener != null) listener.onError(msg);
                         return;
                     }
                     File playlistsDir = PlaylistManager.playlistsDir(musicRoot);
@@ -94,5 +83,16 @@ public final class DeezerPlaylistSaver {
                 }
             }
         }, "DeezerPlaylistSave").start();
+    }
+
+    private static File uniqueTrackFile(File destDir, DeezerResult result, String ext) {
+        String safeName = result.filenameBase() + "." + ext;
+        File dest = new File(destDir, safeName);
+        int n = 1;
+        while (dest.exists()) {
+            dest = new File(destDir, result.filenameBase() + " (" + n + ")." + ext);
+            n++;
+        }
+        return dest;
     }
 }

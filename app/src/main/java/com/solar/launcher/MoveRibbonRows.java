@@ -192,6 +192,24 @@ final class MoveRibbonRows {
         ensureDropLine(row, moving, ThemeManager.getSettingMenuTextColorSelected());
     }
 
+    /** ponytail: cached row backgrounds — skip scaled-bitmap work on every ribbon bind. */
+    static void bindLibraryMoveRow(Activity activity, FrameLayout row, String titleText, String subText,
+            boolean moving, boolean highlighted, boolean nowPlaying, boolean playing,
+            int rowWidthPx, int rowHeightPx,
+            android.graphics.drawable.Drawable bgSelected,
+            android.graphics.drawable.Drawable bgNormal) {
+        if (row == null) return;
+        android.graphics.drawable.Drawable bg = highlighted ? bgSelected : bgNormal;
+        if (bg != null) {
+            row.setBackground(bg);
+        } else if (highlighted) {
+            row.setBackgroundColor(ThemeManager.getRowSelectionFillColor());
+        } else {
+            row.setBackgroundColor(ThemeManager.getListButtonNormalBg());
+        }
+        bindLibraryMoveRowContent(row, titleText, subText, moving, highlighted, nowPlaying, playing);
+    }
+
     static void bindLibraryMoveRow(Activity activity, FrameLayout row, String titleText, String subText,
             boolean moving, boolean highlighted, boolean nowPlaying, boolean playing,
             int rowWidthPx, int rowHeightPx) {
@@ -205,6 +223,12 @@ final class MoveRibbonRows {
         } else {
             row.setBackgroundColor(ThemeManager.getListButtonNormalBg());
         }
+        bindLibraryMoveRowContent(row, titleText, subText, moving, highlighted, nowPlaying, playing);
+    }
+
+    private static void bindLibraryMoveRowContent(FrameLayout row, String titleText, String subText,
+            boolean moving, boolean highlighted, boolean nowPlaying, boolean playing) {
+        if (row == null) return;
         TextView title = (TextView) row.findViewWithTag(TAG_TITLE);
         if (title != null) {
             title.setText(titleText != null ? titleText : "");

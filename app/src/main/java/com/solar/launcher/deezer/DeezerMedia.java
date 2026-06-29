@@ -59,16 +59,26 @@ public final class DeezerMedia {
                 if (!resp.isSuccessful() || resp.body() == null) {
                     throw new IOException("HTTP " + resp.code());
                 }
-                JSONObject root = new JSONObject(resp.body().string());
-                JSONArray data = root.getJSONArray("data");
+                String bodyText = resp.body().string();
+                JSONObject root = new JSONObject(bodyText);
+                JSONArray data = root.optJSONArray("data");
+                if (data == null || data.length() == 0) {
+                    throw new IOException(mediaApiError(root, "No download URL from Deezer"));
+                }
                 JSONObject item = data.getJSONObject(0);
                 if (item.has("errors")) {
                     JSONArray errs = item.getJSONArray("errors");
-                    throw new IOException(errs.getJSONObject(0).optString("message", "API error"));
+                    throw new IOException(mediaApiError(errs, "API error"));
                 }
-                JSONArray mediaOut = item.getJSONArray("media");
-                return mediaOut.getJSONObject(0).getJSONArray("sources")
-                        .getJSONObject(0).getString("url");
+                JSONArray mediaOut = item.optJSONArray("media");
+                if (mediaOut == null || mediaOut.length() == 0) {
+                    throw new IOException("No media in Deezer response");
+                }
+                JSONArray sources = mediaOut.getJSONObject(0).optJSONArray("sources");
+                if (sources == null || sources.length() == 0) {
+                    throw new IOException("No stream source for this track");
+                }
+                return sources.getJSONObject(0).getString("url");
             } finally {
                 if (resp.body() != null) resp.body().close();
             }
@@ -77,5 +87,22 @@ public final class DeezerMedia {
         } catch (Exception e) {
             throw new IOException(e.getMessage());
         }
+    }
+
+    /** Pull first API error message from a response or errors array. */
+    private static String mediaApiError(JSONObject root, String fallback) {
+        if (root == null) return fallback;
+        JSONArray errs = root.optJSONArray("errors");
+        if (errs != null && errs.length() > 0) {
+            return errs.optJSONObject(0).optString("message", fallback);
+        }
+        return fallback;
+    }
+
+    private static String mediaApiError(JSONArray errs, String fallback) {
+        if (errs != null && errs.length() > 0) {
+            return errs.optJSONObject(0).optString("message", fallback);
+        }
+        return fallback;
     }
 }

@@ -327,12 +327,13 @@
     <string name="library_sort_album">앨범</string>
     <string name="library_sort_date">추가 날짜</string>
     <string name="library_sort_now">정렬: %1$s</string>
-    <string name="library_playlists_empty">재생목록 없음 — 큐 저장 또는 .m3u 추가</string>
+    <string name="library_playlists_local_section">로컬 재생목록</string>
+    <string name="library_playlists_empty">로컬 재생목록 없음</string>
     <string name="library_save_queue_m3u">💾 재생 큐를 재생목록으로 저장</string>
     <string name="library_queue_empty">큐가 비어 있습니다</string>
     <string name="library_playlist_saved">%1$s 저장됨</string>
     <string name="library_playlist_save_failed">재생목록 저장 실패</string>
-    <string name="library_new_playlist">새 재생목록…</string>
+    <string name="library_new_playlist">새 로컬 재생목록…</string>
     <string name="library_playlist_created">%1$s 생성됨</string>
     <string name="library_playlist_added">%2$s에 트랙 %1$d곡 추가됨</string>
     <string name="library_playlist_name_empty">재생목록 이름을 입력하세요</string>
@@ -538,7 +539,7 @@
     <string name="context_action_add_album_to_playlist">앨범을 재생목록에 추가</string>
     <string name="context_action_add_artist_to_playlist">아티스트를 재생목록에 추가</string>
     <string name="context_add_to_playlist_title">재생목록에 추가</string>
-    <string name="context_playlist_new">새 재생목록…</string>
+    <string name="context_playlist_new">새 로컬 재생목록…</string>
     <string name="context_action_move">이동</string>
     <string name="context_action_remove_from_playlist">재생 목록에서 제거</string>
     <string name="context_action_open_saved">기기에 저장됨</string>

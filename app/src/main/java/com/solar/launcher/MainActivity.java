@@ -375,7 +375,14 @@ public class MainActivity extends Activity {
     private final QueueMoveWheelFilter playlistMoveWheelFilter = new QueueMoveWheelFilter();
     private FrameLayout playlistMoveOverlay = null;
     private ScrollView playlistMoveScroll = null;
-    private MoveStripController playlistMoveStrip = null;
+    private LibraryMoveRibbon playlistMoveRibbon = null;
+    /** Cached row labels during move — avoids re-scanning library on every ribbon bind. */
+    private java.util.ArrayList<String> playlistMoveTitleCache;
+    private java.util.ArrayList<String> playlistMoveSubCache;
+    private int playlistMoveEnterBrowseSlot = QueueMoveWindow.RIBBON_CENTER;
+    private int playlistMoveEnterPadTop = 0;
+    private android.graphics.drawable.Drawable playlistMoveRowBgSel;
+    private android.graphics.drawable.Drawable playlistMoveRowBgNorm;
     private PlaylistManager.Entry playlistViewEntry = null;
     private final List<DeezerPlaylist> deezerPlaylistsCache = new ArrayList<DeezerPlaylist>();
     private int deezerPlaylistsLoadGen = 0;
@@ -900,6 +907,7 @@ public class MainActivity extends Activity {
     private int wifiContextScannedRevealLimit = 0;
     private boolean wifiContextScanActive = false;
     private static final String PREF_QUEUE_TUTORIAL_SEEN = "queue_tutorial_seen";
+    private static final String PREF_PLAYLIST_MOVE_TUTORIAL_SEEN = "playlist_move_tutorial_seen";
     private static final String PREF_DEBUG_SHOW_ERROR_TOASTS = "debug_show_error_toasts";
     private final Handler wifiContextRefreshHandler = new Handler();
     private final Handler wifiContextScanFollowUpHandler = new Handler();
@@ -2468,65 +2476,7 @@ public class MainActivity extends Activity {
                 }
             }, 4000);
         }
-        final String themeAutoVariant = getIntent().getStringExtra("theme_auto_variant");
-        if (themeAutoVariant != null && themeAutoVariant.contains("::")) {
-            getIntent().removeExtra("theme_auto_variant");
-            final String[] parts = themeAutoVariant.split("::", 2);
-            final String themeName = parts[0].trim();
-            final String variantSlug = parts[1].trim();
-            new Handler().postDelayed(new Runnable() {
-                @Override
-                public void run() {
-                    changeScreen(STATE_SETTINGS);
-                    setSettingsSubScreen(SettingsScreens.THEMES);
-                    updateStatusBarTitle();
-                    prepareThemeGalleryPreviewPane();
-                    new Thread(new Runnable() {
-                        @Override
-                        public void run() {
-                            try {
-                                List<ThemeDownloader.CatalogEntry> catalog = ThemeDownloader.fetchCatalog();
-                                ThemeDownloader.CatalogEntry entry = null;
-                                for (ThemeDownloader.CatalogEntry e : catalog) {
-                                    if (themeName.equalsIgnoreCase(e.name)
-                                            || themeName.equalsIgnoreCase(e.folder)
-                                            || themeName.replace(" ", "").equalsIgnoreCase(
-                                                    e.name.replace(" ", ""))) {
-                                        entry = e;
-                                        break;
-                                    }
-                                }
-                                if (entry == null) throw new Exception("theme not in catalog: " + themeName);
-                                List<ThemeDownloader.ThemeVariant> variants =
-                                        ThemeDownloader.fetchReachableVariants(entry);
-                                ThemeDownloader.ThemeVariant pick = null;
-                                for (ThemeDownloader.ThemeVariant v : variants) {
-                                    if (variantSlug.equalsIgnoreCase(v.folderSlug)
-                                            || variantSlug.equalsIgnoreCase(v.label)) {
-                                        pick = v;
-                                        break;
-                                    }
-                                }
-                                if (pick == null) throw new Exception("variant not found: " + variantSlug);
-                                final ThemeDownloader.CatalogEntry fe = entry;
-                                final ThemeDownloader.ThemeVariant fv = pick;
-                                runOnUiThreadSafe(new Runnable() {
-                                    @Override
-                                    public void run() {
-                                        if (isFinishing()) return;
-                                        applyThemeCatalog(catalog);
-                                        buildUnifiedThemesUI();
-                                        downloadAndApplyThemeVariant(fe, fv);
-                                    }
-                                });
-                            } catch (final Exception e) {
-                                ThemeDownloader.dlLogError("theme_auto_variant", e);
-                            }
-                        }
-                    }).start();
-                }
-            }, 4000);
-        }
+        scheduleThemeAutoVariantIfRequested();
     }
     // 💡 [추가] 화면 전체를 덮는 확실한 로딩 팝업 띄우기 함수
     private void showLoadingPopup() {
@@ -6929,6 +6879,77 @@ public class MainActivity extends Activity {
         }, 500);
     }
 
+    /** adb: am start -n com.solar.launcher/.MainActivity --es theme_auto_variant 'StrangerThings::Robin' */
+    private void scheduleThemeAutoVariantIfRequested() {
+        Intent intent = getIntent();
+        if (intent == null) return;
+        final String themeAutoVariant = intent.getStringExtra("theme_auto_variant");
+        // #region agent log
+        try {
+            org.json.JSONObject themeAdbDbg = new org.json.JSONObject();
+            themeAdbDbg.put("extra", themeAutoVariant != null ? themeAutoVariant : "");
+            DebugSessionLog.log("MainActivity.scheduleThemeAutoVariant", "extra", "H-ADB", themeAdbDbg);
+        } catch (Exception ignored) {}
+        // #endregion
+        if (themeAutoVariant == null || !themeAutoVariant.contains("::")) return;
+        intent.removeExtra("theme_auto_variant");
+        final String[] parts = themeAutoVariant.split("::", 2);
+        final String themeName = parts[0].trim();
+        final String variantSlug = parts[1].trim();
+        new Handler().postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                changeScreen(STATE_SETTINGS);
+                setSettingsSubScreen(SettingsScreens.THEMES);
+                updateStatusBarTitle();
+                prepareThemeGalleryPreviewPane();
+                new Thread(new Runnable() {
+                    @Override
+                    public void run() {
+                        try {
+                            List<ThemeDownloader.CatalogEntry> catalog = ThemeDownloader.fetchCatalog();
+                            ThemeDownloader.CatalogEntry entry = null;
+                            for (ThemeDownloader.CatalogEntry e : catalog) {
+                                if (themeName.equalsIgnoreCase(e.name)
+                                        || themeName.equalsIgnoreCase(e.folder)
+                                        || themeName.replace(" ", "").equalsIgnoreCase(
+                                                e.name.replace(" ", ""))) {
+                                    entry = e;
+                                    break;
+                                }
+                            }
+                            if (entry == null) throw new Exception("theme not in catalog: " + themeName);
+                            List<ThemeDownloader.ThemeVariant> variants =
+                                    ThemeDownloader.fetchReachableVariants(entry);
+                            ThemeDownloader.ThemeVariant pick = null;
+                            for (ThemeDownloader.ThemeVariant v : variants) {
+                                if (variantSlug.equalsIgnoreCase(v.folderSlug)
+                                        || variantSlug.equalsIgnoreCase(v.label)) {
+                                    pick = v;
+                                    break;
+                                }
+                            }
+                            if (pick == null) throw new Exception("variant not found: " + variantSlug);
+                            final ThemeDownloader.CatalogEntry fe = entry;
+                            final ThemeDownloader.ThemeVariant fv = pick;
+                            runOnUiThreadSafe(new Runnable() {
+                                @Override
+                                public void run() {
+                                    if (isFinishing()) return;
+                                    applyThemeCatalog(catalog);
+                                    buildUnifiedThemesUI();
+                                    downloadAndApplyThemeVariant(fe, fv);
+                                }
+                            });
+                        } catch (final Exception e) {
+                            ThemeDownloader.dlLogError("theme_auto_variant", e);
+                        }
+                    }
+                }).start();
+            }
+        }, 4000);
+    }
+
     /** adb: am start -n com.solar.launcher/.MainActivity -e open_webserver true */
     private void handleLaunchIntentExtras() {
         Intent intent = getIntent();
@@ -10103,8 +10124,14 @@ public class MainActivity extends Activity {
     }
 
     private void createBrowserSectionHeader(String title) {
+        createBrowserSectionHeader(title, null);
+    }
+
+    /** Optional tag for async row insertion (e.g. Deezer playlist section). */
+    private void createBrowserSectionHeader(String title, Object tag) {
         TextView tv = new TextView(this);
         tv.setFocusable(false);
+        if (tag != null) tv.setTag(tag);
         tv.setTypeface(ThemeManager.getCustomFont(), android.graphics.Typeface.BOLD);
         tv.setText(title);
         int headerColor = ThemeManager.getSectionHeaderTextColor();
@@ -14311,50 +14338,168 @@ public class MainActivity extends Activity {
 
     private void beginPlaylistMove(int pickIndex) {
         if (pickIndex < 0 || pickIndex >= virtualSongList.size()) return;
-        // #region agent log
-        try {
-            org.json.JSONObject d = new org.json.JSONObject();
-            d.put("pickIndex", pickIndex);
-            d.put("size", virtualSongList.size());
-            DebugAgentLog.log(this, "MainActivity.beginPlaylistMove", "move begin", "H3", d);
-        } catch (Exception ignored) {}
-        // #endregion
         playlistMovePickIndex = pickIndex;
         playlistMoveFrom = pickIndex;
         playlistMoveSnapshot = new java.util.ArrayList<File>(virtualSongList);
         playlistMoveDirty = false;
         playlistMoveWheelFilter.reset();
-        showPlaylistMoveStripUi();
+        buildPlaylistMoveLabelCaches();
+        playlistMoveEnterBrowseSlot = capturePlaylistMoveBrowseSlot(pickIndex);
+        playlistMoveEnterPadTop = capturePlaylistMovePadTop(pickIndex);
+        if (!playlistMoveTutorialSeen()) {
+            showPlaylistMoveTutorialOverlay(new Runnable() {
+                @Override public void run() {
+                    markPlaylistMoveTutorialSeen();
+                    showPlaylistMoveStripUi();
+                }
+            });
+        } else {
+            showPlaylistMoveStripUi();
+        }
     }
 
-    private MoveStripController.Adapter createPlaylistMoveAdapter() {
-        return new MoveStripController.Adapter() {
-            @Override
-            public View createRow() {
-                return MoveRibbonRows.createLibraryMoveRow(
-                        MainActivity.this, y1LibraryRowHeightPx);
-            }
+    private void buildPlaylistMoveLabelCaches() {
+        playlistMoveTitleCache = new java.util.ArrayList<String>();
+        playlistMoveSubCache = new java.util.ArrayList<String>();
+        for (int i = 0; i < virtualSongList.size(); i++) {
+            SongItem song = songItemAtPlaylistIndex(i);
+            playlistMoveTitleCache.add(String.format(Locale.US, "%02d · %s", i + 1,
+                    song != null ? song.title : ""));
+            playlistMoveSubCache.add(songSubtitleLine(song));
+        }
+    }
 
+    private boolean playlistMoveTutorialSeen() {
+        return prefs != null && prefs.getBoolean(PREF_PLAYLIST_MOVE_TUTORIAL_SEEN, false);
+    }
+
+    private void markPlaylistMoveTutorialSeen() {
+        if (prefs != null) {
+            prefs.edit().putBoolean(PREF_PLAYLIST_MOVE_TUTORIAL_SEEN, true).apply();
+        }
+    }
+
+    /** One-time full-width intro before playlist move ribbon (About-style calm copy). */
+    private void showPlaylistMoveTutorialOverlay(final Runnable onContinue) {
+        listVirtualSongs.setVisibility(View.GONE);
+        android.view.ViewGroup browserParent = (android.view.ViewGroup) scrollViewBrowser.getParent();
+        if (playlistMoveOverlay == null) {
+            playlistMoveOverlay = new FrameLayout(this);
+            browserParent.addView(playlistMoveOverlay, new android.view.ViewGroup.LayoutParams(
+                    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                    android.view.ViewGroup.LayoutParams.MATCH_PARENT));
+        }
+        playlistMoveOverlay.setVisibility(View.VISIBLE);
+        playlistMoveOverlay.removeAllViews();
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL);
+        col.setGravity(Gravity.CENTER_HORIZONTAL);
+        float density = getResources().getDisplayMetrics().density;
+        int pad = (int) (14 * density);
+        col.setPadding(pad, pad, pad, pad);
+
+        TextView title = new TextView(this);
+        title.setFocusable(false);
+        title.setGravity(Gravity.CENTER);
+        title.setText(getString(R.string.playlist_move_tutorial_title));
+        title.setTypeface(ThemeManager.getCustomFont(), android.graphics.Typeface.BOLD);
+        title.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX,
+                getResources().getDimension(R.dimen.y1_menu_text_size) * 1.05f);
+        ThemeManager.applyThemedTextStyle(title, ThemeManager.getTextColorPrimary());
+        col.addView(title, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        TextView body = new TextView(this);
+        body.setFocusable(false);
+        body.setText(getString(R.string.playlist_move_tutorial_body));
+        body.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX,
+                getResources().getDimension(R.dimen.y1_menu_text_size) * 0.92f);
+        ThemeManager.applyThemedTextStyle(body, ThemeManager.getTextColorPrimary());
+        LinearLayout.LayoutParams bodyLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        bodyLp.topMargin = pad;
+        col.addView(body, bodyLp);
+
+        Button gotIt = createListButton(getString(R.string.playlist_move_tutorial_got_it));
+        gotIt.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                clickFeedback();
+                if (onContinue != null) onContinue.run();
+            }
+        });
+        LinearLayout.LayoutParams btnLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        btnLp.topMargin = pad;
+        col.addView(gotIt, btnLp);
+
+        scroll.addView(col, new ScrollView.LayoutParams(
+                ScrollView.LayoutParams.MATCH_PARENT, ScrollView.LayoutParams.WRAP_CONTENT));
+        playlistMoveOverlay.addView(scroll, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+        gotIt.requestFocus();
+    }
+
+    private int capturePlaylistMoveBrowseSlot(int pickIndex) {
+        if (listVirtualSongs == null || virtualSongList.isEmpty()) {
+            return QueueMoveWindow.RIBBON_CENTER;
+        }
+        int first = listVirtualSongs.getFirstVisiblePosition();
+        int childIdx = pickIndex - first;
+        if (childIdx >= 0 && childIdx < listVirtualSongs.getChildCount()) {
+            return childIdx;
+        }
+        return QueueBrowseWindow.browseViewportSlot(pickIndex, virtualSongList.size(), 3);
+    }
+
+    /** Top padding so the 3-slot ribbon lines up with the list row that was picked. */
+    private int capturePlaylistMovePadTop(int pickIndex) {
+        if (listVirtualSongs == null) return 0;
+        int first = listVirtualSongs.getFirstVisiblePosition();
+        int childIdx = pickIndex - first;
+        if (childIdx < 0 || childIdx >= listVirtualSongs.getChildCount()) return 0;
+        View picked = listVirtualSongs.getChildAt(childIdx);
+        if (picked == null) return 0;
+        int slotH = y1LibraryRowHeightPx + 2;
+        int rowTop = listVirtualSongs.getTop() + picked.getTop();
+        return Math.max(0, rowTop - childIdx * slotH);
+    }
+
+    private LibraryMoveRibbon.Binder createPlaylistMoveBinder() {
+        final android.graphics.drawable.Drawable bgSel = playlistMoveRowBgSel;
+        final android.graphics.drawable.Drawable bgNorm = playlistMoveRowBgNorm;
+        final int rowW = y1ActiveRowWidthPx();
+        final int rowH = y1LibraryRowHeightPx;
+        return new LibraryMoveRibbon.Binder() {
             @Override
-            public void bindRow(View row, int dataIndex, boolean moving, boolean confirming) {
-                SongItem song = songItemAtPlaylistIndex(dataIndex);
+            public void bindRow(FrameLayout row, int dataIndex, int ribbonSlot, boolean empty) {
+                if (empty || dataIndex < 0) {
+                    MoveRibbonRows.bindEmptySlot(row);
+                    return;
+                }
+                boolean moving = ribbonSlot == QueueMoveWindow.RIBBON_CENTER;
                 boolean np = isPlaylistViewNowPlayingSlot(dataIndex);
                 boolean playing = np && !isPausedByHand && playback.isMusicActive();
-                String title = String.format(Locale.US, "%02d · %s", dataIndex + 1,
-                        song != null ? song.title : "");
-                MoveRibbonRows.bindLibraryMoveRow(MainActivity.this, (FrameLayout) row,
-                        title, songSubtitleLine(song), moving, moving || confirming,
-                        np, playing, y1ActiveRowWidthPx(), y1LibraryRowHeightPx);
+                String title = dataIndex < playlistMoveTitleCache.size()
+                        ? playlistMoveTitleCache.get(dataIndex) : "";
+                String sub = dataIndex < playlistMoveSubCache.size()
+                        ? playlistMoveSubCache.get(dataIndex) : "";
+                MoveRibbonRows.bindLibraryMoveRow(MainActivity.this, row,
+                        title, sub, moving, moving, np, playing, rowW, rowH, bgSel, bgNorm);
             }
 
-            @Override
-            public int itemCount() {
+            @Override public int itemCount() {
                 return virtualSongList.size();
             }
 
-            @Override
-            public int rowSlotHeight() {
-                return y1LibraryRowHeightPx + 2;
+            @Override public int rowHeightPx() {
+                return y1LibraryRowHeightPx;
+            }
+
+            @Override public int rowWidthPx() {
+                return y1ActiveRowWidthPx();
             }
         };
     }
@@ -14448,6 +14593,12 @@ public class MainActivity extends Activity {
 
     private void showPlaylistMoveStripUi() {
         listVirtualSongs.setVisibility(View.GONE);
+        int rowW = y1ActiveRowWidthPx();
+        int rowH = y1LibraryRowHeightPx;
+        playlistMoveRowBgSel = ThemeManager.getItemRowBackgroundScaled(
+                getResources(), true, rowW, rowH);
+        playlistMoveRowBgNorm = ThemeManager.getItemRowBackgroundScaled(
+                getResources(), false, rowW, rowH);
         android.view.ViewGroup browserParent = (android.view.ViewGroup) scrollViewBrowser.getParent();
         if (playlistMoveOverlay == null) {
             playlistMoveOverlay = new FrameLayout(this);
@@ -14460,27 +14611,35 @@ public class MainActivity extends Activity {
         playlistMoveScroll = new ScrollView(this);
         playlistMoveScroll.setVerticalScrollBarEnabled(false);
         playlistMoveScroll.setFillViewport(true);
+        FrameLayout scrollHost = new FrameLayout(this);
+        playlistMoveScroll.addView(scrollHost, new ScrollView.LayoutParams(
+                ScrollView.LayoutParams.MATCH_PARENT, ScrollView.LayoutParams.MATCH_PARENT));
         LinearLayout host = new LinearLayout(this);
         host.setOrientation(LinearLayout.VERTICAL);
-        playlistMoveScroll.addView(host, new ScrollView.LayoutParams(
-                ScrollView.LayoutParams.MATCH_PARENT, ScrollView.LayoutParams.WRAP_CONTENT));
-        playlistMoveStrip = new MoveStripController(host, createPlaylistMoveAdapter());
-        playlistMoveStrip.setScrollParent(playlistMoveScroll);
+        FrameLayout.LayoutParams hostLp = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT);
+        hostLp.gravity = Gravity.TOP;
+        scrollHost.addView(host, hostLp);
+        playlistMoveRibbon = new LibraryMoveRibbon(host, playlistMoveScroll, createPlaylistMoveBinder(), this);
         playlistMoveOverlay.addView(playlistMoveScroll, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
-        playlistMoveStrip.enter(playlistMoveFrom);
+        playlistMoveRibbon.enter(playlistMoveFrom, playlistMoveEnterBrowseSlot, playlistMoveEnterPadTop);
     }
 
     private void hidePlaylistMoveStripUi() {
         if (playlistMoveOverlay != null) playlistMoveOverlay.setVisibility(View.GONE);
         if (listVirtualSongs != null) listVirtualSongs.setVisibility(View.VISIBLE);
-        if (playlistMoveStrip != null) playlistMoveStrip.teardown();
-        playlistMoveStrip = null;
+        if (playlistMoveRibbon != null) playlistMoveRibbon.teardown();
+        playlistMoveRibbon = null;
         playlistMoveScroll = null;
+        playlistMoveTitleCache = null;
+        playlistMoveSubCache = null;
+        playlistMoveRowBgSel = null;
+        playlistMoveRowBgNorm = null;
     }
 
     private void confirmPlaylistMove() {
-        if (playlistMoveStrip != null && playlistMoveStrip.isAnimating()) return;
+        if (playlistMoveRibbon != null && playlistMoveRibbon.isAnimating()) return;
         final int placed = playlistMoveFrom;
         Runnable finish = new Runnable() {
             @Override
@@ -14494,8 +14653,8 @@ public class MainActivity extends Activity {
                 refreshPlaylistSongList();
             }
         };
-        if (playlistMoveStrip != null && placed >= 0) {
-            playlistMoveStrip.flashConfirm(placed, finish);
+        if (playlistMoveRibbon != null && placed >= 0) {
+            playlistMoveRibbon.flashConfirm(placed, finish);
         } else {
             finish.run();
         }
@@ -14513,24 +14672,37 @@ public class MainActivity extends Activity {
     private void applyPlaylistMove(int from, int to) {
         if (from == to || from < 0 || to < 0
                 || from >= virtualSongList.size() || to >= virtualSongList.size()) return;
-        if (playlistMoveStrip != null && playlistMoveStrip.isAnimating()) return;
-        if (playlistMoveStrip != null) {
-            playlistMoveStrip.animateStep(from, to, new Runnable() {
-                @Override
-                public void run() {
-                    File moved = virtualSongList.remove(from);
-                    virtualSongList.add(to, moved);
-                    playlistMoveFrom = to;
-                    playlistMoveDirty = true;
-                }
-            });
-            return;
+        if (playlistMoveRibbon != null && playlistMoveRibbon.isAnimating()) return;
+        applyPlaylistMoveData(from, to);
+        if (playlistMoveRibbon != null) {
+            playlistMoveRibbon.onMoveIndexChanged(to, to - from);
         }
+    }
+
+    private void applyPlaylistMoveData(int from, int to) {
         File moved = virtualSongList.remove(from);
         virtualSongList.add(to, moved);
+        if (playlistMoveTitleCache != null && playlistMoveSubCache != null
+                && from < playlistMoveTitleCache.size() && from < playlistMoveSubCache.size()) {
+            String title = playlistMoveTitleCache.remove(from);
+            String sub = playlistMoveSubCache.remove(from);
+            playlistMoveTitleCache.add(to, title);
+            playlistMoveSubCache.add(to, sub);
+            // ponytail: renumber only the two swapped indices per wheel step (not full list).
+            renumberPlaylistMoveCacheTitle(from);
+            renumberPlaylistMoveCacheTitle(to);
+        }
         playlistMoveFrom = to;
         playlistMoveDirty = true;
-        refreshPlaylistSongList();
+    }
+
+    private void renumberPlaylistMoveCacheTitle(int index) {
+        if (playlistMoveTitleCache == null || index < 0 || index >= playlistMoveTitleCache.size()) return;
+        String old = playlistMoveTitleCache.get(index);
+        int dot = old.indexOf('·');
+        String name = dot >= 0 && dot + 1 < old.length()
+                ? old.substring(dot + 1).trim() : old;
+        playlistMoveTitleCache.set(index, String.format(Locale.US, "%02d · %s", index + 1, name));
     }
 
     private void flushPlaylistMoveIfDirty() {
@@ -14559,22 +14731,7 @@ public class MainActivity extends Activity {
 
     private void cancelPlaylistMove() {
         if (playlistMoveFrom < 0) return;
-        if (playlistMoveStrip != null && playlistMoveStrip.isAnimating()) return;
-        final int home = playlistMovePickIndex >= 0 ? playlistMovePickIndex : playlistMoveFrom;
-        final int current = playlistMoveFrom;
-        if (playlistMoveStrip != null && current != home) {
-            final int next = current + (current > home ? -1 : 1);
-            playlistMoveStrip.animateStep(current, next, new Runnable() {
-                @Override
-                public void run() {
-                    File moved = virtualSongList.remove(current);
-                    virtualSongList.add(next, moved);
-                    playlistMoveFrom = next;
-                    cancelPlaylistMove();
-                }
-            });
-            return;
-        }
+        if (playlistMoveRibbon != null && playlistMoveRibbon.isAnimating()) return;
         if (playlistMoveSnapshot != null) {
             virtualSongList.clear();
             virtualSongList.addAll(playlistMoveSnapshot);
@@ -15385,6 +15542,13 @@ public class MainActivity extends Activity {
             });
         }
         if (currentScreenState == STATE_BROWSER && currentBrowserMode == BROWSER_PLAYLISTS) {
+            addContextAction(getString(R.string.library_new_playlist), new Runnable() {
+                @Override
+                public void run() {
+                    pendingPlaylistTracks = null;
+                    openPlaylistNameKeyboard(true);
+                }
+            });
             addContextAction(getString(R.string.library_save_queue_m3u), new Runnable() {
                 @Override
                 public void run() {
@@ -23002,10 +23166,21 @@ public class MainActivity extends Activity {
         });
         containerBrowserItems.addView(back);
 
-        if (!libraryPlaylists.isEmpty()) {
-            createBrowserSectionHeader(getString(R.string.browser_playlists).replace("📋 ", ""));
-        }
+        // Local M3U playlists first — distinct from Deezer cloud browsing below.
         libraryPlaylists = PlaylistManager.scan(rootFolder);
+        createBrowserSectionHeader(getString(R.string.library_playlists_local_section));
+
+        Button newPlaylist = createListButton(getString(R.string.library_new_playlist));
+        newPlaylist.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                clickFeedback();
+                pendingPlaylistTracks = null;
+                openPlaylistNameKeyboard(true);
+            }
+        });
+        containerBrowserItems.addView(newPlaylist);
+
         if (libraryPlaylists.isEmpty()) {
             Button empty = createListButton(getString(R.string.library_playlists_empty));
             empty.setEnabled(false);
@@ -23026,31 +23201,6 @@ public class MainActivity extends Activity {
             }
         }
 
-        if (deezerActive() && DeezerAccount.hasArl(prefs)) {
-            createBrowserSectionHeader(getString(R.string.deezer_playlists_section));
-            Button loading = createListButton(getString(R.string.deezer_playlists_loading));
-            loading.setEnabled(false);
-            loading.setTag("deezer_pl_loading");
-            containerBrowserItems.addView(loading);
-            loadDeezerPlaylistsAsync();
-        } else if (deezerActive()) {
-            createBrowserSectionHeader(getString(R.string.deezer_playlists_section));
-            Button unavailable = createListButton(getString(R.string.deezer_playlists_unavailable));
-            unavailable.setEnabled(false);
-            containerBrowserItems.addView(unavailable);
-        }
-
-        Button newPlaylist = createListButton(getString(R.string.library_new_playlist));
-        newPlaylist.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                clickFeedback();
-                pendingPlaylistTracks = null;
-                openPlaylistNameKeyboard(true);
-            }
-        });
-        containerBrowserItems.addView(newPlaylist);
-
         Button saveQueue = createListButton(getString(R.string.library_save_queue_m3u));
         saveQueue.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -23060,7 +23210,35 @@ public class MainActivity extends Activity {
             }
         });
         containerBrowserItems.addView(saveQueue);
-        if (containerBrowserItems.getChildCount() > 1) containerBrowserItems.getChildAt(1).requestFocus();
+
+        if (deezerActive() && DeezerAccount.hasArl(prefs)) {
+            createBrowserSectionHeader(getString(R.string.deezer_playlists_section), "deezer_pl_section");
+            Button loading = createListButton(getString(R.string.deezer_playlists_loading));
+            loading.setEnabled(false);
+            loading.setTag("deezer_pl_loading");
+            containerBrowserItems.addView(loading);
+            loadDeezerPlaylistsAsync();
+        } else if (deezerActive()) {
+            createBrowserSectionHeader(getString(R.string.deezer_playlists_section), "deezer_pl_section");
+            Button unavailable = createListButton(getString(R.string.deezer_playlists_unavailable));
+            unavailable.setEnabled(false);
+            containerBrowserItems.addView(unavailable);
+        }
+
+        // Default focus: first local action (new playlist, or first saved list).
+        int focusIdx = libraryPlaylists.isEmpty() ? 2 : 3;
+        if (focusIdx < containerBrowserItems.getChildCount()) {
+            containerBrowserItems.getChildAt(focusIdx).requestFocus();
+        }
+    }
+
+    /** Index inside containerBrowserItems for inserting Deezer cloud playlist rows. */
+    private int deezerPlaylistInsertIndex() {
+        View loading = containerBrowserItems.findViewWithTag("deezer_pl_loading");
+        if (loading != null) return containerBrowserItems.indexOfChild(loading);
+        View header = containerBrowserItems.findViewWithTag("deezer_pl_section");
+        if (header != null) return containerBrowserItems.indexOfChild(header) + 1;
+        return containerBrowserItems.getChildCount();
     }
 
     private void loadDeezerPlaylistsAsync() {
@@ -23089,13 +23267,17 @@ public class MainActivity extends Activity {
                         deezerPlaylistsCache.clear();
                         deezerPlaylistsCache.addAll(ff);
                         View loading = containerBrowserItems.findViewWithTag("deezer_pl_loading");
-                        if (loading != null) containerBrowserItems.removeView(loading);
+                        int insertAt = deezerPlaylistInsertIndex();
+                        if (loading != null) {
+                            insertAt = containerBrowserItems.indexOfChild(loading);
+                            containerBrowserItems.removeView(loading);
+                        }
                         if (ff.isEmpty()) {
                             Button empty = createListButton(ferr != null
                                     ? getString(R.string.deezer_playlist_save_failed, ferr)
                                     : getString(R.string.deezer_playlists_empty));
                             empty.setEnabled(false);
-                            containerBrowserItems.addView(empty);
+                            containerBrowserItems.addView(empty, insertAt);
                         } else {
                             for (final DeezerPlaylist pl : ff) {
                                 Button b = createListButton("♫ " + pl.title + " ("
@@ -23106,7 +23288,8 @@ public class MainActivity extends Activity {
                                         openDeezerPlaylistBrowse(pl);
                                     }
                                 });
-                                containerBrowserItems.addView(b);
+                                containerBrowserItems.addView(b, insertAt);
+                                insertAt++;
                             }
                         }
                     }
@@ -28379,7 +28562,14 @@ public class MainActivity extends Activity {
         themeCatalogLoading = false;
         themeBrowserOnlineRows.clear();
         themeDownloadGen++;
-        com.solar.launcher.theme.ThemeDownloader.requestCancel();
+        // ponytail: leaving settings must not abort in-flight theme downloads — only skip apply-on-complete.
+        // #region agent log
+        try {
+            org.json.JSONObject d = new org.json.JSONObject();
+            d.put("themeDownloadGen", themeDownloadGen);
+            DebugSessionLog.log("MainActivity.teardownSettingsSession", "ui teardown only", "H3", d);
+        } catch (Exception ignored) {}
+        // #endregion
         if (layoutLoadingOverlay != null) layoutLoadingOverlay.setVisibility(View.GONE);
     }
 
@@ -31388,7 +31578,7 @@ public class MainActivity extends Activity {
                 || MediaSuiteHost.isMediaListBrowseState(currentScreenState)) {
             // Playlist move strip replaces the ListView — handle wheel while list is hidden.
             if (currentScreenState == STATE_BROWSER && isPlaylistMoveActive()) {
-                if (playlistMoveStrip != null && playlistMoveStrip.isAnimating()) return true;
+                if (playlistMoveRibbon != null && playlistMoveRibbon.isAnimating()) return true;
                 int delta = mapWheelToMenuMove(keyCode);
                 if (delta != 0) {
                     if (!playlistMoveWheelFilter.accept()) return true;
@@ -31411,7 +31601,7 @@ public class MainActivity extends Activity {
                 }
 
                 if (isVirtualPlaylistView() && playlistMoveFrom >= 0) {
-                    if (playlistMoveStrip != null && playlistMoveStrip.isAnimating()) return true;
+                    if (playlistMoveRibbon != null && playlistMoveRibbon.isAnimating()) return true;
                     int delta = mapWheelToMenuMove(keyCode);
                     if (delta != 0) {
                         if (!playlistMoveWheelFilter.accept()) return true;
@@ -31703,6 +31893,7 @@ public class MainActivity extends Activity {
         super.onNewIntent(intent);
         setIntent(intent);
         scheduleAdbOpenSoulseekMessagesIfRequested();
+        scheduleThemeAutoVariantIfRequested();
         if (intent != null && intent.getBooleanExtra("solar_adb_goto", false)) {
             final int screen = intent.getIntExtra("solar_adb_screen", STATE_MENU);
             intent.removeExtra("solar_adb_goto");

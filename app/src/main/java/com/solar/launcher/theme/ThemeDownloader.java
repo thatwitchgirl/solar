@@ -4,6 +4,8 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.util.Log;
 
+import com.solar.launcher.DebugSessionLog;
+
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -59,7 +61,40 @@ public class ThemeDownloader {
     }
 
     static void checkDownloadCancel() throws InterruptedException {
-        if (downloadCancel.get()) throw new InterruptedException("Download cancelled");
+        if (downloadCancel.get()) {
+            // #region agent log
+            try {
+                org.json.JSONObject d = new org.json.JSONObject();
+                d.put("activeSession", activeSession);
+                DebugSessionLog.log("ThemeDownloader.checkDownloadCancel", "cancelled", "H3", d);
+            } catch (Exception ignored) {}
+            // #endregion
+            throw new InterruptedException("Download cancelled");
+        }
+    }
+
+    /** ponytail: SolarHttp throws IOException("HTTP NNN …"), not HttpStatusException — map for 404 skip paths. */
+    static Exception mapHttpFailure(Exception e) {
+        if (e == null) return null;
+        String msg = e.getMessage();
+        if (msg != null && msg.startsWith("HTTP ")) {
+            int sp = msg.indexOf(' ', 5);
+            if (sp > 5) {
+                try {
+                    int code = Integer.parseInt(msg.substring(5, sp));
+                    return new HttpStatusException(code, msg);
+                } catch (NumberFormatException ignored) {}
+            }
+        }
+        return e;
+    }
+
+    static void dbgLog(String location, String message, String hypothesisId, org.json.JSONObject data) {
+        // #region agent log
+        try {
+            DebugSessionLog.log(location, message, hypothesisId, data);
+        } catch (Exception ignored) {}
+        // #endregion
     }
 
     public static class ThemeVariant {
@@ -545,7 +580,12 @@ public class ThemeDownloader {
     }
 
     static Set<String> missingFlatInstalledAssets(File themeDir, JSONObject config) throws Exception {
+        JSONObject solar = config.optJSONObject("solarConfig");
         String catalogFolder = themeDir.getName();
+        if (solar != null) {
+            String fromGallery = solar.optString("installedFromGallery", "");
+            if (!fromGallery.isEmpty()) catalogFolder = fromGallery;
+        }
         List<String> assetDirs = readAssetDirs(config);
         Set<String> missing = new HashSet<String>();
         Set<String> locals = new HashSet<String>();
@@ -922,6 +962,14 @@ public class ThemeDownloader {
             int total = assets.size();
             int done = 0;
             int skipped = 0;
+            // #region agent log
+            try {
+                org.json.JSONObject d = new org.json.JSONObject();
+                d.put("folder", entry.folder);
+                d.put("assetCount", total);
+                dbgLog("ThemeDownloader.downloadTheme", "begin", "H1", d);
+            } catch (Exception ignored) {}
+            // #endregion
             dlLog("asset pass 1/2 count=" + total);
             for (String rel : assets) {
                 checkDownloadCancel();
@@ -950,12 +998,18 @@ public class ThemeDownloader {
                     byte[] fileBytes = httpGet(url);
                     writeFile(out, fileBytes);
                     dlLog("saved " + rel + " (" + fileBytes.length + "b)");
-                } catch (HttpStatusException hs) {
-                    if (hs.statusCode == 404) {
-                        skipped404.add(rel);
-                        dlLog("skip 404 " + rel);
+                } catch (Exception raw) {
+                    Exception mapped = mapHttpFailure(raw);
+                    if (mapped instanceof HttpStatusException) {
+                        HttpStatusException hs = (HttpStatusException) mapped;
+                        if (hs.statusCode == 404) {
+                            skipped404.add(rel);
+                            dlLog("skip 404 " + rel);
+                        } else {
+                            throw hs;
+                        }
                     } else {
-                        throw hs;
+                        throw raw;
                     }
                 }
                 paceDownloads();
@@ -972,6 +1026,15 @@ public class ThemeDownloader {
             Set<String> still = missingAssets(dest);
             still.removeAll(skipped404);
             if (!still.isEmpty()) {
+                // #region agent log
+                try {
+                    org.json.JSONObject d = new org.json.JSONObject();
+                    d.put("folder", entry.folder);
+                    d.put("stillMissing", still.size());
+                    d.put("sample", still.toString());
+                    dbgLog("ThemeDownloader.downloadTheme", "incomplete", "H2", d);
+                } catch (Exception ignored) {}
+                // #endregion
                 throw new Exception("Download incomplete: missing " + still);
             }
             endSession(true, total + " assets, " + skipped + " skipped, " + skipped404.size() + " 404-skipped");
@@ -1020,6 +1083,16 @@ public class ThemeDownloader {
             int total = galleryAssets.size() + 1;
             int done = 0;
             Set<String> skipped404 = new HashSet<String>();
+            // #region agent log
+            try {
+                org.json.JSONObject d = new org.json.JSONObject();
+                d.put("installFolder", installFolder);
+                d.put("catalogFolder", catalogFolder);
+                d.put("assetCount", galleryAssets.size());
+                d.put("themesRoot", ThemeManager.themesRoot());
+                dbgLog("ThemeDownloader.downloadThemeVariant", "begin", "H1", d);
+            } catch (Exception ignored) {}
+            // #endregion
             dlLog("variant asset pass count=" + galleryAssets.size() + " catalog=" + catalogFolder);
 
             for (String galleryRel : galleryAssets) {
@@ -1037,12 +1110,18 @@ public class ThemeDownloader {
                 dlLog("GET " + galleryRel + " -> " + localName);
                 try {
                     writeFile(out, httpGet(url));
-                } catch (HttpStatusException hs) {
-                    if (hs.statusCode == 404) {
-                        skipped404.add(galleryRel);
-                        dlLog("skip 404 " + galleryRel);
+                } catch (Exception raw) {
+                    Exception mapped = mapHttpFailure(raw);
+                    if (mapped instanceof HttpStatusException) {
+                        HttpStatusException hs = (HttpStatusException) mapped;
+                        if (hs.statusCode == 404) {
+                            skipped404.add(localName);
+                            dlLog("skip 404 " + galleryRel + " -> " + localName);
+                        } else {
+                            throw hs;
+                        }
                     } else {
-                        throw hs;
+                        throw raw;
                     }
                 }
                 paceDownloads();
@@ -1064,9 +1143,26 @@ public class ThemeDownloader {
             Set<String> still = missingAssets(dest);
             still.removeAll(skipped404);
             if (!still.isEmpty()) {
+                // #region agent log
+                try {
+                    org.json.JSONObject d = new org.json.JSONObject();
+                    d.put("installFolder", installFolder);
+                    d.put("stillMissing", still.size());
+                    d.put("sample", still.toString());
+                    dbgLog("ThemeDownloader.downloadThemeVariant", "incomplete", "H2", d);
+                } catch (Exception ignored) {}
+                // #endregion
                 throw new Exception("Variant download incomplete: missing " + still);
             }
             endSession(true, installFolder);
+            // #region agent log
+            try {
+                org.json.JSONObject d = new org.json.JSONObject();
+                d.put("installFolder", installFolder);
+                d.put("themesRoot", ThemeManager.themesRoot());
+                dbgLog("ThemeDownloader.downloadThemeVariant", "ok", "H1", d);
+            } catch (Exception ignored) {}
+            // #endregion
         } catch (Exception e) {
             dlLogError("downloadThemeVariant", e);
             endSession(false, e.getMessage());
@@ -1192,12 +1288,18 @@ public class ThemeDownloader {
             dlLog("variant recovery GET " + localName + " <- " + galleryRel);
             try {
                 writeFile(new File(dest, localName), httpGet(url));
-            } catch (HttpStatusException hs) {
-                if (hs.statusCode == 404) {
-                    skipped404.add(localName);
-                    dlLog("recovery skip 404 " + localName);
+            } catch (Exception raw) {
+                Exception mapped = mapHttpFailure(raw);
+                if (mapped instanceof HttpStatusException) {
+                    HttpStatusException hs = (HttpStatusException) mapped;
+                    if (hs.statusCode == 404) {
+                        skipped404.add(localName);
+                        dlLog("recovery skip 404 " + localName);
+                    } else {
+                        throw hs;
+                    }
                 } else {
-                    throw hs;
+                    throw raw;
                 }
             }
             paceDownloads();
@@ -1246,12 +1348,18 @@ public class ThemeDownloader {
                         writeFile(out, fileBytes);
                     }
                     dlLog("recovery saved " + rel + " (" + fileBytes.length + "b)");
-                } catch (HttpStatusException hs) {
-                    if (hs.statusCode == 404) {
-                        skipped404.add(rel);
-                        dlLog("recovery skip 404 " + rel);
+                } catch (Exception raw) {
+                    Exception mapped = mapHttpFailure(raw);
+                    if (mapped instanceof HttpStatusException) {
+                        HttpStatusException hs = (HttpStatusException) mapped;
+                        if (hs.statusCode == 404) {
+                            skipped404.add(rel);
+                            dlLog("recovery skip 404 " + rel);
+                        } else {
+                            throw hs;
+                        }
                     } else {
-                        throw hs;
+                        throw raw;
                     }
                 }
             }
@@ -1304,18 +1412,30 @@ public class ThemeDownloader {
         String httpUrl = urlStr.startsWith("https://") ? "http://" + urlStr.substring(8) : urlStr;
         for (String tryUrl : new String[] {httpsUrl, httpUrl}) {
             if (tryUrl == null || tryUrl.isEmpty()) continue;
-            try {
-                byte[] data = com.solar.launcher.net.SolarHttp.getBytes(tryUrl, "*/*", "SolarLauncher/1.0");
-                dlLog("GET ok " + tryUrl + " (" + data.length + " bytes)");
-                Log.i(TAG, "GET ok " + tryUrl + " (" + data.length + " bytes)");
-                return data;
-            } catch (Exception e) {
-                last = e;
-                dlLog("GET failed " + tryUrl + ": " + e.getMessage());
-                Log.w(TAG, "GET failed " + tryUrl + ": " + e.getMessage());
+            for (int attempt = 0; attempt < 2; attempt++) {
+                try {
+                    byte[] data = com.solar.launcher.net.SolarHttp.getBytesTheme(tryUrl, "*/*", "SolarLauncher/1.0");
+                    dlLog("GET ok " + tryUrl + " (" + data.length + " bytes)"
+                            + (attempt > 0 ? " retry=" + attempt : ""));
+                    Log.i(TAG, "GET ok " + tryUrl + " (" + data.length + " bytes)");
+                    return data;
+                } catch (Exception e) {
+                    last = e;
+                    dlLog("GET failed " + tryUrl + (attempt > 0 ? " retry=" + attempt : "")
+                            + ": " + e.getMessage());
+                    Log.w(TAG, "GET failed " + tryUrl + ": " + e.getMessage());
+                }
             }
         }
         dlLogError("httpGet exhausted " + urlStr, last);
+        // #region agent log
+        try {
+            org.json.JSONObject d = new org.json.JSONObject();
+            d.put("url", urlStr);
+            d.put("error", last != null ? last.getMessage() : "null");
+            dbgLog("ThemeDownloader.httpGet", "exhausted", "H1", d);
+        } catch (Exception ignored) {}
+        // #endregion
         throw last != null ? last : new Exception("HTTP GET failed");
     }
 
@@ -1484,6 +1604,10 @@ public class ThemeDownloader {
                 ? "https://" + httpCatalog.substring(7) : httpCatalog;
         if (!"https://themes.innioasis.app/x".equals(httpsFirst)) {
             throw new AssertionError("httpsFirst");
+        }
+        Exception mapped404 = mapHttpFailure(new Exception("HTTP 404 for http://x/y.png"));
+        if (!(mapped404 instanceof HttpStatusException) || ((HttpStatusException) mapped404).statusCode != 404) {
+            throw new AssertionError("mapHttpFailure 404");
         }
 
         OptOutFilter opt = parseOptOut("{\"authors\":{\"u/x\":\"gone\"},\"folders\":[\"Blocked\"]}");
