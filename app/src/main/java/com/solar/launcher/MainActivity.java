@@ -647,6 +647,10 @@ public class MainActivity extends Activity {
     private int contextReachRoomMessagePosition = -1;
     private boolean contextReachRoomWallMode = false;
     private LinearLayout soulseekRoomModeBar;
+    /** Chat/Wall mode rows in list_conversation_thread header — wheel-reachable when scrolled up. */
+    private LinearLayout conversationListHeaderHost;
+    private final java.util.ArrayList<View> conversationHeaderViews = new java.util.ArrayList<View>();
+    private int conversationHeaderFocusIdx = -1;
     private int soulseekListenPort = 0;
     private int keyboardPurpose = KEYBOARD_WIFI;
     private int keyboardReturnState = STATE_WIFI;
@@ -4805,8 +4809,7 @@ public class MainActivity extends Activity {
                             SharedPreferences.Editor ed = prefs.edit()
                                     .putInt("app_theme_index", applyIndex)
                                     .putString("app_theme_path", persistPath)
-                                    .putBoolean("reboot_to_theme", true)
-                                    .putBoolean("status_bar_match_font", true);
+                                    .putBoolean("reboot_to_theme", true);
                             if (ThemeManager.hasThemeWallpaper(applyTheme)) {
                                 ed.putString("background_mode", BG_MODE_THEME);
                             }
@@ -7274,6 +7277,7 @@ public class MainActivity extends Activity {
                     && soulseekConversationHost != null
                     && soulseekConversationHost.getVisibility() == View.VISIBLE
                     && listConversationThread != null) {
+                if (performConversationHeaderClickIfFocused()) return;
                 clickFeedback();
                 int pos = listConversationThread.getSelectedItemPosition();
                 if (pos < 0 && listConversationThread.getAdapter() != null
@@ -7295,6 +7299,7 @@ public class MainActivity extends Activity {
                     && soulseekConversationHost != null
                     && soulseekConversationHost.getVisibility() == View.VISIBLE
                     && listConversationThread != null) {
+                if (performConversationHeaderClickIfFocused()) return;
                 clickFeedback();
                 int pos = listConversationThread.getSelectedItemPosition();
                 if (pos < 0 && listConversationThread.getAdapter() != null
@@ -7402,12 +7407,18 @@ public class MainActivity extends Activity {
         }
     }
 
-    private boolean isConversationNewMessagePosition(int position) {
+    private boolean isConversationNewMessagePosition(int listPosition) {
         if (listConversationThread == null
                 || !(listConversationThread.getAdapter() instanceof ConversationThreadAdapter)) {
             return false;
         }
-        return position == listConversationThread.getAdapter().getCount() - 1;
+        int headerCount = conversationHeaderOffset();
+        return listPosition == headerCount + listConversationThread.getAdapter().getCount() - 1;
+    }
+
+    /** List position for a conversation adapter index (excludes header rows). */
+    private int conversationAdapterListPosition(int adapterIndex) {
+        return conversationHeaderOffset() + adapterIndex;
     }
 
     private String getFocusedReachPeerName() {
@@ -7427,17 +7438,19 @@ public class MainActivity extends Activity {
         return entry != null && entry.name != null ? entry.name.trim() : null;
     }
 
-    private void openReachMessageContextMenu(int messagePosition) {
+    private void openReachMessageContextMenu(int messageListPosition) {
         if (!(listConversationThread.getAdapter() instanceof ConversationThreadAdapter)) return;
+        int adapterIndex = messageListPosition - conversationHeaderOffset();
+        if (adapterIndex < 0) return;
         ConversationThreadAdapter ad = (ConversationThreadAdapter) listConversationThread.getAdapter();
-        ConversationDisplayBuilder.Entry entry = ad.getEntryAt(messagePosition);
+        ConversationDisplayBuilder.Entry entry = ad.getEntryAt(adapterIndex);
         if (entry == null || entry.message == null || entry.message.statusEvent) return;
-        contextReachMessagePosition = messagePosition;
+        contextReachMessagePosition = adapterIndex;
         contextReachPeerUser = contextReachMessageIsRoom
                 ? (entry.message.peer != null ? entry.message.peer : "")
                 : soulseekMessagePeer;
         if (themedContextMenu != null && themedContextMenu.isShowing()) {
-            pushContextReachMessageTier(messagePosition);
+            pushContextReachMessageTier(adapterIndex);
             return;
         }
         showThemedContextMenu();
@@ -19499,23 +19512,218 @@ public class MainActivity extends Activity {
                 || SettingsScreens.SOULSEEK_CHAT_ROOM_WALL.equals(settingsSubScreenKey));
     }
 
+    private boolean isRoomConversationScreen() {
+        return SettingsScreens.SOULSEEK_CHAT_ROOM_THREAD.equals(settingsSubScreenKey)
+                || SettingsScreens.SOULSEEK_CHAT_ROOM_WALL.equals(settingsSubScreenKey);
+    }
+
+    private void hideSoulseekRoomModeBar() {
+        if (soulseekRoomModeBar != null) soulseekRoomModeBar.setVisibility(View.GONE);
+    }
+
+    private void resetConversationListHeaders() {
+        if (listConversationThread == null) return;
+        listConversationThread.setAdapter(null);
+        if (conversationListHeaderHost != null) {
+            try {
+                listConversationThread.removeHeaderView(conversationListHeaderHost);
+            } catch (Exception ignored) {}
+            conversationListHeaderHost.removeAllViews();
+            conversationListHeaderHost = null;
+        }
+        conversationHeaderViews.clear();
+        conversationHeaderFocusIdx = -1;
+    }
+
+    private void ensureConversationListHeaderHost() {
+        if (listConversationThread == null || conversationListHeaderHost != null) return;
+        conversationListHeaderHost = new LinearLayout(this);
+        conversationListHeaderHost.setOrientation(LinearLayout.VERTICAL);
+        listConversationThread.addHeaderView(conversationListHeaderHost, null, false);
+    }
+
+    private int conversationHeaderOffset() {
+        return listConversationThread != null ? listConversationThread.getHeaderViewsCount() : 0;
+    }
+
+    private int indexOfConversationHeader(View v) {
+        if (v == null) return -1;
+        for (int i = 0; i < conversationHeaderViews.size(); i++) {
+            View h = conversationHeaderViews.get(i);
+            if (h == v || isViewDescendantOf(v, h)) return i;
+        }
+        return -1;
+    }
+
+    private int conversationActiveHeaderIndex() {
+        int idx = indexOfConversationHeader(getCurrentFocus());
+        if (idx >= 0) {
+            conversationHeaderFocusIdx = idx;
+            return idx;
+        }
+        return conversationHeaderFocusIdx;
+    }
+
+    /** Chat/Wall toggles scroll with the thread — reachable by wheel when scrolled to the top. */
+    private void setupRoomModeListHeaders(final String modeKey) {
+        if (listConversationThread == null) return;
+        resetConversationListHeaders();
+        ensureConversationListHeaderHost();
+        Button btnChat = createListButton(getString(R.string.soulseek_room_mode_chat));
+        btnChat.setTag("room_mode_chat");
+        btnChat.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                clickFeedback();
+                buildSoulseekChatRoomUI(soulseekChatRoomName);
+            }
+        });
+        Button btnWall = createListButton(getString(R.string.soulseek_room_mode_wall));
+        btnWall.setTag("room_mode_wall");
+        btnWall.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                clickFeedback();
+                buildSoulseekRoomWallUI(soulseekChatRoomName);
+            }
+        });
+        conversationListHeaderHost.addView(btnChat, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+        conversationListHeaderHost.addView(btnWall, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+        conversationHeaderViews.add(btnChat);
+        conversationHeaderViews.add(btnWall);
+        updateRoomModeHeaderLabels(modeKey);
+        hideSoulseekRoomModeBar();
+    }
+
+    private void updateRoomModeHeaderLabels(String modeKey) {
+        if (conversationHeaderViews.isEmpty()) return;
+        boolean chat = SettingsScreens.SOULSEEK_CHAT_ROOM_THREAD.equals(modeKey);
+        for (int i = 0; i < conversationHeaderViews.size(); i++) {
+            View child = conversationHeaderViews.get(i);
+            if (!(child instanceof Button)) continue;
+            Button b = (Button) child;
+            Object tag = b.getTag();
+            boolean active = ("room_mode_chat".equals(tag) && chat)
+                    || ("room_mode_wall".equals(tag) && !chat);
+            String label = b.getText().toString();
+            if (label.startsWith("\u2714 ")) label = label.substring(2);
+            b.setText(active ? "\u2714 " + label : label);
+        }
+    }
+
+    private boolean focusConversationHeaderIndex(final int idx) {
+        if (idx < 0 || idx >= conversationHeaderViews.size()) return false;
+        final View h = conversationHeaderViews.get(idx);
+        if (h == null || !h.isFocusable()) return false;
+        final int prevHeaderIdx = conversationHeaderFocusIdx;
+        conversationHeaderFocusIdx = idx;
+        final boolean alreadyOnHeader = indexOfConversationHeader(getCurrentFocus()) >= 0
+                || (prevHeaderIdx >= 0 && prevHeaderIdx != idx);
+        if (!alreadyOnHeader && listConversationThread != null) {
+            clearConversationAdapterSelection();
+            listConversationThread.setSelectionFromTop(0, 0);
+            if (h.requestFocus()) return true;
+            listConversationThread.post(new Runnable() {
+                @Override
+                public void run() {
+                    h.requestFocus();
+                }
+            });
+            return true;
+        }
+        return h.requestFocus();
+    }
+
+    private void clearConversationAdapterSelection() {
+        if (listConversationThread == null) return;
+        android.widget.ListAdapter ad = listConversationThread.getAdapter();
+        if (ad instanceof ConversationThreadAdapter) {
+            ((ConversationThreadAdapter) ad).setSelectedPosition(-1);
+        } else if (ad instanceof WallThreadAdapter) {
+            ((WallThreadAdapter) ad).setSelectedPosition(-1);
+        }
+    }
+
+    private int conversationFocusedListPosition(android.widget.ListAdapter ad) {
+        int headerCount = conversationHeaderOffset();
+        if (ad instanceof ConversationThreadAdapter) {
+            int sel = ((ConversationThreadAdapter) ad).getSelectedPosition();
+            if (sel >= 0) return headerCount + sel;
+        } else if (ad instanceof WallThreadAdapter) {
+            int sel = ((WallThreadAdapter) ad).getSelectedPosition();
+            if (sel >= 0) return headerCount + sel;
+        }
+        int pos = listConversationThread != null ? listConversationThread.getSelectedItemPosition() : -1;
+        if (pos >= headerCount) return pos;
+        if (conversationHeaderFocusIdx >= 0) return Math.max(0, conversationHeaderFocusIdx);
+        return headerCount;
+    }
+
+    private void focusConversationListPosition(int listPosition) {
+        conversationHeaderFocusIdx = -1;
+        if (listConversationThread == null) return;
+        int headerCount = conversationHeaderOffset();
+        int adapterIndex = listPosition - headerCount;
+        android.widget.ListAdapter ad = listConversationThread.getAdapter();
+        if (adapterIndex >= 0) {
+            if (ad instanceof ConversationThreadAdapter) {
+                ((ConversationThreadAdapter) ad).setSelectedPosition(adapterIndex);
+            } else if (ad instanceof WallThreadAdapter) {
+                ((WallThreadAdapter) ad).setSelectedPosition(adapterIndex);
+            }
+        }
+        FocusScrollHelper.focusListPosition(listConversationThread, listPosition);
+    }
+
     private boolean moveConversationListFocus(int delta) {
         if (!isConversationThreadActive() || delta == 0) return false;
         android.widget.ListAdapter ad = listConversationThread.getAdapter();
         if (ad == null) return false;
         int count = ad.getCount();
+        if (count <= 0 && conversationHeaderViews.isEmpty()) return false;
+
+        if (isRoomConversationScreen() && !conversationHeaderViews.isEmpty()) {
+            int headerIdx = conversationActiveHeaderIndex();
+            if (headerIdx >= 0) {
+                int nextHeader = headerIdx + (delta < 0 ? -1 : 1);
+                if (nextHeader >= 0 && nextHeader < conversationHeaderViews.size()) {
+                    return focusConversationHeaderIndex(nextHeader);
+                }
+                if (delta > 0) {
+                    int headerCount = conversationHeaderOffset();
+                    int maxPos = headerCount + count - 1;
+                    if (maxPos >= headerCount) {
+                        focusConversationListPosition(headerCount);
+                        return true;
+                    }
+                }
+                return false;
+            }
+            int headerCount = conversationHeaderOffset();
+            int maxPos = headerCount + count - 1;
+            int pos = conversationFocusedListPosition(ad);
+            int next = pos + (delta < 0 ? -1 : 1);
+            if (delta < 0 && next < headerCount) {
+                return focusConversationHeaderIndex(conversationHeaderViews.size() - 1);
+            }
+            if (next < headerCount || next > maxPos) {
+                if (delta < 0 && next < headerCount && !conversationHeaderViews.isEmpty()) {
+                    return focusConversationHeaderIndex(conversationHeaderViews.size() - 1);
+                }
+                return false;
+            }
+            focusConversationListPosition(next);
+            return true;
+        }
+
         if (count <= 0) return false;
         int pos = listConversationThread.getSelectedItemPosition();
         if (pos < 0) pos = 0;
         int next = pos + (delta < 0 ? -1 : 1);
         if (next < 0 || next >= count) return false;
-        listConversationThread.setSelection(next);
-        if (ad instanceof ConversationThreadAdapter) {
-            ((ConversationThreadAdapter) ad).setSelectedPosition(next);
-        } else if (ad instanceof WallThreadAdapter) {
-            ((WallThreadAdapter) ad).setSelectedPosition(next);
-        }
-        FocusScrollHelper.focusListPosition(listConversationThread, next);
+        focusConversationListPosition(next);
         // #region agent log
         try {
             org.json.JSONObject d = new org.json.JSONObject();
@@ -19535,14 +19743,13 @@ public class MainActivity extends Activity {
         if (listConversationThread.getAdapter() instanceof ConversationThreadAdapter) {
             ((ConversationThreadAdapter) listConversationThread.getAdapter()).reload();
         }
-        final int pos = conversationLastSentMessagePosition();
+        final int focusListPos = conversationLastSentMessagePosition();
         listConversationThread.post(new Runnable() {
             @Override
             public void run() {
-                if (pos >= 0) {
-                    listConversationThread.setSelection(pos);
+                if (focusListPos >= 0) {
+                    focusConversationListPosition(focusListPos);
                 }
-                FocusScrollHelper.smoothScrollListToPosition(listConversationThread, Math.max(0, pos));
             }
         });
     }
@@ -19630,6 +19837,10 @@ public class MainActivity extends Activity {
             if (pos == selectedPosition) return;
             selectedPosition = pos;
             notifyDataSetChanged();
+        }
+
+        int getSelectedPosition() {
+            return selectedPosition;
         }
 
         void reload() {
@@ -19768,6 +19979,10 @@ public class MainActivity extends Activity {
             if (pos == selectedPosition) return;
             selectedPosition = pos;
             notifyDataSetChanged();
+        }
+
+        int getSelectedPosition() {
+            return selectedPosition;
         }
 
         void reload() {
@@ -20105,15 +20320,15 @@ public class MainActivity extends Activity {
         applyReachBrowseLayoutMode();
         showReachBrowseList(false);
         showSoulseekConversationPanel(true);
-        ensureSoulseekRoomModeBar();
+        setupRoomModeListHeaders(modeKey);
         if (tvConversationTitle != null) {
             tvConversationTitle.setText(soulseekChatRoomName);
             tvConversationTitle.setSelected(true);
             enableMarquee(tvConversationTitle);
             ThemeManager.applyThemedTextStyle(tvConversationTitle, ThemeManager.getTextColorPrimary());
         }
-        updateSoulseekRoomModeBar(modeKey);
         final boolean wallMode = SettingsScreens.SOULSEEK_CHAT_ROOM_WALL.equals(modeKey);
+        final int headerCount = conversationHeaderOffset();
         if (listConversationThread != null) {
             if (wallMode) {
                 WallThreadAdapter adapter = new WallThreadAdapter();
@@ -20125,20 +20340,21 @@ public class MainActivity extends Activity {
                     public void onItemSelected(android.widget.AdapterView<?> parent, View view,
                             int position, long id) {
                         if (view != null) view.requestFocus();
-                        adapter.setSelectedPosition(position);
-                        updateRoomWallPreview(position);
+                        int adapterIndex = position - conversationHeaderOffset();
+                        if (adapterIndex < 0) return;
+                        adapter.setSelectedPosition(adapterIndex);
+                        updateRoomWallPreview(adapterIndex);
                     }
 
                     @Override
                     public void onNothingSelected(android.widget.AdapterView<?> parent) {}
                 });
-                final int focusPos = Math.max(0, adapter.getCount() - 1);
+                final int focusListPos = headerCount + Math.max(0, adapter.getCount() - 1);
                 listConversationThread.post(new Runnable() {
                     @Override
                     public void run() {
-                        listConversationThread.setSelection(focusPos);
-                        FocusScrollHelper.smoothScrollListToPosition(listConversationThread, focusPos);
-                        updateRoomWallPreview(focusPos);
+                        focusConversationListPosition(focusListPos);
+                        updateRoomWallPreview(Math.max(0, adapter.getCount() - 1));
                     }
                 });
             } else {
@@ -20152,21 +20368,23 @@ public class MainActivity extends Activity {
                     public void onItemSelected(android.widget.AdapterView<?> parent, View view,
                             int position, long id) {
                         if (view != null) view.requestFocus();
-                        adapter.setSelectedPosition(position);
+                        int adapterIndex = position - conversationHeaderOffset();
+                        if (adapterIndex < 0) return;
+                        adapter.setSelectedPosition(adapterIndex);
                     }
 
                     @Override
                     public void onNothingSelected(android.widget.AdapterView<?> parent) {}
                 });
-                final int focusPos = soulseekRoomFocusLastMessage
+                final int adapterFocus = soulseekRoomFocusLastMessage
                         ? Math.max(0, adapter.getCount() - 2)
                         : Math.max(0, adapter.getCount() - 1);
                 soulseekRoomFocusLastMessage = false;
+                final int focusListPos = headerCount + adapterFocus;
                 listConversationThread.post(new Runnable() {
                     @Override
                     public void run() {
-                        listConversationThread.setSelection(focusPos);
-                        FocusScrollHelper.smoothScrollListToPosition(listConversationThread, focusPos);
+                        focusConversationListPosition(focusListPos);
                     }
                 });
             }
@@ -20174,66 +20392,6 @@ public class MainActivity extends Activity {
         SoulseekClient client = ensureSoulseekClient();
         if (client != null) client.joinRoom(soulseekChatRoomName);
         updateConversationBackButton();
-    }
-
-    private void ensureSoulseekRoomModeBar() {
-        if (soulseekConversationHost == null) return;
-        if (soulseekRoomModeBar != null) return;
-        soulseekRoomModeBar = new LinearLayout(this);
-        soulseekRoomModeBar.setOrientation(LinearLayout.HORIZONTAL);
-        int pad = (int) (4 * getResources().getDisplayMetrics().density);
-        soulseekRoomModeBar.setPadding(pad, pad, pad, pad);
-        Button btnChat = createListButton(getString(R.string.soulseek_room_mode_chat));
-        btnChat.setTag("room_mode_chat");
-        btnChat.setLayoutParams(new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
-        btnChat.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                clickFeedback();
-                buildSoulseekChatRoomUI(soulseekChatRoomName);
-            }
-        });
-        Button btnWall = createListButton(getString(R.string.soulseek_room_mode_wall));
-        btnWall.setTag("room_mode_wall");
-        btnWall.setLayoutParams(new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
-        btnWall.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                clickFeedback();
-                buildSoulseekRoomWallUI(soulseekChatRoomName);
-            }
-        });
-        soulseekRoomModeBar.addView(btnChat);
-        soulseekRoomModeBar.addView(btnWall);
-        int titleIdx = -1;
-        if (soulseekConversationHost instanceof android.view.ViewGroup && tvConversationTitle != null) {
-            titleIdx = ((android.view.ViewGroup) soulseekConversationHost)
-                    .indexOfChild(tvConversationTitle);
-        }
-        if (soulseekConversationHost instanceof android.view.ViewGroup) {
-            android.view.ViewGroup host = (android.view.ViewGroup) soulseekConversationHost;
-            if (titleIdx >= 0) {
-                host.addView(soulseekRoomModeBar, titleIdx + 1);
-            } else {
-                host.addView(soulseekRoomModeBar, 1);
-            }
-        }
-    }
-
-    private void updateSoulseekRoomModeBar(String modeKey) {
-        if (soulseekRoomModeBar == null) return;
-        for (int i = 0; i < soulseekRoomModeBar.getChildCount(); i++) {
-            View child = soulseekRoomModeBar.getChildAt(i);
-            if (!(child instanceof Button)) continue;
-            Button b = (Button) child;
-            Object tag = b.getTag();
-            boolean chat = SettingsScreens.SOULSEEK_CHAT_ROOM_THREAD.equals(modeKey);
-            boolean active = ("room_mode_chat".equals(tag) && chat)
-                    || ("room_mode_wall".equals(tag) && !chat);
-            String label = b.getText().toString();
-            if (label.startsWith("✔ ")) label = label.substring(2);
-            b.setText(active ? "✔ " + label : label);
-        }
     }
 
     private void updateRoomWallPreview(int position) {
@@ -20286,15 +20444,25 @@ public class MainActivity extends Activity {
         }
     }
 
-    private boolean isRoomNewMessagePosition(int pos) {
+    private boolean isRoomNewMessagePosition(int listPosition) {
         if (SettingsScreens.SOULSEEK_CHAT_ROOM_WALL.equals(settingsSubScreenKey)) {
             if (listConversationThread == null
                     || !(listConversationThread.getAdapter() instanceof WallThreadAdapter)) {
                 return true;
             }
-            return pos >= listConversationThread.getAdapter().getCount() - 1;
+            int headerCount = conversationHeaderOffset();
+            return listPosition >= headerCount + listConversationThread.getAdapter().getCount() - 1;
         }
-        return isConversationNewMessagePosition(pos);
+        return isConversationNewMessagePosition(listPosition);
+    }
+
+    private boolean performConversationHeaderClickIfFocused() {
+        int hdr = indexOfConversationHeader(getCurrentFocus());
+        if (hdr < 0) return false;
+        clickFeedback();
+        View h = conversationHeaderViews.get(hdr);
+        if (h != null) h.performClick();
+        return true;
     }
 
     private boolean isRoomThreadScreenActive() {
@@ -20511,6 +20679,8 @@ public class MainActivity extends Activity {
         showReachBrowseList(false);
         showSoulseekConversationPanel(true);
         applyReachBrowseLayoutMode();
+        resetConversationListHeaders();
+        hideSoulseekRoomModeBar();
         if (tvConversationTitle != null) {
             tvConversationTitle.setText(soulseekMessagePeer);
             tvConversationTitle.setSelected(true);
@@ -20534,15 +20704,15 @@ public class MainActivity extends Activity {
                 @Override
                 public void onNothingSelected(android.widget.AdapterView<?> parent) {}
             });
-            final int focusPos = soulseekConversationFocusLastMessage
-                    ? conversationLastSentMessagePosition()
-                    : conversationNewMessagePosition();
+            final int focusListPos = conversationAdapterListPosition(
+                    soulseekConversationFocusLastMessage
+                            ? conversationLastSentMessageAdapterIndex()
+                            : conversationNewMessageAdapterIndex());
             soulseekConversationFocusLastMessage = false;
             listConversationThread.post(new Runnable() {
                 @Override
                 public void run() {
-                    listConversationThread.setSelection(focusPos);
-                    FocusScrollHelper.smoothScrollListToPosition(listConversationThread, focusPos);
+                    focusConversationListPosition(focusListPos);
                 }
             });
         }
@@ -20550,7 +20720,7 @@ public class MainActivity extends Activity {
         updateConversationBackButton();
     }
 
-    private int conversationNewMessagePosition() {
+    private int conversationNewMessageAdapterIndex() {
         if (listConversationThread == null
                 || !(listConversationThread.getAdapter() instanceof ConversationThreadAdapter)) {
             return 0;
@@ -20558,7 +20728,7 @@ public class MainActivity extends Activity {
         return Math.max(0, listConversationThread.getAdapter().getCount() - 1);
     }
 
-    private int conversationLastSentMessagePosition() {
+    private int conversationLastSentMessageAdapterIndex() {
         if (listConversationThread == null
                 || !(listConversationThread.getAdapter() instanceof ConversationThreadAdapter)) {
             return 0;
@@ -20566,6 +20736,16 @@ public class MainActivity extends Activity {
         int count = listConversationThread.getAdapter().getCount();
         if (count <= 1) return 0;
         return count - 2;
+    }
+
+    /** @deprecated use conversationNewMessageAdapterIndex + conversationAdapterListPosition */
+    private int conversationNewMessagePosition() {
+        return conversationAdapterListPosition(conversationNewMessageAdapterIndex());
+    }
+
+    /** @deprecated use conversationLastSentMessageAdapterIndex + conversationAdapterListPosition */
+    private int conversationLastSentMessagePosition() {
+        return conversationAdapterListPosition(conversationLastSentMessageAdapterIndex());
     }
 
     private void finishSoulseekFindEntry() {

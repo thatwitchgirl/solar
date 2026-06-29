@@ -571,8 +571,8 @@
     <string name="soulseek_chat_rooms">Chat rooms</string>
     <string name="soulseek_room_refresh">Refresh room list</string>
     <string name="soulseek_room_new_message">New message</string>
-    <string name="soulseek_room_mode_chat">Room chat</string>
-    <string name="soulseek_room_mode_wall">Room wall</string>
+    <string name="soulseek_room_mode_chat">Chat</string>
+    <string name="soulseek_room_mode_wall">Wall</string>
     <string name="soulseek_room_wall_set">Set wall post</string>
     <string name="soulseek_room_wall_edit">Edit wall post</string>
     <string name="reach_intro_message">*%1$s* is writing from an Innioasis %2$s using the Reach client. They may write replies slowly as they are on an MP3 player. (No really - github.com/thesolarproject/solar)</string>
