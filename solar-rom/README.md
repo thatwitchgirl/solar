@@ -8,10 +8,10 @@ Release source: [github.com/thatwitchgirl/solar](https://github.com/thatwitchgir
 
 | Branch | Releases | Versioning |
 |--------|----------|------------|
-| `nightly` | Every push | Tags `nightly-{N}` — **CI assigns N** as latest git tag + 1 (local `app/build.gradle` is only a dev hint) |
-| `main` | Stable | Tags `v0.1`, `v0.2`, … — **CI assigns** next +0.1 from latest `v0.*` release tag |
+| `nightly` | Every push | Tags `nightly-YYYYMMDD-HHMM` (UTC) — pre-release on GitHub |
+| `main` | Every push | Tags `YYYYMMDD-HHMM` (same timestamp as nightly for the same commit; no prefix) — latest release on GitHub |
 
-Day-to-day development targets **`nightly`**. Merge to **`main`** when cutting a stable release.
+Both branches share the same `versionCode` (minutes since 2020-01-01 UTC). Day-to-day development targets **`nightly`**; **`main`** will become the stable channel later — for now both are timestamped unstable builds.
 
 ## Local build
 

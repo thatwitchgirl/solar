@@ -41,9 +41,21 @@ variant_re = re.compile(
 unified_re = re.compile(
     r"solar-((?:v[\d.]+)|(?:nightly-\d+)|(?:nightly-\d{8}-\d{4})|(?:\d{8}-\d{4}))\.apk$"
 )
-ts_re = re.compile(r"^(?:nightly-)?(\d{8})-(\d{4})$")
+ts_re = re.compile(r"^(?:nightly-)?(\d{8}-\d{4})$")
 num_re = re.compile(r"^nightly-(\d+)$")
 stable_ts_re = re.compile(r"^(\d{8}-\d{4})$")
+
+def version_code_from_ts_body(body):
+    parts = body.split("-", 1)
+    if len(parts) != 2 or len(parts[0]) != 8 or len(parts[1]) < 4:
+        return 0
+    date_part, time_part = parts[0], parts[1]
+    y, mo, d = int(date_part[:4]), int(date_part[4:6]), int(date_part[6:8])
+    hh, mm = int(time_part[:2]), int(time_part[2:4])
+    from datetime import datetime, timezone
+    dt = datetime(y, mo, d, hh, mm, tzinfo=timezone.utc)
+    epoch = datetime(2020, 1, 1, tzinfo=timezone.utc)
+    return int((dt - epoch).total_seconds() // 60)
 
 entries = []
 for path in sorted(glob.glob(os.path.join(out_dir, "solar-*.apk"))):
@@ -70,12 +82,7 @@ for path in sorted(glob.glob(os.path.join(out_dir, "solar-*.apk"))):
         version_name = tag
         ts = ts_re.match(tag)
         if ts:
-            y, mo, d = int(ts.group(1)[:4]), int(ts.group(1)[4:6]), int(ts.group(1)[6:8])
-            hh, mm = int(ts.group(2)[:2]), int(ts.group(2)[2:])
-            from datetime import datetime, timezone
-            dt = datetime(y, mo, d, hh, mm, tzinfo=timezone.utc)
-            epoch = datetime(2020, 1, 1, tzinfo=timezone.utc)
-            version_code = int((dt - epoch).total_seconds() // 60)
+            version_code = version_code_from_ts_body(ts.group(1))
         else:
             num = num_re.match(tag)
             version_code = int(num.group(1)) if num else 0
@@ -83,12 +90,7 @@ for path in sorted(glob.glob(os.path.join(out_dir, "solar-*.apk"))):
         version_name = tag[1:] if tag.startswith("v") else tag
         ts = stable_ts_re.match(version_name)
         if ts:
-            y, mo, d = int(ts.group(1)[:4]), int(ts.group(1)[4:6]), int(ts.group(1)[6:8])
-            hh, mm = int(ts.group(2)[:2]), int(ts.group(2)[2:])
-            from datetime import datetime, timezone
-            dt = datetime(y, mo, d, hh, mm, tzinfo=timezone.utc)
-            epoch = datetime(2020, 1, 1, tzinfo=timezone.utc)
-            version_code = int((dt - epoch).total_seconds() // 60)
+            version_code = version_code_from_ts_body(ts.group(1))
         else:
             version_code = 0
     entries.append((tag, version_name, version_code, nightly, name, variant or "universal"))
