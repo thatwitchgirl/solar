@@ -667,7 +667,7 @@ public class MainActivity extends Activity {
     private int settingsMenuWidthPx;
     private int menuListHeightPx;
     private boolean statusBarShowsTitle = true;
-    private boolean statusBarMatchFont = true;
+    private boolean statusBarMatchFont = false;
     private String settingsParentKey = null;
     private boolean isFullWidthMenus = false;
     private String browserStatusTitle;
@@ -2085,7 +2085,7 @@ public class MainActivity extends Activity {
         updatePlayerStatusIndicators();
 
         try { statusBarShowsTitle = prefs.getBoolean("status_bar_title", false); } catch (Exception e) {}
-        try { statusBarMatchFont = prefs.getBoolean("status_bar_match_font", true); } catch (Exception e) {}
+        try { statusBarMatchFont = prefs.getBoolean("status_bar_match_font", false); } catch (Exception e) {}
         ThemeManager.setStatusBarMatchItemText(statusBarMatchFont);
         try {
             if (prefs.contains(SoulseekAccount.PREF_HIDE_HIGH_BITRATE)) {
@@ -5417,15 +5417,41 @@ public class MainActivity extends Activity {
         return -1;
     }
 
+    /** Header row for wheel nav — real focus or tracked index when ListView still owns selection. */
+    private int reachBrowseActiveHeaderIndex() {
+        int idx = indexOfReachBrowseHeader(getCurrentFocus());
+        if (idx >= 0) {
+            reachBrowseHeaderFocusIdx = idx;
+            return idx;
+        }
+        return reachBrowseHeaderFocusIdx;
+    }
+
     private boolean focusReachBrowseHeaderIndex(final int idx) {
         if (idx < 0 || idx >= reachBrowseHeaderViews.size()) return false;
         final View h = reachBrowseHeaderViews.get(idx);
         if (h == null || !h.isFocusable()) return false;
-        final boolean alreadyOnHeader = indexOfReachBrowseHeader(getCurrentFocus()) >= 0;
+        final int prevHeaderIdx = reachBrowseHeaderFocusIdx;
+        reachBrowseHeaderFocusIdx = idx;
+        final boolean alreadyOnHeader = indexOfReachBrowseHeader(getCurrentFocus()) >= 0
+                || (prevHeaderIdx >= 0 && prevHeaderIdx != idx);
         // ponytail: only reset list scroll/selection when entering headers from adapter rows.
         if (!alreadyOnHeader && listReachBrowse != null) {
             clearReachBrowseAdapterSelection(listReachBrowse.getAdapter());
             listReachBrowse.setSelectionFromTop(0, 0);
+            if (h.requestFocus()) {
+                // #region agent log
+                try {
+                    org.json.JSONObject d = new org.json.JSONObject();
+                    d.put("headerIdx", idx);
+                    d.put("fromList", true);
+                    d.put("sync", true);
+                    DebugSessionLog.log("MainActivity.focusReachBrowseHeaderIndex",
+                            "header focus", "H-HEADER", d);
+                } catch (Exception ignored) {}
+                // #endregion
+                return true;
+            }
             listReachBrowse.post(new Runnable() {
                 @Override
                 public void run() {
@@ -5435,8 +5461,9 @@ public class MainActivity extends Activity {
                         org.json.JSONObject d = new org.json.JSONObject();
                         d.put("headerIdx", idx);
                         d.put("fromList", true);
+                        d.put("sync", false);
                         DebugSessionLog.log("MainActivity.focusReachBrowseHeaderIndex",
-                                "header focus", "H-FOCUS2", d);
+                                "header focus", "H-HEADER", d);
                     } catch (Exception ignored) {}
                     // #endregion
                 }
@@ -5451,7 +5478,7 @@ public class MainActivity extends Activity {
             d.put("fromList", false);
             d.put("focused", ok);
             DebugSessionLog.log("MainActivity.focusReachBrowseHeaderIndex",
-                    "header focus", "H-FOCUS2", d);
+                    "header focus", "H-HEADER", d);
         } catch (Exception ignored) {}
         // #endregion
         return ok;
@@ -5571,6 +5598,8 @@ public class MainActivity extends Activity {
     }
 
     private final java.util.ArrayList<View> reachBrowseHeaderViews = new java.util.ArrayList<View>();
+    /** Wheel highlight on Back/New message rows — ListView header host is one list child. */
+    private int reachBrowseHeaderFocusIdx = -1;
     /** Single ListView header hosts Back/New rows — avoids addHeaderView churn crashes on API 17. */
     private LinearLayout reachBrowseHeaderHost;
 
@@ -5591,6 +5620,7 @@ public class MainActivity extends Activity {
             reachBrowseHeaderHost.removeAllViews();
         }
         reachBrowseHeaderViews.clear();
+        reachBrowseHeaderFocusIdx = -1;
     }
 
     private void ensureReachBrowseHeaderHost() {
@@ -5669,6 +5699,10 @@ public class MainActivity extends Activity {
 
     private boolean isReachBrowseFocusValid() {
         if (!isReachBrowseListActive()) return false;
+        if (reachBrowseHeaderFocusIdx >= 0 && reachBrowseHeaderFocusIdx < reachBrowseHeaderViews.size()) {
+            View h = reachBrowseHeaderViews.get(reachBrowseHeaderFocusIdx);
+            if (h != null && h.isShown()) return true;
+        }
         View f = getCurrentFocus();
         if (f == null || !f.isShown() || !f.isFocusable()) return false;
         if (indexOfReachBrowseHeader(f) >= 0) return true;
@@ -5690,16 +5724,64 @@ public class MainActivity extends Activity {
         return true;
     }
 
+    /**
+     * Reach Messages / chat rooms / conversation thread wheel nav.
+     * ponytail: DPAD_UP/DOWN (19/20) are swallowed by ListView before Activity.onKeyDown on API 17 —
+     * call from dispatchKeyEvent before super so index-driven highlight always runs.
+     */
+    private boolean handleReachSettingsWheelKeyDown(int keyCode, KeyEvent event) {
+        if (currentScreenState != STATE_SETTINGS || event.getAction() != KeyEvent.ACTION_DOWN) {
+            return false;
+        }
+        if (!Y1InputKeys.isWheelKey(keyCode)) return false;
+        if (isThemeListActive()) return false;
+        if (isConversationThreadActive()) {
+            if (moveConversationListFocus(Y1InputKeys.isWheelUp(keyCode) ? -1 : 1)) {
+                clickFeedback();
+            }
+            return true;
+        }
+        if (!isReachBrowseListActive()) return false;
+        int delta = Y1InputKeys.isWheelUp(keyCode) ? -1 : 1;
+        boolean moved = moveReachBrowseListFocus(delta) || ensureReachBrowseListFocus();
+        if (moved) clickFeedback();
+        // #region agent log
+        if (event.getRepeatCount() == 0) {
+            try {
+                org.json.JSONObject d = new org.json.JSONObject();
+                d.put("keyCode", keyCode);
+                d.put("delta", delta);
+                d.put("moved", moved);
+                d.put("screen", settingsSubScreenKey);
+                DebugSessionLog.log("MainActivity.handleReachSettingsWheelKeyDown",
+                        "reach wheel handled", "H-DISPATCH", d);
+            } catch (Exception ignored) {}
+        }
+        // #endregion
+        return true;
+    }
+
     private void focusReachBrowseListPosition(int listPosition) {
+        reachBrowseHeaderFocusIdx = -1;
         applyReachBrowseAdapterSelection(listPosition);
         FocusScrollHelper.focusListPosition(listReachBrowse, listPosition);
     }
 
     private boolean moveReachBrowseListFocus(int delta) {
         if (!isReachBrowseListActive() || delta == 0) return false;
-        int headerIdx = indexOfReachBrowseHeader(getCurrentFocus());
+        int headerIdx = reachBrowseActiveHeaderIndex();
         if (headerIdx >= 0) {
             int nextHeader = headerIdx + (delta < 0 ? -1 : 1);
+            // #region agent log
+            try {
+                org.json.JSONObject d = new org.json.JSONObject();
+                d.put("headerIdx", headerIdx);
+                d.put("nextHeader", nextHeader);
+                d.put("delta", delta);
+                DebugSessionLog.log("MainActivity.moveReachBrowseListFocus",
+                        "header step", "H-HEADER", d);
+            } catch (Exception ignored) {}
+            // #endregion
             if (nextHeader >= 0 && nextHeader < reachBrowseHeaderViews.size()) {
                 return focusReachBrowseHeaderIndex(nextHeader);
             }
@@ -5791,6 +5873,10 @@ public class MainActivity extends Activity {
             }
         }
         if (next < headerCount || next > maxPos) {
+            // ponytail: disabled/status rows can decrement next below headerCount — step to header, not dead-end.
+            if (delta < 0 && next < headerCount && !reachBrowseHeaderViews.isEmpty()) {
+                return focusReachBrowseHeaderIndex(reachBrowseHeaderViews.size() - 1);
+            }
             // #region agent log
             try {
                 org.json.JSONObject d = new org.json.JSONObject();
@@ -7274,6 +7360,8 @@ public class MainActivity extends Activity {
             }
             return true;
         }
+        // ponytail: intercept before ListView DPAD handling — see handleReachSettingsWheelKeyDown.
+        if (handleReachSettingsWheelKeyDown(event.getKeyCode(), event)) return true;
         return super.dispatchKeyEvent(event);
     }
 
@@ -19427,7 +19515,7 @@ public class MainActivity extends Activity {
         } else if (ad instanceof WallThreadAdapter) {
             ((WallThreadAdapter) ad).setSelectedPosition(next);
         }
-        FocusScrollHelper.smoothScrollListToPosition(listConversationThread, next);
+        FocusScrollHelper.focusListPosition(listConversationThread, next);
         // #region agent log
         try {
             org.json.JSONObject d = new org.json.JSONObject();
@@ -19435,7 +19523,7 @@ public class MainActivity extends Activity {
             d.put("from", pos);
             d.put("to", next);
             d.put("count", count);
-            DebugAgentLog.log(this, "MainActivity.moveConversationListFocus",
+            DebugSessionLog.log("MainActivity.moveConversationListFocus",
                     "conv list wheel", "H3-fix", d);
         } catch (Exception ignored) {}
         // #endregion
@@ -23374,7 +23462,16 @@ public class MainActivity extends Activity {
         return !isFinishing() && currentScreenState == STATE_PODCASTS;
     }
 
+    /** Bump gen and drop episode probe state when leaving the episode list. */
+    private void cancelPodcastEpisodeProbe() {
+        podcastUiGen++;
+        podcastEpisodeProbeState = null;
+        podcastEpisodeProbeSource = null;
+        podcastEpisodeFlushPtr = 0;
+    }
+
     private void buildPodcastSearchUI() {
+        cancelPodcastEpisodeProbe();
         podcastUiMode = PODCAST_UI_SEARCH;
         preparePodcastBrowserChrome();
         browserStatusTitle = getString(R.string.status_podcasts);
@@ -23627,6 +23724,7 @@ public class MainActivity extends Activity {
             }
         }
         podcastShows.clear();
+        cancelPodcastEpisodeProbe();
         buildPodcastShowsShell();
         final int gen = podcastUiGen;
         final String searchTerm = query.trim();
@@ -23775,6 +23873,7 @@ public class MainActivity extends Activity {
     }
 
     private void buildPodcastShowsUI() {
+        cancelPodcastEpisodeProbe();
         podcastUiMode = PODCAST_UI_SHOWS;
         preparePodcastBrowserChrome();
         browserStatusTitle = getString(R.string.status_podcasts_results);
@@ -23901,6 +24000,18 @@ public class MainActivity extends Activity {
     }
 
     private void onPodcastEpisodeProbed(int index, boolean playable) {
+        if (podcastUiMode != PODCAST_UI_EPISODES) {
+            // #region agent log
+            try {
+                org.json.JSONObject d = new org.json.JSONObject();
+                d.put("podcastUiMode", podcastUiMode);
+                d.put("index", index);
+                d.put("playable", playable);
+                DebugSessionLog.log("MainActivity.onPodcastEpisodeProbed", "stale probe ignored", "H1", d);
+            } catch (Exception ignored) {}
+            // #endregion
+            return;
+        }
         if (podcastEpisodeProbeState == null || podcastEpisodeProbeSource == null) return;
         if (index < 0 || index >= podcastEpisodeProbeState.length) return;
         podcastEpisodeProbeState[index] = playable ? 1 : 2;
@@ -23941,6 +24052,18 @@ public class MainActivity extends Activity {
     }
 
     private void appendPodcastEpisodeRow(final OpenRssClient.Episode ep, final int idx) {
+        if (podcastUiMode != PODCAST_UI_EPISODES) {
+            // #region agent log
+            try {
+                org.json.JSONObject d = new org.json.JSONObject();
+                d.put("podcastUiMode", podcastUiMode);
+                d.put("idx", idx);
+                d.put("titleLen", ep != null && ep.title != null ? ep.title.length() : 0);
+                DebugSessionLog.log("MainActivity.appendPodcastEpisodeRow", "blocked wrong mode", "H1", d);
+            } catch (Exception ignored) {}
+            // #endregion
+            return;
+        }
         String label = ep.title;
         final boolean saved = podcastSelected != null
                 && PodcastLibrary.findSaved(podcastSelected.title, ep.title, ep.audioUrl) != null;
@@ -23978,6 +24101,15 @@ public class MainActivity extends Activity {
             if (statusIdx >= 0) insertAt = statusIdx;
         }
         containerBrowserItems.addView(row, insertAt);
+        // #region agent log
+        try {
+            org.json.JSONObject d = new org.json.JSONObject();
+            d.put("podcastUiMode", podcastUiMode);
+            d.put("idx", idx);
+            d.put("childCount", containerBrowserItems.getChildCount());
+            DebugSessionLog.log("MainActivity.appendPodcastEpisodeRow", "episode row added", "H1", d);
+        } catch (Exception ignored) {}
+        // #endregion
     }
 
     private void buildPodcastEpisodesUI() {
@@ -29682,11 +29814,19 @@ public class MainActivity extends Activity {
         if (!isScreenOffControlEnabled) return false;
         if (Y1InputKeys.isVolumeDownKey(keyCode)) { adjustVolume(false); clickFeedback(); return true; }
         if (Y1InputKeys.isVolumeUpKey(keyCode)) { adjustVolume(true); clickFeedback(); return true; }
-        if (Y1InputKeys.isWheelUp(keyCode) || Y1InputKeys.isWheelDown(keyCode)) {
-            return false; // ponytail: wheel while screen off — let Rockbox/other launcher handle
+        // ponytail: Y1 wheel shares 126/127 with AVRCP — consume here so MediaSession does not play/pause.
+        if (Y1InputKeys.isWheelKey(keyCode)) {
+            // #region agent log
+            try {
+                org.json.JSONObject d = new org.json.JSONObject();
+                d.put("keyCode", keyCode);
+                DebugSessionLog.log("MainActivity.handleMediaSessionKey", "wheel consumed screen off", "H-SOFF1", d);
+            } catch (Exception ignored) {}
+            // #endregion
+            return true;
         }
         if (Y1InputKeys.isTrackPreviousKey(keyCode) || Y1InputKeys.isTrackNextKey(keyCode)) {
-            return false; // ponytail: 21/22 are transport on side buttons, not screen-off wheel
+            return false; // ponytail: side prev/next while screen off — let system handle if needed
         }
         if (keyCode == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE || keyCode == 85 || keyCode == 86) {
             playOrPauseMusic(); clickFeedback(); return true;
@@ -30656,30 +30796,7 @@ public class MainActivity extends Activity {
             }
             // #endregion
             if (currentScreenState == STATE_SETTINGS && Y1InputKeys.isWheelKey(keyCode)) {
-                // #region agent log
-                if (isConversationThreadActive()) {
-                    try {
-                        org.json.JSONObject d = new org.json.JSONObject();
-                        d.put("keyCode", keyCode);
-                        d.put("branch", "settings_wheel_before_moveSettingsListFocus");
-                        DebugAgentLog.log(this, "MainActivity.onKeyDown",
-                                "conv wheel", "H3", d);
-                    } catch (Exception ignored) {}
-                }
-                // #endregion
-                if (isConversationThreadActive()) {
-                    if (moveConversationListFocus(Y1InputKeys.isWheelUp(keyCode) ? -1 : 1)) {
-                        clickFeedback();
-                    }
-                    return true;
-                }
-                if (isReachBrowseListActive()) {
-                    int delta = Y1InputKeys.isWheelUp(keyCode) ? -1 : 1;
-                    if (moveReachBrowseListFocus(delta) || ensureReachBrowseListFocus()) {
-                        clickFeedback();
-                    }
-                    return true;
-                }
+                if (handleReachSettingsWheelKeyDown(keyCode, event)) return true;
                 if (!isFocusValidForCurrentScreen() && containerSettingsItems != null
                         && containerSettingsItems.getChildCount() > 0) {
                     for (int i = 0; i < containerSettingsItems.getChildCount(); i++) {
@@ -31391,6 +31508,19 @@ public class MainActivity extends Activity {
             int keyCode = event.getKeyCode();
             boolean allowBt = activity.isScreenOffControlEnabled || activity.hasActiveMediaPlayback();
             if (!allowBt) return;
+
+            // ponytail: wheel is 126/127 (and 19/20) — never transport via ACTION_MEDIA_BUTTON (no InputDevice).
+            if (Y1InputKeys.isWheelKey(keyCode)) {
+                // #region agent log
+                try {
+                    org.json.JSONObject d = new org.json.JSONObject();
+                    d.put("keyCode", keyCode);
+                    d.put("action", event.getAction());
+                    DebugSessionLog.log("MainActivity.MediaBtnReceiver", "wheel ignored screen off", "H-SOFF2", d);
+                } catch (Exception ignored) {}
+                // #endregion
+                return;
+            }
 
             if (Y1BluetoothInput.isMediaButtonTransportKeyCode(keyCode)) {
                 if (Y1InputKeys.isAvrcpSkipKey(keyCode)) {

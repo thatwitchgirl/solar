@@ -65,7 +65,7 @@ public class ThemeManager {
     private static final Map<String, Bitmap> scaledRowBitmapCache = new HashMap<>();
     private static Typeface cachedFont;
     private static String cachedFontKey = "";
-    private static boolean statusBarMatchItemText = true;
+    private static boolean statusBarMatchItemText = false;
 
     /** ponytail: external Themes/ with filesDir fallback when sdcard missing (emulator). */
     public static String resolveThemesRoot(Context ctx) {
