@@ -78,26 +78,27 @@ public final class Y1UsbFocusHelper {
                 lastConnectedState = connected;
                 usbConnected = connected;
                 if (connected) {
-                    // ponytail: staggered HOME presses only when we DON'T have focus
-                    // (i.e. the system UsbStorageActivity is in front of us).
-                    // If we already have focus, just notify the listener.
-                    if (!activity.hasWindowFocus()) {
-                        handler.postDelayed(new Runnable() {
-                            @Override
-                            public void run() {
+                    // ponytail: always schedule HOME presses on USB connect.
+                    // The hasWindowFocus() check is inside each Runnable because
+                    // when this broadcast fires the system dialog hasn't appeared
+                    // yet — by 500/800ms later it will have stolen focus.
+                    handler.postDelayed(new Runnable() {
+                        @Override
+                        public void run() {
+                            if (!activity.hasWindowFocus()) {
                                 reclaimInputFocus("usbState-1");
                             }
-                        }, 500);
-                        handler.postDelayed(new Runnable() {
-                            @Override
-                            public void run() {
+                        }
+                    }, 500);
+                    handler.postDelayed(new Runnable() {
+                        @Override
+                        public void run() {
+                            if (!activity.hasWindowFocus()) {
                                 reclaimInputFocus("usbState-2");
-                                if (listener != null) listener.onUsbStateChanged(true);
                             }
-                        }, 800);
-                    } else {
-                        if (listener != null) listener.onUsbStateChanged(true);
-                    }
+                            if (listener != null) listener.onUsbStateChanged(true);
+                        }
+                    }, 800);
                 } else {
                     if (listener != null) listener.onUsbStateChanged(false);
                 }
