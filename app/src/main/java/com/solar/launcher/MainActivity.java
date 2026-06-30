@@ -1744,6 +1744,7 @@ public class MainActivity extends Activity {
                 if (connected) {
                     if (prefs != null && prefs.getBoolean("usb_auto_connect", false) && !prefs.getBoolean("usb_manual_disable", false)) {
                         enableUsbMassStorageFromRoot();
+                        if (usbFocusHelper != null) usbFocusHelper.pausePolling();
                     } else {
                         showUsbMassStorageDialog();
                     }
@@ -11996,6 +11997,11 @@ public class MainActivity extends Activity {
 
     private void dismissThemedContextMenu() {
         if (otaSystemReplaceInProgress) return;
+        // ponytail: if we're dismissing the USB dialog (Back key or any path),
+        // pause focus polling to restore scrolling performance.
+        if (contextMenuTierStack.contains("usb_storage") && usbFocusHelper != null) {
+            usbFocusHelper.pausePolling();
+        }
         flushContextQueueMoveIfDirty();
         cancelPendingContextWifiRefresh();
         cancelPendingContextBluetoothRefresh();
@@ -15809,6 +15815,7 @@ public class MainActivity extends Activity {
             @Override
             public void run() {
                 dismissThemedContextMenu();
+                if (usbFocusHelper != null) usbFocusHelper.pausePolling();
                 enableUsbMassStorageFromRoot();
             }
         });
@@ -15819,10 +15826,10 @@ public class MainActivity extends Activity {
         actions.add(new Runnable() {
             @Override
             public void run() {
-                // ponytail: stop rapid focus polling once the user has acknowledged
-                // the USB prompt — no need to keep reclaiming focus.
-                if (usbFocusHelper != null) usbFocusHelper.pausePolling();
                 dismissThemedContextMenu();
+                // ponytail: user handled the USB dialog — stop rapid focus polling
+                // to restore scrolling performance. Replug restarts polling.
+                if (usbFocusHelper != null) usbFocusHelper.pausePolling();
             }
         });
 
@@ -23330,24 +23337,7 @@ public class MainActivity extends Activity {
                 if (!libraryScanPaths.add(normPath)) continue;
                 LibraryScanResolved resolved = resolveSongItemForScan(f, store);
                 if (resolved == null || resolved.item == null) continue;
-                if (!libraryScanMetaKeys.add(resolved.metaKey)) {
-                    // ponytail: duplicate metaKey found. If the new copy has a track number
-                    // and the existing one doesn't, replace it — so album tracks sort properly.
-                    if (resolved.item.trackNumber > 0) {
-                        for (int i = out.size() - 1; i >= 0; i--) {
-                            SongItem existing = out.get(i);
-                            String existingKey = (existing.title + "\0" + existing.artist)
-                                    .toLowerCase(java.util.Locale.US);
-                            String newKey = (resolved.item.title + "\0" + resolved.item.artist)
-                                    .toLowerCase(java.util.Locale.US);
-                            if (existingKey.equals(newKey) && existing.trackNumber == 0) {
-                                out.set(i, resolved.item);
-                                break;
-                            }
-                        }
-                    }
-                    continue;
-                }
+                if (!libraryScanMetaKeys.add(resolved.metaKey)) continue;
                 out.add(resolved.item);
             }
         }
@@ -24713,14 +24703,15 @@ public class MainActivity extends Activity {
                 }
             });
         }
-        // ponytail: always show "Add to local playlist" (works for all tracks).
-        // "Add to Deezer playlist" only makes sense for Deezer-originated tracks,
-        // not for local or Soulseek files — removed from this local-file context menu.
-        // The DeezerResult context menu (addDeezerTrackPlaylistContextActions) still has it.
         if (deezerPlaylistActionsAvailable()) {
             addContextAction(getString(R.string.context_add_to_local_playlist), new Runnable() {
                 @Override public void run() {
                     openAddToPlaylistFlow(java.util.Collections.singletonList(trackFile));
+                }
+            });
+            addContextAction(getString(R.string.context_add_to_deezer_playlist), new Runnable() {
+                @Override public void run() {
+                    openAddFileToDeezerPlaylistFlow(trackFile);
                 }
             });
         } else {

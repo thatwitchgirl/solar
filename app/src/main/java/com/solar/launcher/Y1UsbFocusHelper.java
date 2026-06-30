@@ -48,7 +48,8 @@ public final class Y1UsbFocusHelper {
     private boolean usbConnected = false;
     private volatile boolean charging = false;
     private boolean polling = false;
-    private boolean pollingPaused = false;
+    /** Set when user dismisses the USB dialog — pauses polling until replug. */
+    private boolean userDismissed = false;
 
     public Y1UsbFocusHelper(Activity activity, UsbListener listener) {
         this.activity = activity;
@@ -76,25 +77,6 @@ public final class Y1UsbFocusHelper {
             try { activity.unregisterReceiver(chargingReceiver); } catch (Exception ignored) {}
             chargingRegistered = false;
         }
-    }
-
-    /**
-     * Stop focus polling until the next charge state change (unplug/replug).
-     * Called when the user dismisses the Solar USB prompt — no need to keep
-     * reclaiming focus after that.
-     */
-    public void pausePolling() {
-        pollingPaused = true;
-        stopPolling();
-    }
-
-    /**
-     * Resume focus polling (if still charging).
-     * Called automatically when charge state changes.
-     */
-    public void resumePolling() {
-        pollingPaused = false;
-        updatePolling();
     }
 
     private Boolean lastConnectedState = null;
@@ -155,11 +137,11 @@ public final class Y1UsbFocusHelper {
                 String action = intent.getAction();
                 if (Intent.ACTION_POWER_CONNECTED.equals(action)) {
                     charging = true;
-                    pollingPaused = false; // reset pause on replug
+                    userDismissed = false; // New plug-in → reset dismiss state
                     updatePolling();
                 } else if (Intent.ACTION_POWER_DISCONNECTED.equals(action)) {
                     charging = false;
-                    pollingPaused = false; // reset pause on unplug
+                    userDismissed = false;
                     updatePolling();
                 }
             }
@@ -176,7 +158,7 @@ public final class Y1UsbFocusHelper {
     private final Runnable pollRunnable = new Runnable() {
         @Override
         public void run() {
-            if (!polling || !charging) return;
+            if (!polling || !charging || userDismissed) return;
             if (!activity.hasWindowFocus()) {
                 bringToFront("poll");
             }
@@ -184,10 +166,20 @@ public final class Y1UsbFocusHelper {
         }
     };
 
+    /**
+     * Pause focus polling — called when the user dismisses the Solar USB dialog
+     * (either via the Dismiss button or Back key). Polling resumes only on a new
+     * power connect event (cable replug).
+     */
+    public void pausePolling() {
+        userDismissed = true;
+        stopPolling();
+    }
+
     private void updatePolling() {
-        if (charging && !polling && !pollingPaused) {
+        if (charging && !polling && !userDismissed) {
             startPolling();
-        } else if ((!charging || pollingPaused) && polling) {
+        } else if ((!charging || userDismissed) && polling) {
             stopPolling();
         }
     }
