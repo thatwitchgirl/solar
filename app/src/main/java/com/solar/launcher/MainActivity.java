@@ -258,18 +258,20 @@ public class MainActivity extends Activity {
         String album;
         String genre;
         String albumArtist;
+        int trackNumber;
 
         public SongItem(File f, String t, String a, String al, String g) {
-            this(f, t, a, al, g, "");
+            this(f, t, a, al, g, "", 0);
         }
 
-        public SongItem(File f, String t, String a, String al, String g, String aa) {
+        public SongItem(File f, String t, String a, String al, String g, String aa, int tr) {
             file = f;
             title = t;
             artist = a;
             album = al;
             genre = g != null && g.trim().length() > 0 ? g.trim() : "Unknown Genre";
             albumArtist = aa != null ? aa.trim() : "";
+            trackNumber = tr;
         }
     }
     // 💡 [초고속 엔진] 수천 곡을 버티기 위한 재활용 리스트뷰와 기존 스크롤뷰
@@ -1143,7 +1145,32 @@ public class MainActivity extends Activity {
     private boolean holdBackHintDismissed = false;
     private boolean isShuffleMode = false;
     private int repeatMode = 0; // 0: OFF, 1: ONE (Repeat One), 2: ALL (Repeat Folder/All)
+    private float playbackSpeed = 1.0f;
     private boolean isSoundEffectEnabled = true;
+
+    private void applyPlaybackSpeed() {
+        if (mediaPlayer != null && android.os.Build.VERSION.SDK_INT >= 23) {
+            try {
+                if (mediaPlayer.isPlaying()) {
+                    float speedToApply = playback.isPodcastActive() ? playbackSpeed : 1.0f;
+                    android.media.PlaybackParams params = mediaPlayer.getPlaybackParams();
+                    params.setSpeed(speedToApply);
+                    mediaPlayer.setPlaybackParams(params);
+                }
+            } catch (Exception e) {}
+        }
+    }
+
+    private void cyclePlaybackSpeed() {
+        if (playbackSpeed == 1.0f) playbackSpeed = 1.25f;
+        else if (playbackSpeed == 1.25f) playbackSpeed = 1.5f;
+        else if (playbackSpeed == 1.5f) playbackSpeed = 2.0f;
+        else if (playbackSpeed == 2.0f) playbackSpeed = 0.8f;
+        else playbackSpeed = 1.0f;
+        try { prefs.edit().putFloat("playback_speed", playbackSpeed).apply(); } catch (Exception e) {}
+        applyPlaybackSpeed();
+        Toast.makeText(this, getString(R.string.context_action_playback_speed, String.format(java.util.Locale.US, "%.2f", playbackSpeed)), Toast.LENGTH_SHORT).show();
+    }
     private boolean isVibrationEnabled = true;
     private boolean isPickingBackground = false;
 
@@ -10042,6 +10069,7 @@ public class MainActivity extends Activity {
         if (!playing) {
             try {
                 mediaPlayer.start();
+                applyPlaybackSpeed();
                 updatePlayerUI();
                 syncAvrcpTrackInfo(false);
             } catch (Exception ignored) {}
@@ -15960,6 +15988,15 @@ public class MainActivity extends Activity {
             });
         }
         if (currentScreenState == STATE_PLAYER && hasActiveMediaPlayback()) {
+            if (playback.isPodcastActive()) {
+                addContextAction(getString(R.string.context_action_playback_speed, String.format(java.util.Locale.US, "%.2f", playbackSpeed)), new Runnable() {
+                    @Override
+                    public void run() {
+                        cyclePlaybackSpeed();
+                        dismissThemedContextMenu();
+                    }
+                });
+            }
             addContextAction(getString(R.string.context_action_show_visualizer), null,
                     stateOnOff(isVisualizerShowing), new Runnable() {
                 @Override
@@ -16525,7 +16562,10 @@ public class MainActivity extends Activity {
         try {
             if (mediaPlayer != null) {
                 mediaPlayer.seekTo(0);
-                if (!mediaPlayer.isPlaying()) mediaPlayer.start();
+                if (!mediaPlayer.isPlaying()) {
+                    mediaPlayer.start();
+                    applyPlaybackSpeed();
+                }
                 isPausedByHand = false;
             }
         } catch (Exception ignored) {}
@@ -16539,8 +16579,11 @@ public class MainActivity extends Activity {
     }
 
     private void playCurrentFolderAll() {
+        File targetFolder = browserFocusedFolder();
+        if (targetFolder == null) targetFolder = currentFolder;
+        if (targetFolder == null) return;
         List<File> list = new ArrayList<File>();
-        File[] files = currentFolder.listFiles();
+        File[] files = targetFolder.listFiles();
         if (files != null) {
             for (File f : files) {
                 if (isAudioFile(f)) list.add(f);
@@ -17088,6 +17131,23 @@ public class MainActivity extends Activity {
         if (c != null && c.getTag() instanceof File) {
             File f = (File) c.getTag();
             if (f.isFile() && isAudioFile(f)) return f;
+        }
+        return null;
+    }
+
+    private File browserFocusedFolder() {
+        if (listVirtualSongs != null && listVirtualSongs.getVisibility() == View.VISIBLE
+                && currentBrowserMode == BROWSER_FOLDER && !folderBrowserEntries.isEmpty()) {
+            int pos = listVirtualSongs.getSelectedItemPosition();
+            if (pos >= 0 && pos < folderBrowserEntries.size()) {
+                FolderBrowserEntry e = folderBrowserEntries.get(pos);
+                if (e.kind == FolderBrowserEntry.KIND_FOLDER && e.file != null) return e.file;
+            }
+        }
+        View c = getCurrentFocus();
+        if (c != null && c.getTag() instanceof File) {
+            File f = (File) c.getTag();
+            if (f.isDirectory()) return f;
         }
         return null;
     }
@@ -23008,7 +23068,7 @@ public class MainActivity extends Activity {
 
     private static SongItem songItemFromStoreTrack(MusicLibraryStore.Track t, File f) {
         String genre = t.genre != null && t.genre.trim().length() > 0 ? t.genre.trim() : "Unknown Genre";
-        return new SongItem(f, t.title, t.artist, t.album, genre, t.albumArtist);
+        return new SongItem(f, t.title, t.artist, t.album, genre, t.albumArtist, t.trackNumber);
     }
 
     private void postLibraryCacheHydrated(final int gen) {
@@ -23112,6 +23172,7 @@ public class MainActivity extends Activity {
             String genre;
             String albumArtist;
             String durationMs;
+            int trackNumber = 0;
             if (store.isFresh(f)) {
                 MusicLibraryStore.Track cached = store.get(f.getAbsolutePath());
                 if (cached == null) return null;
@@ -23121,6 +23182,7 @@ public class MainActivity extends Activity {
                 genre = cached.genre;
                 albumArtist = cached.albumArtist;
                 durationMs = cached.durationMs;
+                trackNumber = cached.trackNumber;
             } else {
                 AudioTags.Info tags = AudioTags.read(f, prefs, AudioTags.READ_SKIP_EMBEDDED_ART);
                 title = tags.title;
@@ -23129,14 +23191,15 @@ public class MainActivity extends Activity {
                 genre = tags.genre;
                 albumArtist = tags.albumArtist;
                 durationMs = tags.durationMs;
+                trackNumber = tags.trackNumber;
                 if (artist.isEmpty()) artist = "Unknown Artist";
                 if (album.isEmpty()) album = "Unknown Album";
-                store.upsert(f, title, artist, album, genre, albumArtist, durationMs);
+                store.upsert(f, title, artist, album, genre, albumArtist, durationMs, trackNumber);
             }
             LibraryScanResolved resolved = new LibraryScanResolved();
             resolved.item = songItemFromStoreTrack(
                     new MusicLibraryStore.Track(f.getAbsolutePath(), f.lastModified(), f.length(),
-                            title, artist, album, genre, albumArtist, durationMs),
+                            title, artist, album, genre, albumArtist, durationMs, trackNumber),
                     f);
             resolved.metaKey = (title + "\0" + artist + "\0" + durationMs)
                     .toLowerCase(java.util.Locale.US);
@@ -23233,21 +23296,56 @@ public class MainActivity extends Activity {
         if (currentBrowserMode == BROWSER_VIRTUAL_SONGS) buildVirtualSongs();
     }
 
-    private void sortSongItems(List<SongItem> list) {
+    private static int compareAlphanumeric(String s1, String s2) {
+        int i1 = 0, i2 = 0;
+        while (i1 < s1.length() && i2 < s2.length()) {
+            char c1 = s1.charAt(i1);
+            char c2 = s2.charAt(i2);
+            if (Character.isDigit(c1) && Character.isDigit(c2)) {
+                long n1 = 0, n2 = 0;
+                while (i1 < s1.length() && Character.isDigit(s1.charAt(i1))) {
+                    n1 = n1 * 10 + (s1.charAt(i1) - '0');
+                    i1++;
+                }
+                while (i2 < s2.length() && Character.isDigit(s2.charAt(i2))) {
+                    n2 = n2 * 10 + (s2.charAt(i2) - '0');
+                    i2++;
+                }
+                if (n1 != n2) return Long.compare(n1, n2);
+            } else {
+                int c = Character.toLowerCase(c1) - Character.toLowerCase(c2);
+                if (c != 0) return c;
+                i1++; i2++;
+            }
+        }
+        return s1.length() - s2.length();
+    }
+
+    private void sortSongItems(List<SongItem> list, boolean isAlbumContext) {
+        int sortMode = libraryBrowsePrefs.songSort();
+        if (isAlbumContext && sortMode == LibraryBrowsePrefs.SONG_SORT_TITLE) {
+            sortMode = LibraryBrowsePrefs.SONG_SORT_ALBUM;
+        }
+        final int finalSortMode = sortMode;
         java.util.Collections.sort(list, new java.util.Comparator<SongItem>() {
             @Override
             public int compare(SongItem a, SongItem b) {
-                switch (libraryBrowsePrefs.songSort()) {
+                switch (finalSortMode) {
                     case LibraryBrowsePrefs.SONG_SORT_ARTIST:
                         int c = a.artist.compareToIgnoreCase(b.artist);
-                        return c != 0 ? c : a.title.compareToIgnoreCase(b.title);
+                        if (c != 0) return c;
+                        return compareAlphanumeric(a.file.getName(), b.file.getName());
                     case LibraryBrowsePrefs.SONG_SORT_ALBUM:
                         c = a.album.compareToIgnoreCase(b.album);
-                        return c != 0 ? c : a.title.compareToIgnoreCase(b.title);
+                        if (c != 0) return c;
+                        if (a.trackNumber > 0 && b.trackNumber > 0 && a.trackNumber != b.trackNumber) {
+                            return Integer.compare(a.trackNumber, b.trackNumber);
+                        }
+                        return compareAlphanumeric(a.file.getName(), b.file.getName());
                     case LibraryBrowsePrefs.SONG_SORT_DATE:
                         long da = a.file.lastModified();
                         long db = b.file.lastModified();
-                        return da == db ? a.title.compareToIgnoreCase(b.title) : Long.compare(db, da);
+                        return da == db ? compareAlphanumeric(a.file.getName(), b.file.getName()) : Long.compare(db, da);
                     default:
                         return a.title.compareToIgnoreCase(b.title);
                 }
@@ -24182,7 +24280,7 @@ public class MainActivity extends Activity {
                 if (song.file.isFile()) {
                     MusicLibraryStore.getInstance(getApplicationContext()).upsert(
                             song.file, song.title, song.artist, song.album, song.genre,
-                            song.albumArtist, "");
+                            song.albumArtist, "", song.trackNumber);
                 }
                 invalidateSongPathIndex();
                 if (currentScreenState == STATE_BROWSER && currentBrowserMode == BROWSER_VIRTUAL_SONGS) {
@@ -24254,7 +24352,7 @@ public class MainActivity extends Activity {
         String genre = tags.genre != null && !tags.genre.isEmpty() ? tags.genre : "Unknown Genre";
         if (artist.isEmpty()) artist = "Unknown Artist";
         if (album.isEmpty()) album = "Unknown Album";
-        return new SongItem(f, title, artist, album, genre, tags.albumArtist);
+        return new SongItem(f, title, artist, album, genre, tags.albumArtist, tags.trackNumber);
     }
 
     private boolean isOnSameMusicListing(String type, String value, String artistForAlbum) {
@@ -25057,7 +25155,8 @@ public class MainActivity extends Activity {
                     && AlbumNames.equals(song.album, virtualQueryValue)) match = true;
             if (match) targetSongs.add(song);
         }
-        sortSongItems(targetSongs);
+        boolean isAlbumContext = "ALBUM".equals(virtualQueryType) || "ARTIST_ALBUM".equals(virtualQueryType);
+        sortSongItems(targetSongs, isAlbumContext);
         for (SongItem s : targetSongs) {
             virtualSongList.add(s.file);
             currentScrollIndexList.add(s.title);
@@ -31425,6 +31524,7 @@ public class MainActivity extends Activity {
                         } catch (Exception ignored) {}
                         if (!isPausedByHand) {
                             mp.start();
+                            applyPlaybackSpeed();
                         }
                         syncNowPlayingHomeVisibility();
                         updatePlayerUI();
@@ -31439,6 +31539,7 @@ public class MainActivity extends Activity {
                         if (repeatMode == 1) {
                             mediaPlayer.seekTo(0);
                             mediaPlayer.start();
+                            applyPlaybackSpeed();
                         } else if (repeatMode == 2) {
                             nextTrack();
                         } else {
@@ -31885,6 +31986,7 @@ public class MainActivity extends Activity {
                 flushPodcastResumeIfNeeded();
             } else {
                 mediaPlayer.start();
+                applyPlaybackSpeed();
                 isPausedByHand = false;
                 if (connectedA2dpAddress != null) {
                     routeAudioToBluetoothA2dp();
@@ -32214,6 +32316,7 @@ public class MainActivity extends Activity {
         if (Y1InputKeys.isDiscreteMediaPlay(keyCode)) {
             if (hasActiveMediaPlayback() && mediaPlayer != null && !mediaPlayer.isPlaying()) {
                 mediaPlayer.start();
+                applyPlaybackSpeed();
                 isPausedByHand = false;
                 updatePlayerUI();
             } else {
@@ -33548,6 +33651,7 @@ public class MainActivity extends Activity {
                     if (activity.hasActiveMediaPlayback() && activity.mediaPlayer != null
                             && !activity.mediaPlayer.isPlaying()) {
                         activity.mediaPlayer.start();
+                        activity.applyPlaybackSpeed();
                         activity.isPausedByHand = false;
                         activity.updatePlayerUI();
                     } else {

@@ -21,7 +21,7 @@ import java.util.Set;
  */
 public class MusicLibraryStore extends SQLiteOpenHelper {
     private static final String DB_NAME = "music_library.db";
-    private static final int DB_VERSION = 1;
+    private static final int DB_VERSION = 2;
 
     private static MusicLibraryStore instance;
 
@@ -36,9 +36,10 @@ public class MusicLibraryStore extends SQLiteOpenHelper {
         public final String genre;
         public final String albumArtist;
         public final String durationMs;
+        public final int trackNumber;
 
         Track(String path, long mtime, long size, String title, String artist, String album,
-                String genre, String albumArtist, String durationMs) {
+                String genre, String albumArtist, String durationMs, int trackNumber) {
             this.path = path;
             this.mtime = mtime;
             this.size = size;
@@ -48,6 +49,7 @@ public class MusicLibraryStore extends SQLiteOpenHelper {
             this.genre = genre != null ? genre : "";
             this.albumArtist = albumArtist != null ? albumArtist : "";
             this.durationMs = durationMs != null ? durationMs : "";
+            this.trackNumber = trackNumber;
         }
 
         /** Duration in whole seconds for Soulseek share attributes; 0 when unknown. */
@@ -113,13 +115,16 @@ public class MusicLibraryStore extends SQLiteOpenHelper {
                 + "album TEXT NOT NULL DEFAULT '',"
                 + "genre TEXT NOT NULL DEFAULT '',"
                 + "album_artist TEXT NOT NULL DEFAULT '',"
-                + "duration_ms TEXT NOT NULL DEFAULT '')");
+                + "duration_ms TEXT NOT NULL DEFAULT '',"
+                + "track_number INTEGER NOT NULL DEFAULT 0)");
         db.execSQL("CREATE INDEX idx_tracks_mtime ON tracks(mtime)");
     }
 
     @Override
     public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
-        // ponytail: v1 only — future migrations add columns here.
+        if (oldVersion < 2) {
+            db.execSQL("ALTER TABLE tracks ADD COLUMN track_number INTEGER NOT NULL DEFAULT 0");
+        }
     }
 
     /** All cached tracks (may include files removed from disk until next purge). */
@@ -160,13 +165,13 @@ public class MusicLibraryStore extends SQLiteOpenHelper {
     }
 
     public void upsert(File file, String title, String artist, String album,
-            String genre, String albumArtist, String durationMs) {
+            String genre, String albumArtist, String durationMs, int trackNumber) {
         if (file == null || !file.isFile()) return;
         SQLiteDatabase db = getWritableDatabase();
         SQLiteStatement st = db.compileStatement(
                 "INSERT OR REPLACE INTO tracks"
-                        + " (path,mtime,size,title,artist,album,genre,album_artist,duration_ms)"
-                        + " VALUES (?,?,?,?,?,?,?,?,?)");
+                        + " (path,mtime,size,title,artist,album,genre,album_artist,duration_ms,track_number)"
+                        + " VALUES (?,?,?,?,?,?,?,?,?,?)");
         st.bindString(1, file.getAbsolutePath());
         st.bindLong(2, file.lastModified());
         st.bindLong(3, file.length());
@@ -176,6 +181,7 @@ public class MusicLibraryStore extends SQLiteOpenHelper {
         st.bindString(7, genre != null ? genre : "");
         st.bindString(8, albumArtist != null ? albumArtist : "");
         st.bindString(9, durationMs != null ? durationMs : "");
+        st.bindLong(10, trackNumber);
         st.executeInsert();
     }
 
@@ -244,6 +250,11 @@ public class MusicLibraryStore extends SQLiteOpenHelper {
     }
 
     private static Track rowToTrack(Cursor c) {
+        int trackNumber = 0;
+        int trackNumberIndex = c.getColumnIndex("track_number");
+        if (trackNumberIndex != -1) {
+            trackNumber = c.getInt(trackNumberIndex);
+        }
         return new Track(
                 c.getString(c.getColumnIndex("path")),
                 c.getLong(c.getColumnIndex("mtime")),
@@ -253,6 +264,7 @@ public class MusicLibraryStore extends SQLiteOpenHelper {
                 c.getString(c.getColumnIndex("album")),
                 c.getString(c.getColumnIndex("genre")),
                 c.getString(c.getColumnIndex("album_artist")),
-                c.getString(c.getColumnIndex("duration_ms")));
+                c.getString(c.getColumnIndex("duration_ms")),
+                trackNumber);
     }
 }
