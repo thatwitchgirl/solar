@@ -233,6 +233,7 @@
     <string name="settings_screen_timeout">Screen Timeout</string>
     <string name="settings_full_width_menus">Full Width Menus</string>
     <string name="settings_power_off">Power Off (Shutdown)</string>
+    <string name="settings_power_saving_shutdown">Auto Shutdown (30 Min)</string>
     <string name="settings_web_server">Wi‑Fi Transfer</string>
     <string name="settings_wifi_setup">Wi-Fi Setup</string>
     <string name="settings_reach">Reach</string>
@@ -253,6 +254,8 @@
     <string name="settings_background">Background source</string>
     <string name="settings_usb_auto_connect">Automatic USB Connection</string>
     <string name="settings_preview_usb_auto_connect">Skip connection dialogs. Useful for connecting to car stereos via USB automatically.</string>
+    <string name="settings_usb_turn_on">Turn on USB Mode</string>
+    <string name="settings_preview_usb_turn_on">Enable USB storage mode manually. Use this when you dismissed the USB connection prompt.</string>
     <string name="settings_background_source">Background Image Source</string>
     <string name="settings_player_album_blur">Blurred album artwork</string>
     <string name="bg_section_theme_wallpapers">Theme wallpapers (480×360)</string>

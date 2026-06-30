@@ -25,7 +25,9 @@ public final class RowKeys {
     public static final String SCREEN_TIMEOUT = "settings.screen_timeout";
     public static final String FULL_WIDTH = "settings.full_width";
     public static final String POWER_OFF = "settings.power_off";
+    public static final String POWER_SAVING_SHUTDOWN = "settings.power_saving_shutdown";
     public static final String USB_AUTO_CONNECT = "settings.usb_auto_connect";
+    public static final String USB_TURN_ON = "settings.usb_turn_on";
     public static final String SWITCH_ROCKBOX = "settings.switch_rockbox";
     public static final String WEB_SERVER = "settings.web_server";
     public static final String WIFI_SETUP = "settings.wifi_setup";
@@ -139,7 +141,9 @@ public final class RowKeys {
         if (SCREEN_TIMEOUT.equals(rowKey)) return R.string.settings_screen_timeout;
         if (FULL_WIDTH.equals(rowKey)) return R.string.settings_full_width_menus;
         if (POWER_OFF.equals(rowKey)) return R.string.settings_power_off;
+        if (POWER_SAVING_SHUTDOWN.equals(rowKey)) return R.string.settings_power_saving_shutdown;
         if (USB_AUTO_CONNECT.equals(rowKey)) return R.string.settings_usb_auto_connect;
+        if (USB_TURN_ON.equals(rowKey)) return R.string.settings_usb_turn_on;
         if (SWITCH_ROCKBOX.equals(rowKey)) return R.string.settings_switch_rockbox;
         if (WEB_SERVER.equals(rowKey)) return R.string.settings_web_server;
         if (WIFI_SETUP.equals(rowKey)) return R.string.settings_wifi_setup;

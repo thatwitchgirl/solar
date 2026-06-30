@@ -167,7 +167,8 @@ public class MusicLibraryStore extends SQLiteOpenHelper {
         if (file == null || !file.isFile()) return false;
         Track t = get(file.getAbsolutePath());
         if (t == null) return false;
-        if (t.trackNumber == 0) return false; // force re-read to populate track number
+        // force re-read to populate track number (0 = from v1 DB), but allow -1 (tried and failed)
+        if (t.trackNumber == 0) return false;
         return t.mtime == file.lastModified() && t.size == file.length();
     }
 

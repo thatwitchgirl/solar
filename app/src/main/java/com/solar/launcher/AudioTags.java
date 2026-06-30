@@ -22,7 +22,7 @@ public final class AudioTags {
         public String album = "";
         public String albumArtist = "";
         public String genre = "";
-        public int trackNumber = 0;
+        public int trackNumber = -1;
         public String durationMs = "";
         public byte[] embeddedArt;
         /** Debug: id3 | prefs | filename | albumArtist */
@@ -60,8 +60,14 @@ public final class AudioTags {
                     if (trackNumStr.contains("/")) {
                         trackNumStr = trackNumStr.split("/")[0];
                     }
-                    info.trackNumber = Integer.parseInt(trackNumStr.trim());
+                    int rawTrack = Integer.parseInt(trackNumStr.trim());
+                    // Handle disc + track encoding (e.g. 1001 -> disc 1, track 1)
+                    if (rawTrack > 1000) rawTrack = rawTrack % 1000;
+                    info.trackNumber = rawTrack;
                 } catch (NumberFormatException ignored) {}
+            }
+            if (info.trackNumber <= 0) {
+                info.trackNumber = parseTrackNumberFromFileName(file.getName());
             }
             
             if (Build.VERSION.SDK_INT >= 19) {
@@ -165,6 +171,19 @@ public final class AudioTags {
         if (fileName == null) return "";
         int dot = fileName.lastIndexOf('.');
         return dot > 0 ? fileName.substring(0, dot) : fileName;
+    }
+
+    static int parseTrackNumberFromFileName(String fileName) {
+        if (fileName == null) return -1;
+        // Try to match leading digits: "01 - Track.mp3", "1. Title", "01 Title"
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("^([0-9]+)[\\s._-]+").matcher(fileName.trim());
+        if (m.find()) {
+            try {
+                int track = Integer.parseInt(m.group(1));
+                return track > 0 ? track : -1;
+            } catch (NumberFormatException ignored) {}
+        }
+        return -1;
     }
 
     static boolean isUnknownArtist(String s) {
