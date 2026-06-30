@@ -23,8 +23,6 @@ channel = meta.get("channel", "stable")
 sha = meta.get("short_sha", "")
 
 label = "nightly" if channel == "nightly" else "main"
-print(f"# Solar {version} ({sha}) — {label}")
-print()
 print("> **Solar** is a custom firmware and launcher for the [Innioasis Y1](https://github.com/y1-community/InnioasisY1Themes) — a full interface replacement with podcast downloads, a global quick menu, **Reach** (Deezer + Soulseek), Y1 theme support, and **Rockbox-Y1** on the same ROM (switch without reboot).")
 print()
 print("### Features")
