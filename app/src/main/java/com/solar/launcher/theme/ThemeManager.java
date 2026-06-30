@@ -537,6 +537,30 @@ public class ThemeManager {
         if (cur.folderPath != null && cur.folderPath.startsWith("asset://")) return;
         File cfg = new File(cur.folderPath, "config.json");
         if (!cfg.isFile() || cfg.length() == 0) {
+            // ponytail: SD card may be unmounted (USB storage mode). Try internal cache
+            // before falling back to the builtin default theme.
+            if (ctx != null && cur.folderName != null) {
+                File cachedDir = new File(ctx.getFilesDir(), "Themes/" + cur.folderName);
+                File cachedCfg = new File(cachedDir, "config.json");
+                if (cachedCfg.isFile() && cachedCfg.length() > 0) {
+                    // Switch to cached copy — same theme, internal storage path
+                    try {
+                        byte[] data = readAll(cachedCfg);
+                        JSONObject json = new JSONObject(new String(data, "UTF-8"));
+                        ThemeEntry cached = new ThemeEntry(
+                                cachedDir.getAbsolutePath(), cur.folderName, cur.name, json);
+                        // Replace in available list or add it
+                        int idx = currentThemeIndex;
+                        if (idx >= 0 && idx < availableThemes.size()) {
+                            availableThemes.set(idx, cached);
+                        } else {
+                            availableThemes.add(cached);
+                            currentThemeIndex = availableThemes.size() - 1;
+                        }
+                        return;
+                    } catch (Exception ignored) {}
+                }
+            }
             resetToBuiltinDefault();
         }
     }

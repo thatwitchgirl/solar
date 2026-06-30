@@ -6,6 +6,7 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.os.BatteryManager;
 import android.os.Handler;
 import android.os.Looper;
 
@@ -16,19 +17,22 @@ import org.json.JSONObject;
  *
  * ponytail: approach history:
  *  - ACTION_CLOSE_SYSTEM_DIALOGS → crashed SystemUI on API 17
- *  - HOME key injection → launched Rockbox (also a launcher)
- *  - startActivity REORDER_TO_FRONT → no effect across different tasks
  *  - pm disable component → SystemUI crash loop (system retries endlessly)
+ *  - moveTaskToFront at staggered intervals → too slow, dialog flashes
  *
- * Current approach: moveTaskToFront() — a system-level API that moves Solar's
- * entire task above the system's UsbStorageActivity. Works across tasks, doesn't
- * crash anything, and Solar is a system app so it has REORDER_TASKS permission.
- * Fired at staggered intervals to catch the system dialog regardless of when it appears.
+ * Current approach: rapid focus polling while charging.
+ * Polls hasWindowFocus every 50ms while the device is charging. When Solar loses
+ * focus (system USB dialog appeared), immediately fires moveTaskToFront + HOME key.
+ * Polling stops when the device is unplugged (no USB dialog possible anyway).
+ * This catches the system dialog within 50ms — effectively invisible.
  */
 public final class Y1UsbFocusHelper {
 
     private static final String ACTION_USB_STATE = "android.hardware.usb.action.USB_STATE";
     private static final String EXTRA_USB_CONNECTED = "connected";
+
+    /** How often to check focus while charging (ms). */
+    private static final int POLL_INTERVAL_MS = 50;
 
     public interface UsbListener {
         void onUsbStateChanged(boolean connected);
@@ -36,10 +40,14 @@ public final class Y1UsbFocusHelper {
 
     private final Activity activity;
     private final Handler handler = new Handler(Looper.getMainLooper());
-    private BroadcastReceiver receiver;
-    private boolean registered;
+    private BroadcastReceiver usbReceiver;
+    private BroadcastReceiver chargingReceiver;
+    private boolean usbRegistered;
+    private boolean chargingRegistered;
     private final UsbListener listener;
     private boolean usbConnected = false;
+    private volatile boolean charging = false;
+    private boolean polling = false;
 
     public Y1UsbFocusHelper(Activity activity, UsbListener listener) {
         this.activity = activity;
@@ -50,30 +58,30 @@ public final class Y1UsbFocusHelper {
         handler.post(new Runnable() {
             @Override
             public void run() {
-                if (usbConnected) {
-                    try {
-                        activity.getWindow().getDecorView().requestFocus();
-                    } catch (Exception ignored) {}
-                }
                 registerIfNeeded();
+                registerChargingIfNeeded();
+                updatePolling();
             }
         });
     }
 
     public void onDestroy() {
-        if (registered && receiver != null) {
-            try {
-                activity.unregisterReceiver(receiver);
-            } catch (Exception ignored) {}
-            registered = false;
+        stopPolling();
+        if (usbRegistered && usbReceiver != null) {
+            try { activity.unregisterReceiver(usbReceiver); } catch (Exception ignored) {}
+            usbRegistered = false;
+        }
+        if (chargingRegistered && chargingReceiver != null) {
+            try { activity.unregisterReceiver(chargingReceiver); } catch (Exception ignored) {}
+            chargingRegistered = false;
         }
     }
 
     private Boolean lastConnectedState = null;
 
     private void registerIfNeeded() {
-        if (registered) return;
-        receiver = new BroadcastReceiver() {
+        if (usbRegistered) return;
+        usbReceiver = new BroadcastReceiver() {
             @Override
             public void onReceive(Context context, Intent intent) {
                 if (intent == null || !ACTION_USB_STATE.equals(intent.getAction())) return;
@@ -82,36 +90,95 @@ public final class Y1UsbFocusHelper {
                 lastConnectedState = connected;
                 usbConnected = connected;
                 if (connected) {
-                    // ponytail: fire BOTH moveTaskToFront + HOME key at staggered intervals.
-                    // Immediate (0ms) preempts the system dialog before it appears.
-                    // Later intervals catch it if it slips through.
-                    // HOME key is safe — Rockbox is disabled on startup, Solar is the only launcher.
+                    // Immediate preemptive strike — fire before the system dialog appears
                     bringToFront("usbState-immediate");
-                    final int[] delays = {200, 500, 1000};
-                    for (final int delay : delays) {
+                    if (listener != null) {
                         handler.postDelayed(new Runnable() {
                             @Override
                             public void run() {
-                                if (!activity.hasWindowFocus() && usbConnected) {
-                                    bringToFront("usbState-" + delay);
-                                }
+                                listener.onUsbStateChanged(true);
                             }
-                        }, delay);
+                        }, 200);
                     }
-                    // Notify listener after last attempt
-                    handler.postDelayed(new Runnable() {
-                        @Override
-                        public void run() {
-                            if (listener != null) listener.onUsbStateChanged(true);
-                        }
-                    }, delays[delays.length - 1] + 100);
                 } else {
                     if (listener != null) listener.onUsbStateChanged(false);
                 }
+                // #region agent log
+                try {
+                    JSONObject d = new JSONObject();
+                    d.put("connected", connected);
+                    DebugAgentLog.log(activity, "Y1UsbFocusHelper.onUsbState",
+                            "USB state changed", "H-USB-STATE", d);
+                } catch (Exception ignored) {}
+                // #endregion
             }
         };
-        activity.registerReceiver(receiver, new IntentFilter(ACTION_USB_STATE));
-        registered = true;
+        activity.registerReceiver(usbReceiver, new IntentFilter(ACTION_USB_STATE));
+        usbRegistered = true;
+    }
+
+    private void registerChargingIfNeeded() {
+        if (chargingRegistered) return;
+        // Read initial charging state
+        IntentFilter ifilter = new IntentFilter(Intent.ACTION_BATTERY_CHANGED);
+        Intent batteryStatus = activity.registerReceiver(null, ifilter);
+        if (batteryStatus != null) {
+            int status = batteryStatus.getIntExtra(BatteryManager.EXTRA_STATUS, -1);
+            charging = status == BatteryManager.BATTERY_STATUS_CHARGING
+                    || status == BatteryManager.BATTERY_STATUS_FULL;
+        }
+        // Listen for plug/unplug
+        chargingReceiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                if (intent == null) return;
+                String action = intent.getAction();
+                if (Intent.ACTION_POWER_CONNECTED.equals(action)) {
+                    charging = true;
+                    updatePolling();
+                } else if (Intent.ACTION_POWER_DISCONNECTED.equals(action)) {
+                    charging = false;
+                    updatePolling();
+                }
+            }
+        };
+        IntentFilter cf = new IntentFilter();
+        cf.addAction(Intent.ACTION_POWER_CONNECTED);
+        cf.addAction(Intent.ACTION_POWER_DISCONNECTED);
+        activity.registerReceiver(chargingReceiver, cf);
+        chargingRegistered = true;
+    }
+
+    // --- Focus polling ---
+
+    private final Runnable pollRunnable = new Runnable() {
+        @Override
+        public void run() {
+            if (!polling || !charging) return;
+            if (!activity.hasWindowFocus()) {
+                bringToFront("poll");
+            }
+            handler.postDelayed(this, POLL_INTERVAL_MS);
+        }
+    };
+
+    private void updatePolling() {
+        if (charging && !polling) {
+            startPolling();
+        } else if (!charging && polling) {
+            stopPolling();
+        }
+    }
+
+    private void startPolling() {
+        if (polling) return;
+        polling = true;
+        handler.post(pollRunnable);
+    }
+
+    private void stopPolling() {
+        polling = false;
+        handler.removeCallbacks(pollRunnable);
     }
 
     /** Returns true if USB cable is currently connected. */
@@ -120,9 +187,9 @@ public final class Y1UsbFocusHelper {
     }
 
     /**
-     * Bring Solar to front using BOTH mechanisms simultaneously:
-     * 1. moveTaskToFront() — system API, moves Solar's task above UsbStorageActivity
-     * 2. HOME key — system-level, always brings the default launcher to front
+     * Bring Solar to front using both mechanisms simultaneously:
+     * 1. moveTaskToFront() — instant system API, moves Solar's task above UsbStorageActivity
+     * 2. HOME key via root — low-level ActivityManager dispatch
      *
      * Rockbox is disabled on startup so HOME always resolves to Solar.
      */
@@ -155,9 +222,8 @@ public final class Y1UsbFocusHelper {
             JSONObject d = new JSONObject();
             d.put("reason", reason);
             d.put("hasWindowFocus", activity.hasWindowFocus());
-            d.put("taskId", activity.getTaskId());
             DebugAgentLog.log(activity, "Y1UsbFocusHelper.bringToFront",
-                    "usb focus reclaim (moveTaskToFront+HOME)", "H-USB-FOCUS", d);
+                    "usb focus reclaim", "H-USB-FOCUS", d);
         } catch (Exception ignored) {}
         // #endregion
     }
