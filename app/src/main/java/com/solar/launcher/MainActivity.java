@@ -14081,15 +14081,13 @@ public class MainActivity extends Activity {
     private void openPlaybackQueueInContextMenu() {
         // #region agent log
         try {
-            JSONObject d = new JSONObject();
+            org.json.JSONObject d = new org.json.JSONObject();
             d.put("memSize", playback.unifiedQueue().size());
-            d.put("persisted", PlayQueueStore.persistedItemCount(getApplicationContext()));
-            d.put("missingPaths", PlayQueueStore.countMissingPaths(getApplicationContext()));
             d.put("scanning", isCustomScanning);
             QueueDebugLog.log("MainActivity.openPlaybackQueueInContextMenu", "open requested", "H1-H2", d);
         } catch (Exception ignored) {}
         // #endregion
-        ensurePlaybackQueueSyncedFromStore();
+        ensurePlaybackQueueSyncedFromStoreSync();
         if (!playback.hasAnyQueue()) {
             Toast.makeText(this, getString(R.string.library_queue_empty), Toast.LENGTH_SHORT).show();
             return;
@@ -14106,8 +14104,7 @@ public class MainActivity extends Activity {
         pushContextQueueTier();
     }
 
-    /** Reload persisted queue when memory is empty or disk has more items (SD mount after restart). */
-    private void ensurePlaybackQueueSyncedFromStore() {
+    private void ensurePlaybackQueueSyncedFromStoreSync() {
         PlayQueue fromDisk = new PlayQueue();
         if (!PlayQueueStore.restore(getApplicationContext(), fromDisk) || fromDisk.isEmpty()) return;
         int memSize = playback.unifiedQueue().size();
@@ -14115,15 +14112,48 @@ public class MainActivity extends Activity {
             playback.restoreQueueState(fromDisk.items(), fromDisk.index());
             syncNowPlayingHomeVisibility();
             refreshRestoredQueuePreview();
-            // #region agent log
-            try {
-                JSONObject d = new JSONObject();
-                d.put("fromDisk", fromDisk.size());
-                d.put("wasMem", memSize);
-                QueueDebugLog.log("MainActivity.ensurePlaybackQueueSyncedFromStore", "restored from store", "H1", d);
-            } catch (Exception ignored) {}
-            // #endregion
         }
+    }
+
+    /** Reload persisted queue when memory is empty or disk has more items (SD mount after restart). */
+    private void ensurePlaybackQueueSyncedFromStoreAsync() {
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                final PlayQueue fromDisk = new PlayQueue();
+                final boolean hasDisk = PlayQueueStore.restore(getApplicationContext(), fromDisk);
+                final int missing = PlayQueueStore.countMissingPaths(getApplicationContext());
+
+                runOnUiThreadSafe(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (hasDisk && !fromDisk.isEmpty()) {
+                            int memSize = playback.unifiedQueue().size();
+                            if (!playback.hasAnyQueue() || fromDisk.size() > memSize) {
+                                playback.restoreQueueState(fromDisk.items(), fromDisk.index());
+                                syncNowPlayingHomeVisibility();
+                                refreshRestoredQueuePreview();
+                                // #region agent log
+                                try {
+                                    org.json.JSONObject d = new org.json.JSONObject();
+                                    d.put("fromDisk", fromDisk.size());
+                                    d.put("wasMem", memSize);
+                                    QueueDebugLog.log("MainActivity.ensurePlaybackQueueSyncedFromStore", "restored from store", "H1", d);
+                                } catch (Exception ignored) {}
+                                // #endregion
+                            }
+                        }
+                        if (missing > 0) {
+                            scheduleStartupMountRetry();
+                        }
+                        if (connectedA2dpAddress != null && avrcpTrackInfoWriter != null) {
+                            avrcpTrackInfoWriter.ensureReady();
+                            kickY1BridgeMediaService();
+                        }
+                    }
+                });
+            }
+        }).start();
     }
 
     private void pushContextQueueTier() {
@@ -33564,14 +33594,7 @@ public class MainActivity extends Activity {
         super.onResume();
         if (usbFocusHelper != null) usbFocusHelper.onResume();
         try {
-            ensurePlaybackQueueSyncedFromStore();
-            if (PlayQueueStore.countMissingPaths(getApplicationContext()) > 0) {
-                scheduleStartupMountRetry();
-            }
-            if (connectedA2dpAddress != null && avrcpTrackInfoWriter != null) {
-                avrcpTrackInfoWriter.ensureReady();
-                kickY1BridgeMediaService();
-            }
+            ensurePlaybackQueueSyncedFromStoreAsync();
         } catch (Exception ignored) {}
         if (!launchExtrasHandled) {
             launchExtrasHandled = true;
