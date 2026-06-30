@@ -419,6 +419,22 @@ public class MainActivity extends Activity {
     private List<DeezerResult> deezerBatchTransfer = null;
     private int deezerBatchTransferIndex = -1;
     private int deezerBatchTransferAction = 0;
+
+    // --- Inactivity auto-shutdown ---
+    /** 30 minutes in milliseconds. */
+    private static final long INACTIVITY_SHUTDOWN_MS = 30 * 60 * 1000L;
+    /** How often to check for inactivity (60 seconds). */
+    private static final long INACTIVITY_CHECK_INTERVAL_MS = 60 * 1000L;
+    /** Timestamp of last user interaction (key press, touch). */
+    private volatile long lastUserInteractionMs = System.currentTimeMillis();
+    private final Handler inactivityHandler = new Handler(android.os.Looper.getMainLooper());
+    private final Runnable inactivityCheckRunnable = new Runnable() {
+        @Override
+        public void run() {
+            checkInactivityShutdown();
+            inactivityHandler.postDelayed(this, INACTIVITY_CHECK_INTERVAL_MS);
+        }
+    };
     private static final int PODCAST_UI_SEARCH = 0;
     private static final int PODCAST_UI_SHOWS = 1;
     private static final int PODCAST_UI_EPISODES = 2;
@@ -1732,33 +1748,35 @@ public class MainActivity extends Activity {
         usbFocusHelper = new Y1UsbFocusHelper(this, new Y1UsbFocusHelper.UsbListener() {
             private long lastUsbEventTime = 0;
             private boolean lastHandledState = false;
+            /** Only show USB dialog once per host connection — reset on disconnect. */
+            private boolean usbDialogShownThisConnection = false;
 
             @Override
             public void onUsbStateChanged(boolean connected) {
+                android.util.Log.d("UsbFocus", "MainActivity.onUsbStateChanged(" + connected + ") called. lastHandledState=" + lastHandledState);
                 if (connected == lastHandledState) return;
-                long now = System.currentTimeMillis();
-                if (now - lastUsbEventTime < 1000) return; // Ignore rapid flapping under 1 second
-                lastUsbEventTime = now;
                 lastHandledState = connected;
 
                 if (connected) {
+                    android.util.Log.d("UsbFocus", "MainActivity: connected is true. usbFocusHelper.isHostConnected()=" + (usbFocusHelper != null ? usbFocusHelper.isHostConnected() : "null"));
+                    // Only show dialog for USB host connections (PC), not charger-only
+                    if (usbFocusHelper != null && !usbFocusHelper.isHostConnected()) return;
+                    android.util.Log.d("UsbFocus", "MainActivity: host connected. usbDialogShownThisConnection=" + usbDialogShownThisConnection);
+                    // Only show once per connection
+                    if (usbDialogShownThisConnection) return;
+                    usbDialogShownThisConnection = true;
+
                     if (prefs != null && prefs.getBoolean("usb_auto_connect", false) && !prefs.getBoolean("usb_manual_disable", false)) {
+                        android.util.Log.d("UsbFocus", "MainActivity: auto connect enabled");
                         enableUsbMassStorageFromRoot();
                         if (usbFocusHelper != null) usbFocusHelper.pausePolling();
                     } else {
+                        android.util.Log.d("UsbFocus", "MainActivity: calling showUsbMassStorageDialog");
                         showUsbMassStorageDialog();
                     }
-                    
-                    if (!hasWindowFocus()) {
-                        // ponytail: bring launcher to front — Y1UsbFocusHelper already handles
-                        // dismissing the system dialog via ACTION_CLOSE_SYSTEM_DIALOGS.
-                        // Removed root BACK key injection (input keyevent 4) which was racing
-                        // with the dialog dismiss and crashing SystemUI.
-                        Intent bringToFront = new Intent(MainActivity.this, MainActivity.class);
-                        bringToFront.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
-                        startActivity(bringToFront);
-                    }
                 } else {
+                    android.util.Log.d("UsbFocus", "MainActivity: disconnected");
+                    usbDialogShownThisConnection = false;
                     if (prefs != null) {
                         prefs.edit().remove("usb_manual_disable").apply();
                     }
@@ -1783,6 +1801,8 @@ public class MainActivity extends Activity {
         flp.gravity = android.view.Gravity.CENTER_VERTICAL | android.view.Gravity.RIGHT; // 오른쪽 가운데 정렬
         flp.rightMargin = (int)(30 * getResources().getDisplayMetrics().density); // 오른쪽에서 30dp 띄움
         root.addView(tvFastScrollLetter, flp);
+
+        startInactivityMonitor();
 
         audioManager = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
         // 🚀 [시스템 공식 등록] 화면이 꺼져도 버튼 신호를 받을 수 있도록 수신기를 장착합니다!
@@ -7704,6 +7724,7 @@ public class MainActivity extends Activity {
 
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
+        resetInactivityTimer();
         // ponytail: Y1 wheel OK is often KEYCODE_MEDIA_PLAY_PAUSE — treat as center while context menu is open
         if (themedContextMenu != null && themedContextMenu.isShowing()
                 && isCenterKey(event.getKeyCode())) {
@@ -11318,6 +11339,7 @@ public class MainActivity extends Activity {
         if (RowKeys.LANG_SYSTEM.equals(rowKey)) return "";
         if (RowKeys.LANG_EN.equals(rowKey) || RowKeys.LANG_KO.equals(rowKey)) return "";
         if (RowKeys.USB_AUTO_CONNECT.equals(rowKey)) return stateOnOff(prefs.getBoolean("usb_auto_connect", false));
+        if (RowKeys.USB_TURN_ON.equals(rowKey)) return "";
         if (RowKeys.STATUS_BAR_MATCH_FONT.equals(rowKey)) return stateOnOff(statusBarMatchFont);
         if (RowKeys.NOW_PLAYING_MATCH_FONT.equals(rowKey)) return stateOnOff(nowPlayingMatchFont);
         if (RowKeys.NOW_PLAYING_BACKDROP.equals(rowKey)) return stateOnOff(nowPlayingBackdrop);
@@ -11771,6 +11793,9 @@ public class MainActivity extends Activity {
         }
         if (RowKeys.USB_AUTO_CONNECT.equals(rowKey)) {
             stateText = getString(R.string.settings_preview_usb_auto_connect) + "\n\n" + (stateText != null ? stateText : "");
+        }
+        if (RowKeys.USB_TURN_ON.equals(rowKey)) {
+            stateText = getString(R.string.settings_preview_usb_turn_on);
         }
         boolean verticalMarquee = SettingsScreens.isSoulseek(settingsSubScreenKey);
         if (tvSettingsPreviewState != null) {
@@ -12453,6 +12478,73 @@ public class MainActivity extends Activity {
                     }
                 },
                 null);
+    }
+
+    // --- Inactivity auto-shutdown ---
+
+    /** Reset the inactivity timer — call on any user interaction. */
+    private void resetInactivityTimer() {
+        lastUserInteractionMs = System.currentTimeMillis();
+    }
+
+    /** Start the periodic inactivity check loop. */
+    private void startInactivityMonitor() {
+        inactivityHandler.removeCallbacks(inactivityCheckRunnable);
+        resetInactivityTimer();
+        inactivityHandler.postDelayed(inactivityCheckRunnable, INACTIVITY_CHECK_INTERVAL_MS);
+    }
+
+    /** Stop the inactivity monitor (e.g. on destroy). */
+    private void stopInactivityMonitor() {
+        inactivityHandler.removeCallbacks(inactivityCheckRunnable);
+    }
+
+    /**
+     * Called every 60 seconds. If the device has been idle for 30 minutes
+     * and no media is playing, disable Wi-Fi and power off.
+     */
+    private void checkInactivityShutdown() {
+        // Check if feature is enabled (default: true)
+        if (prefs != null && !prefs.getBoolean("power_saving_shutdown", true)) return;
+
+        // Don't shut down if media is playing
+        boolean playing = false;
+        try { playing = mediaPlayer != null && mediaPlayer.isPlaying(); } catch (Exception ignored) {}
+        if (playing) {
+            // Media is playing — reset timer so shutdown won't happen immediately after playback stops
+            resetInactivityTimer();
+            return;
+        }
+
+        // Don't shut down if USB storage mode is active
+        if (currentScreenState == STATE_USB_STORAGE) return;
+
+        long idleMs = System.currentTimeMillis() - lastUserInteractionMs;
+        if (idleMs >= INACTIVITY_SHUTDOWN_MS) {
+            performInactivityShutdown();
+        }
+    }
+
+    /** Disable Wi-Fi and power off the device. */
+    private void performInactivityShutdown() {
+        // Disable Wi-Fi first
+        try {
+            android.net.wifi.WifiManager wm =
+                    (android.net.wifi.WifiManager) getSystemService(Context.WIFI_SERVICE);
+            if (wm != null && wm.isWifiEnabled()) {
+                wm.setWifiEnabled(false);
+            }
+        } catch (Exception ignored) {}
+
+        // Brief delay then power off
+        inactivityHandler.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    Runtime.getRuntime().exec(new String[]{"su", "-c", "reboot -p"});
+                } catch (Exception ignored) {}
+            }
+        }, 1000);
     }
 
     /** Power quick chip — shut down or switch to Rockbox without leaving the context modal first. */
@@ -14861,10 +14953,12 @@ public class MainActivity extends Activity {
             buildVirtualCategories("ARTIST");
         } else if (currentBrowserMode == BROWSER_ARTIST_ALBUMS) {
             buildArtistAlbums();
-        } else if (currentBrowserMode == BROWSER_VIRTUAL_SONGS && "ARTIST".equals(virtualQueryType)) {
+        } else if (currentBrowserMode == BROWSER_VIRTUAL_SONGS) {
             buildVirtualSongs();
         } else if (currentBrowserMode == BROWSER_ALBUMS) {
             buildVirtualCategories("ALBUM");
+        } else if (currentBrowserMode == BROWSER_GENRES) {
+            buildVirtualCategories("GENRE");
         }
     }
 
@@ -14872,6 +14966,19 @@ public class MainActivity extends Activity {
         if (currentScreenState != STATE_BROWSER) return false;
         if (currentBrowserMode == BROWSER_ARTISTS || currentBrowserMode == BROWSER_ARTIST_ALBUMS) return true;
         return currentBrowserMode == BROWSER_VIRTUAL_SONGS && "ARTIST".equals(virtualQueryType);
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (!hasFocus && currentScreenState == STATE_USB_STORAGE) {
+            // We lost focus while in USB storage mode!
+            // It's probably the system UI trying to show the USB dialog.
+            // Steal focus back immediately!
+            if (usbFocusHelper != null) {
+                usbFocusHelper.bringToFrontLightPublic();
+            }
+        }
     }
 
     private void clearArtistOwnAlbumCache() {
@@ -15833,10 +15940,14 @@ public class MainActivity extends Activity {
             }
         });
 
-        if (!themedContextMenu.isShowing()) showThemedContextMenu();
+        if (!themedContextMenu.isShowing()) {
+            android.util.Log.d("UsbFocus", "themedContextMenu is not showing, calling showThemedContextMenu");
+            showThemedContextMenu();
+        }
         contextMenuTierStack.clear();
         contextMenuTierStack.addLast(CONTEXT_NAV_ROOT);
         pushContextMenuTier("usb_storage");
+        android.util.Log.d("UsbFocus", "Calling showContextMenuTierInPlace");
         showContextMenuTierInPlace(getString(R.string.usb_mass_storage_title), labels, states, headers, actions, true);
     }
 
@@ -15937,6 +16048,27 @@ public class MainActivity extends Activity {
         contextMenuHeaders.clear();
         contextMenuActions.clear();
         contextMenuKeepOpen.clear();
+
+        String tier = contextMenuTopTier();
+        if ("usb_storage".equals(tier)) {
+            addContextAction(getString(R.string.usb_mass_storage_title), null, null, null, true);
+            addContextAction(getString(R.string.usb_mass_storage_turn_on), new Runnable() {
+                @Override
+                public void run() {
+                    dismissThemedContextMenu();
+                    if (usbFocusHelper != null) usbFocusHelper.pausePolling();
+                    enableUsbMassStorageFromRoot();
+                }
+            });
+            addContextAction(getString(R.string.soulseek_pm_dismiss), new Runnable() {
+                @Override
+                public void run() {
+                    dismissThemedContextMenu();
+                }
+            });
+            return;
+        }
+
         if (currentScreenState == STATE_MENU) {
             addContextAction(getString(R.string.context_action_edit_home), new Runnable() {
                 @Override
@@ -18294,6 +18426,19 @@ public class MainActivity extends Activity {
             }
         });
         containerSettingsItems.addView(btnPowerOff);
+
+        LinearLayout btnPowerSaving = createSettingsRow(RowKeys.POWER_SAVING_SHUTDOWN, R.string.settings_power_saving_shutdown, false);
+        btnPowerSaving.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                clickFeedback();
+                boolean currentState = prefs.getBoolean("power_saving_shutdown", true);
+                prefs.edit().putBoolean("power_saving_shutdown", !currentState).commit();
+                refreshSettingsPreview(RowKeys.POWER_SAVING_SHUTDOWN);
+            }
+        });
+        containerSettingsItems.addView(btnPowerSaving);
+
         if (LauncherSwitch.isRockboxAvailable(this) && LauncherSwitch.isSwitchScriptAvailable()) {
             LinearLayout btnRockbox = createSettingsRow(RowKeys.SWITCH_ROCKBOX, R.string.settings_switch_rockbox, true);
             btnRockbox.setOnClickListener(new View.OnClickListener() {
@@ -18316,6 +18461,17 @@ public class MainActivity extends Activity {
             }
         });
         containerSettingsItems.addView(btnUsbAutoConnect);
+
+        LinearLayout btnUsbTurnOn = createSettingsRow(RowKeys.USB_TURN_ON, R.string.settings_usb_turn_on, false);
+        btnUsbTurnOn.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                clickFeedback();
+                enableUsbMassStorageFromRoot();
+                if (usbFocusHelper != null) usbFocusHelper.pausePolling();
+            }
+        });
+        containerSettingsItems.addView(btnUsbTurnOn);
 
         LinearLayout btnServerMenu = createSettingsRow(RowKeys.WEB_SERVER, R.string.settings_web_server, true);
         btnServerMenu.setOnClickListener(new View.OnClickListener() {
@@ -33447,6 +33603,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         if (usbFocusHelper != null) usbFocusHelper.onDestroy();
+        stopInactivityMonitor();
         if (mediaSuite != null) mediaSuite.release();
         stopSettingsPreviewVerticalMarquee();
         try {
