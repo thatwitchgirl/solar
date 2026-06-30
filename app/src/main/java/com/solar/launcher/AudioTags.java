@@ -22,6 +22,7 @@ public final class AudioTags {
         public String album = "";
         public String albumArtist = "";
         public String genre = "";
+        public int trackNumber = 0;
         public String durationMs = "";
         public byte[] embeddedArt;
         /** Debug: id3 | prefs | filename | albumArtist */
@@ -51,6 +52,18 @@ public final class AudioTags {
             info.album = safe(mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM));
             info.genre = safe(mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_GENRE));
             info.durationMs = safe(mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION));
+            
+            String trackNumStr = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CD_TRACK_NUMBER);
+            if (trackNumStr != null && !trackNumStr.isEmpty()) {
+                try {
+                    // Track number can be "1", "1/12", "01"
+                    if (trackNumStr.contains("/")) {
+                        trackNumStr = trackNumStr.split("/")[0];
+                    }
+                    info.trackNumber = Integer.parseInt(trackNumStr.trim());
+                } catch (NumberFormatException ignored) {}
+            }
+            
             if (Build.VERSION.SDK_INT >= 19) {
                 info.albumArtist = safe(mmr.extractMetadata(
                         MediaMetadataRetriever.METADATA_KEY_ALBUMARTIST));

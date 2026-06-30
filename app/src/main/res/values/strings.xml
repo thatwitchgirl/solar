@@ -372,7 +372,7 @@
     <string name="library_sort_label">Sort: %1$s</string>
     <string name="library_sort_title">Title</string>
     <string name="library_sort_artist">Artist</string>
-    <string name="library_sort_album">Album</string>
+    <string name="library_sort_album">Track</string>
     <string name="library_sort_date">Date added</string>
     <string name="library_sort_now">Sort: %1$s</string>
     <string name="library_playlists_local_section">Local playlists</string>
@@ -854,6 +854,7 @@
     <string name="context_action_shuffle_toggle">Toggle shuffle</string>
     <string name="context_action_repeat_cycle">Cycle repeat</string>
     <string name="context_action_play_pause">Play / Pause</string>
+    <string name="context_action_playback_speed">Playback speed: %1$sx</string>
     <string name="context_action_start_over">Start over</string>
     <string name="context_action_mark_played">Mark played</string>
     <string name="context_action_refresh_library">Refresh library</string>

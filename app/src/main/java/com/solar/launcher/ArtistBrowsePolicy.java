@@ -94,7 +94,6 @@ public final class ArtistBrowsePolicy {
         String browsedKey = ArtistNames.matchKey(displayArtist(browsedArtist, prefs));
         for (Track song : library) {
             if (!AlbumNames.equals(album, song.album)) continue;
-            if (!ArtistParser.containsArtist(song.artist, browsedArtist)) continue;
             String owner = trackOwner(song, prefs);
             if (owner.isEmpty() || isUnknownArtist(owner)) continue;
             String key = ArtistNames.matchKey(owner);
