@@ -3,6 +3,7 @@
     xmlns:tools="http://schemas.android.com/tools">
     <uses-permission android:name="android.permission.SHUTDOWN" tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.DEVICE_POWER" tools:ignore="ProtectedPermissions" />
+    <uses-permission android:name="android.permission.REORDER_TASKS" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
     <uses-permission android:name="android.permission.SET_TIME" />

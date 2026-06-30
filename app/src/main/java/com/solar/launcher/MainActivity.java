@@ -1171,9 +1171,8 @@ public class MainActivity extends Activity {
             try {
                 if (mediaPlayer.isPlaying()) {
                     float speedToApply = playback.isPodcastActive() ? playbackSpeed : 1.0f;
-                    android.media.PlaybackParams params = new android.media.PlaybackParams();
+                    android.media.PlaybackParams params = mediaPlayer.getPlaybackParams();
                     params.setSpeed(speedToApply);
-                    params.setPitch(1.0f);
                     mediaPlayer.setPlaybackParams(params);
                 }
             } catch (Exception e) {}
@@ -1281,7 +1280,11 @@ public class MainActivity extends Activity {
                         if (progress > 100) progress = 100;
                         playerProgress.setProgress(progress);
                         tvPlayerTimeCurrent.setText(formatTime(current));
-                        tvPlayerTimeTotal.setText(formatTime(duration));
+                        String totalStr = formatTime(duration);
+                        if (playback.isPodcastActive() && playbackSpeed != 1.0f) {
+                            totalStr += " (" + playbackSpeed + "x)";
+                        }
+                        tvPlayerTimeTotal.setText(totalStr);
                     }
                     if (avrcpTrackInfoWriter != null) {
                         avrcpTrackInfoWriter.tickPlayingPosition(current);
@@ -34204,12 +34207,31 @@ public class MainActivity extends Activity {
     /** Now Playing fallback art — same LCD dither path as embedded covers. */
     private void setPlayerDefaultAlbumArt() {
         if (ivAlbumArt == null) return;
-        int w = ivAlbumArt.getWidth() > 0 ? ivAlbumArt.getWidth()
-                : (int) getResources().getDimension(R.dimen.y1_player_art_width);
-        int h = ivAlbumArt.getHeight() > 0 ? ivAlbumArt.getHeight() : w;
-        android.graphics.Bitmap bmp = AlbumCoverPipeline.defaultAlbumArt(this, w, h);
-        if (bmp != null) ivAlbumArt.setImageBitmap(bmp);
-        else ivAlbumArt.setImageResource(R.drawable.default_album);
+        android.graphics.Bitmap raw = android.graphics.BitmapFactory.decodeResource(getResources(), R.drawable.default_album);
+        if (raw != null) {
+            ivAlbumArt.setImageBitmap(decorateAlbumArtForDisplay(raw));
+            try {
+                int centerX = raw.getWidth() / 2;
+                int centerY = (int)(raw.getHeight() * 0.8);
+                currentAlbumColor = raw.getPixel(centerX, centerY) | 0xFF000000;
+            } catch (Exception e) {
+                currentAlbumColor = ThemeManager.getListButtonFocusedBg() | 0xFF000000;
+            }
+            try {
+                if (ivPlayerBgBlur != null) {
+                    android.graphics.Bitmap blurredBg = applyGaussianBlur(raw);
+                    ivPlayerBgBlur.setImageBitmap(blurredBg);
+                    if (!playerAlbumBlurEnabled) ivPlayerBgBlur.setImageResource(0);
+                }
+            } catch (Exception e) {}
+        } else {
+            ivAlbumArt.setImageResource(R.drawable.default_album);
+            if (ivPlayerBgBlur != null) ivPlayerBgBlur.setImageResource(0);
+            currentAlbumColor = ThemeManager.getListButtonFocusedBg() | 0xFF000000;
+        }
+        lastAlbumArtBytes = null;
+        updateMainMenuBackground();
+        refreshNowPlayingPreview();
     }
 
     /** Home menu preview fallback — themed icon when present, then LCD dither. */
