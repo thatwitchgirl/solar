@@ -39,6 +39,7 @@
     <string name="settings_sub_appearance">Settings: Appearance</string>
     <string name="settings_sub_theme_picker">Settings: Theme</string>
     <string name="settings_status_bar_match_font">Match Status Bar to Theme Font</string>
+    <string name="settings_now_playing">Now Playing</string>
     <string name="settings_now_playing_match_font">Match Now Playing to Theme</string>
     <string name="settings_now_playing_backdrop">Now Playing Backdrop</string>
     <string name="settings_now_playing_lcd_art">LCD album art</string>
@@ -109,6 +110,7 @@
     <string name="lib_artist_sort_tracks">Most tracks</string>
     <string name="lib_artist_sort_recent">Recently added</string>
     <string name="lib_song_sort">Sort songs by</string>
+    <string name="lib_album_song_sort">Sort album tracks by</string>
     <string name="lib_album_owner_sub">Album owner subtitles</string>
     <string name="lib_guest_song_sub">Guest song subtitles</string>
     <string name="lib_context_sort_artists">Sort artists: %1$s</string>
@@ -122,6 +124,7 @@
     <string name="lib_preview_artist_filter">Limit the Artists list — hide one-track guests or show album owners only.</string>
     <string name="lib_preview_artist_sort">Order the Artists list A–Z, by track count, or by recently added.</string>
     <string name="lib_preview_song_sort">Default sort for song lists in Artists, Albums, Genres, and playlists.</string>
+    <string name="lib_preview_album_song_sort">Default sort for album tracks.</string>
     <string name="lib_preview_album_sub">Under albums, show the album owner when it differs from the track artist.</string>
     <string name="lib_preview_guest_sub">On guest tracks, show which artist owns the album below the song title.</string>
     <string name="status_library_all_songs">Library: All Songs</string>
@@ -246,9 +249,11 @@
     <string name="about_update_unavailable">Updates unavailable — check Wi‑Fi connection</string>
     <string name="settings_bluetooth_setup">Bluetooth Setup</string>
     <string name="settings_display_brightness">Display Brightness</string>
-    <string name="settings_storage_info">Storage Info</string>
-    <string name="settings_background">Background Settings</string>
-    <string name="settings_now_playing">Now Playing</string>
+    <string name="settings_storage_info">Storage info</string>
+    <string name="settings_background">Background source</string>
+    <string name="settings_usb_auto_connect">Automatic USB Connection</string>
+    <string name="settings_preview_usb_auto_connect">Skip connection dialogs. Useful for connecting to car stereos via USB automatically.</string>
+    <string name="settings_background_source">Background Image Source</string>
     <string name="settings_player_album_blur">Blurred album artwork</string>
     <string name="bg_section_theme_wallpapers">Theme wallpapers (480×360)</string>
     <string name="bg_wallpaper_desktop">Desktop</string>
@@ -256,7 +261,7 @@
     <string name="bg_wallpaper_theme_row">%1$s — %2$s</string>
     <string name="bg_pick_custom_image">Choose custom image (480×360)</string>
     <string name="toast_bg_wallpaper_size_hint">480×360 JPG/PNG recommended</string>
-    <string name="settings_background_source">Background Source</string>
+
     <string name="settings_select_background">Select New Background</string>
     <string name="settings_clear_background">Clear Custom Background</string>
     <string name="settings_clear_cache">Clear Album Art Cache</string>
@@ -680,6 +685,8 @@
     <string name="deezer_download_retrying">Retrying download…</string>
     <string name="deezer_download_failed">Download failed: %1$s</string>
     <string name="deezer_saved">Saved to library</string>
+    <string name="usb_mass_storage_title">USB connected</string>
+    <string name="usb_mass_storage_turn_on">Turn on USB storage</string>
     <string name="deezer_queued">Added to queue</string>
     <string name="deezer_error_unknown">Unknown error</string>
     <string name="deezer_show_more">Show more (%1$d)</string>

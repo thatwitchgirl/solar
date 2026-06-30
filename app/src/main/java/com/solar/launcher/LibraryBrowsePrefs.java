@@ -116,6 +116,18 @@ public final class LibraryBrowsePrefs {
         return next;
     }
 
+    private static final String KEY_ALBUM_SONG_SORT = "lib_album_song_sort";
+
+    public int albumSongSort() {
+        return prefs.getInt(KEY_ALBUM_SONG_SORT, SONG_SORT_ALBUM);
+    }
+
+    public int cycleAlbumSongSort() {
+        int next = (albumSongSort() + 1) % 4;
+        prefs.edit().putInt(KEY_ALBUM_SONG_SORT, next).commit();
+        return next;
+    }
+
     public static int guestBrowseModeLabelRes(int mode) {
         switch (mode) {
             case GUEST_BROWSE_ALWAYS_ALBUMS: return R.string.lib_guest_browse_always_albums;
@@ -159,6 +171,7 @@ public final class LibraryBrowsePrefs {
         if (RowKeys.LIB_ARTIST_FILTER.equals(rowKey)) return R.string.lib_preview_artist_filter;
         if (RowKeys.LIB_ARTIST_SORT.equals(rowKey)) return R.string.lib_preview_artist_sort;
         if (RowKeys.LIB_SONG_SORT.equals(rowKey)) return R.string.lib_preview_song_sort;
+        if (RowKeys.LIB_ALBUM_SONG_SORT.equals(rowKey)) return R.string.lib_preview_album_song_sort;
         if (RowKeys.LIB_ALBUM_SUB.equals(rowKey)) return R.string.lib_preview_album_sub;
         if (RowKeys.LIB_GUEST_SUB.equals(rowKey)) return R.string.lib_preview_guest_sub;
         return 0;

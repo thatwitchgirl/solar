@@ -21,7 +21,7 @@ import java.util.Set;
  */
 public class MusicLibraryStore extends SQLiteOpenHelper {
     private static final String DB_NAME = "music_library.db";
-    private static final int DB_VERSION = 2;
+    private static final int DB_VERSION = 3;
 
     private static MusicLibraryStore instance;
 
@@ -125,6 +125,10 @@ public class MusicLibraryStore extends SQLiteOpenHelper {
         if (oldVersion < 2) {
             db.execSQL("ALTER TABLE tracks ADD COLUMN track_number INTEGER NOT NULL DEFAULT 0");
         }
+        if (oldVersion < 3) {
+            db.execSQL("DROP TABLE IF EXISTS tracks");
+            onCreate(db);
+        }
     }
 
     /** All cached tracks (may include files removed from disk until next purge). */
@@ -157,11 +161,14 @@ public class MusicLibraryStore extends SQLiteOpenHelper {
         return null;
     }
 
-    /** True when cached row matches current file stat — skip MediaMetadataRetriever. */
+    /** True when cached row matches current file stat — skip MediaMetadataRetriever.
+     *  ponytail: also re-scan when track_number is 0 (upgrade from v1 left zeros). */
     public boolean isFresh(File file) {
         if (file == null || !file.isFile()) return false;
         Track t = get(file.getAbsolutePath());
-        return t != null && t.mtime == file.lastModified() && t.size == file.length();
+        if (t == null) return false;
+        if (t.trackNumber == 0) return false; // force re-read to populate track number
+        return t.mtime == file.lastModified() && t.size == file.length();
     }
 
     public void upsert(File file, String title, String artist, String album,

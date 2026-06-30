@@ -25,6 +25,7 @@ public final class RowKeys {
     public static final String SCREEN_TIMEOUT = "settings.screen_timeout";
     public static final String FULL_WIDTH = "settings.full_width";
     public static final String POWER_OFF = "settings.power_off";
+    public static final String USB_AUTO_CONNECT = "settings.usb_auto_connect";
     public static final String SWITCH_ROCKBOX = "settings.switch_rockbox";
     public static final String WEB_SERVER = "settings.web_server";
     public static final String WIFI_SETUP = "settings.wifi_setup";
@@ -39,6 +40,7 @@ public final class RowKeys {
     public static final String LIB_ARTIST_FILTER = "library.artist_filter";
     public static final String LIB_ARTIST_SORT = "library.artist_sort";
     public static final String LIB_SONG_SORT = "library.song_sort";
+    public static final String LIB_ALBUM_SONG_SORT = "library.album_song_sort";
     public static final String LIB_ALBUM_SUB = "library.album_sub";
     public static final String LIB_GUEST_SUB = "library.guest_sub";
     public static final String ABOUT = "settings.about";
@@ -137,6 +139,7 @@ public final class RowKeys {
         if (SCREEN_TIMEOUT.equals(rowKey)) return R.string.settings_screen_timeout;
         if (FULL_WIDTH.equals(rowKey)) return R.string.settings_full_width_menus;
         if (POWER_OFF.equals(rowKey)) return R.string.settings_power_off;
+        if (USB_AUTO_CONNECT.equals(rowKey)) return R.string.settings_usb_auto_connect;
         if (SWITCH_ROCKBOX.equals(rowKey)) return R.string.settings_switch_rockbox;
         if (WEB_SERVER.equals(rowKey)) return R.string.settings_web_server;
         if (WIFI_SETUP.equals(rowKey)) return R.string.settings_wifi_setup;
@@ -151,6 +154,7 @@ public final class RowKeys {
         if (LIB_ARTIST_FILTER.equals(rowKey)) return R.string.lib_artist_filter;
         if (LIB_ARTIST_SORT.equals(rowKey)) return R.string.lib_artist_sort;
         if (LIB_SONG_SORT.equals(rowKey)) return R.string.lib_song_sort;
+        if (LIB_ALBUM_SONG_SORT.equals(rowKey)) return R.string.lib_album_song_sort;
         if (LIB_ALBUM_SUB.equals(rowKey)) return R.string.lib_album_owner_sub;
         if (LIB_GUEST_SUB.equals(rowKey)) return R.string.lib_guest_song_sub;
         if (ABOUT.equals(rowKey)) return R.string.settings_about;

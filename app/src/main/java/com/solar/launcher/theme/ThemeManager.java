@@ -259,6 +259,43 @@ public class ThemeManager {
         } catch (Exception ignored) {}
     }
 
+    public static void cacheActiveTheme(Context ctx) {
+        if (ctx == null) return;
+        ThemeEntry active = getCurrentTheme();
+        if (active == null || active == bundledFallback || active.folderPath.startsWith("asset://")) return;
+        if (active.folderPath.startsWith(ctx.getFilesDir().getAbsolutePath())) return; // Already cached
+        
+        File cacheDir = new File(ctx.getFilesDir(), "Themes/" + active.folderName);
+        if (!cacheDir.exists()) cacheDir.mkdirs();
+        try {
+            copyDirectory(new File(active.folderPath), cacheDir);
+        } catch (Exception ignored) {}
+    }
+
+    private static void copyDirectory(File sourceLocation, File targetLocation) throws Exception {
+        if (sourceLocation.isDirectory()) {
+            if (!targetLocation.exists()) {
+                targetLocation.mkdirs();
+            }
+            String[] children = sourceLocation.list();
+            if (children != null) {
+                for (String child : children) {
+                    copyDirectory(new File(sourceLocation, child), new File(targetLocation, child));
+                }
+            }
+        } else {
+            InputStream in = new java.io.FileInputStream(sourceLocation);
+            OutputStream out = new java.io.FileOutputStream(targetLocation);
+            byte[] buf = new byte[8192];
+            int len;
+            while ((len = in.read(buf)) > 0) {
+                out.write(buf, 0, len);
+            }
+            in.close();
+            out.close();
+        }
+    }
+
     private static byte[] readAllFromAsset(AssetManager am, String path) throws Exception {
         InputStream in = am.open(path);
         byte[] buf = new byte[8192];

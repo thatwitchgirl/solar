@@ -12,28 +12,45 @@ import org.json.JSONObject;
 
 /**
  * Y1 shows systemui UsbStorageActivity when USB is connected — it steals wheel focus.
- * ponytail: CLOSE_SYSTEM_DIALOGS + requestFocus keeps Solar usable while tethered for ADB.
+ *
+ * ponytail: previous approach used ACTION_CLOSE_SYSTEM_DIALOGS broadcast which crashes
+ * SystemUI on API 17 ("Unfortunately, System UI has stopped"). New approach uses HOME key
+ * injection via root — since Solar IS the launcher, pressing HOME naturally brings Solar
+ * to the front and pushes the system UsbStorageActivity behind it without killing anything.
  */
 public final class Y1UsbFocusHelper {
     /** API 17 UsbManager constants — not all are public on older SDK stubs. */
     private static final String ACTION_USB_STATE = "android.hardware.usb.action.USB_STATE";
     private static final String EXTRA_USB_CONNECTED = "connected";
 
+    public interface UsbListener {
+        void onUsbStateChanged(boolean connected);
+    }
+
     private final Activity activity;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private BroadcastReceiver receiver;
     private boolean registered;
+    private final UsbListener listener;
+    private boolean usbConnected = false;
 
-    public Y1UsbFocusHelper(Activity activity) {
+    public Y1UsbFocusHelper(Activity activity, UsbListener listener) {
         this.activity = activity;
+        this.listener = listener;
     }
 
     public void onResume() {
-        // ponytail: defer until after first layout — CLOSE_SYSTEM_DIALOGS during onResume breaks HOME window on API 17.
         handler.post(new Runnable() {
             @Override
             public void run() {
-                reclaimInputFocus("onResume");
+                // ponytail: do NOT press HOME on resume — if we're already in the
+                // foreground, pressing HOME resets the scroll position and makes
+                // list views unusable. Just request focus on our decor view.
+                if (usbConnected) {
+                    try {
+                        activity.getWindow().getDecorView().requestFocus();
+                    } catch (Exception ignored) {}
+                }
                 registerIfNeeded();
             }
         });
@@ -48,19 +65,41 @@ public final class Y1UsbFocusHelper {
         }
     }
 
+    private Boolean lastConnectedState = null;
+
     private void registerIfNeeded() {
         if (registered) return;
         receiver = new BroadcastReceiver() {
             @Override
             public void onReceive(Context context, Intent intent) {
                 if (intent == null || !ACTION_USB_STATE.equals(intent.getAction())) return;
-                if (intent.getBooleanExtra(EXTRA_USB_CONNECTED, false)) {
-                    handler.postDelayed(new Runnable() {
-                        @Override
-                        public void run() {
-                            reclaimInputFocus("usbState");
-                        }
-                    }, 400);
+                final boolean connected = intent.getBooleanExtra(EXTRA_USB_CONNECTED, false);
+                if (lastConnectedState != null && lastConnectedState == connected) return;
+                lastConnectedState = connected;
+                usbConnected = connected;
+                if (connected) {
+                    // ponytail: staggered HOME presses only when we DON'T have focus
+                    // (i.e. the system UsbStorageActivity is in front of us).
+                    // If we already have focus, just notify the listener.
+                    if (!activity.hasWindowFocus()) {
+                        handler.postDelayed(new Runnable() {
+                            @Override
+                            public void run() {
+                                reclaimInputFocus("usbState-1");
+                            }
+                        }, 500);
+                        handler.postDelayed(new Runnable() {
+                            @Override
+                            public void run() {
+                                reclaimInputFocus("usbState-2");
+                                if (listener != null) listener.onUsbStateChanged(true);
+                            }
+                        }, 800);
+                    } else {
+                        if (listener != null) listener.onUsbStateChanged(true);
+                    }
+                } else {
+                    if (listener != null) listener.onUsbStateChanged(false);
                 }
             }
         };
@@ -68,20 +107,42 @@ public final class Y1UsbFocusHelper {
         registered = true;
     }
 
-    void reclaimInputFocus(String reason) {
-        try {
-            activity.sendBroadcast(new Intent(Intent.ACTION_CLOSE_SYSTEM_DIALOGS));
-        } catch (Exception ignored) {}
+    /** Returns true if USB cable is currently connected. */
+    public boolean isUsbConnected() {
+        return usbConnected;
+    }
+
+    /**
+     * Reclaim focus by pressing HOME via root. Since Solar is the default launcher,
+     * HOME brings Solar to the foreground and pushes the system UsbStorageActivity
+     * to the background — without crashing SystemUI.
+     *
+     * Does NOT use ACTION_CLOSE_SYSTEM_DIALOGS (that crashes SystemUI on API 17).
+     */
+    void reclaimInputFocus(final String reason) {
+        // HOME key via root — gentle, never crashes SystemUI
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    Runtime.getRuntime().exec(
+                            new String[]{"su", "-c", "input keyevent 3"}).waitFor();
+                } catch (Exception ignored) {}
+            }
+        }).start();
+
+        // Also request focus on our own decor view for d-pad navigation
         try {
             activity.getWindow().getDecorView().requestFocus();
         } catch (Exception ignored) {}
+
         // #region agent log
         try {
             JSONObject d = new JSONObject();
             d.put("reason", reason);
             d.put("hasWindowFocus", activity.hasWindowFocus());
             DebugAgentLog.log(activity, "Y1UsbFocusHelper.reclaimInputFocus",
-                    "usb focus reclaim", "H-USB-FOCUS", d);
+                    "usb focus reclaim (HOME key)", "H-USB-FOCUS", d);
         } catch (Exception ignored) {}
         // #endregion
     }

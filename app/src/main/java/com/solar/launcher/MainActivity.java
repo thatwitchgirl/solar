@@ -173,6 +173,7 @@ public class MainActivity extends Activity {
     // 💡 [추가] 고속 인덱스 점프(알파벳 스크롤) 전용 변수들
     private List<String> currentScrollIndexList = new ArrayList<>();
     public static MainActivity instance;
+    private boolean isIntentionalFocusLoss = false;
     private long lastTrackChangeTime = 0; // 🚀 기기의 중복 키 신호를 막아줄 방어막 변수
     // 💡 [추가] 오디오 스펙트럼 관련 변수들
     private android.media.audiofx.Visualizer audioVisualizer;
@@ -196,6 +197,7 @@ public class MainActivity extends Activity {
     static final int STATE_DEEZER = 15;
     static final int STATE_DEEZER_SETUP = 16;
     static final int STATE_FLOW = 24;
+    static final int STATE_USB_STORAGE = 25;
     private static final int KEYBOARD_WIFI = 0;
     private static final int KEYBOARD_SOULSEEK_USER = 1;
     private static final int KEYBOARD_SOULSEEK_PASS = 2;
@@ -1153,8 +1155,9 @@ public class MainActivity extends Activity {
             try {
                 if (mediaPlayer.isPlaying()) {
                     float speedToApply = playback.isPodcastActive() ? playbackSpeed : 1.0f;
-                    android.media.PlaybackParams params = mediaPlayer.getPlaybackParams();
+                    android.media.PlaybackParams params = new android.media.PlaybackParams();
                     params.setSpeed(speedToApply);
+                    params.setPitch(1.0f);
                     mediaPlayer.setPlaybackParams(params);
                 }
             } catch (Exception e) {}
@@ -1722,7 +1725,47 @@ public class MainActivity extends Activity {
         ));
         // 🚀 [여기까지 추가 끝!]
         themedContextMenu = new ThemedContextMenu(this);
-        usbFocusHelper = new Y1UsbFocusHelper(this);
+        usbFocusHelper = new Y1UsbFocusHelper(this, new Y1UsbFocusHelper.UsbListener() {
+            private long lastUsbEventTime = 0;
+            private boolean lastHandledState = false;
+
+            @Override
+            public void onUsbStateChanged(boolean connected) {
+                if (connected == lastHandledState) return;
+                long now = System.currentTimeMillis();
+                if (now - lastUsbEventTime < 1000) return; // Ignore rapid flapping under 1 second
+                lastUsbEventTime = now;
+                lastHandledState = connected;
+
+                if (connected) {
+                    if (prefs != null && prefs.getBoolean("usb_auto_connect", false) && !prefs.getBoolean("usb_manual_disable", false)) {
+                        enableUsbMassStorageFromRoot();
+                    } else {
+                        showUsbMassStorageDialog();
+                    }
+                    
+                    if (!hasWindowFocus()) {
+                        // ponytail: bring launcher to front — Y1UsbFocusHelper already handles
+                        // dismissing the system dialog via ACTION_CLOSE_SYSTEM_DIALOGS.
+                        // Removed root BACK key injection (input keyevent 4) which was racing
+                        // with the dialog dismiss and crashing SystemUI.
+                        Intent bringToFront = new Intent(MainActivity.this, MainActivity.class);
+                        bringToFront.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
+                        startActivity(bringToFront);
+                    }
+                } else {
+                    if (prefs != null) {
+                        prefs.edit().remove("usb_manual_disable").apply();
+                    }
+                    if ("usb_storage".equals(contextMenuTierStack.peekLast())) {
+                        dismissThemedContextMenu();
+                    }
+                    if (currentScreenState == STATE_USB_STORAGE) {
+                        changeScreen(STATE_MENU);
+                    }
+                }
+            }
+        });
         tvFastScrollLetter = new TextView(this);
         tvFastScrollLetter.setTextSize(50); // 글자 크기를 아주 큼직하게!
         tvFastScrollLetter.setGravity(android.view.Gravity.CENTER);
@@ -1773,6 +1816,7 @@ public class MainActivity extends Activity {
             DebugSessionLog.log("MainActivity.onCreate", "themes loaded", "H5", dbg);
         } catch (Exception ignored) {}
         // #endregion
+
         try {
             String savedPath = prefs.getString("app_theme_path", null);
             if (savedPath != null) {
@@ -1783,8 +1827,9 @@ public class MainActivity extends Activity {
             }
             ThemeManager.ensureActiveThemeOrFallback(this);
             ThemeManager.ThemeEntry active = ThemeManager.getCurrentTheme();
-            if (savedPath != null && active.folderPath != null
-                    && !savedPath.equals(active.folderPath)) {
+            ThemeManager.cacheActiveTheme(this);
+            if (active != null && !active.folderPath.startsWith("asset://") 
+                    && !active.folderPath.startsWith(getFilesDir().getAbsolutePath())) {
                 prefs.edit()
                         .putString("app_theme_path", active.folderPath)
                         .putInt("app_theme_index", ThemeManager.getCurrentThemeIndex())
@@ -6912,6 +6957,7 @@ public class MainActivity extends Activity {
             case STATE_DEEZER_SETUP: return getString(R.string.status_deezer_setup);
             case STATE_APPS: return getString(R.string.status_apps);
             case STATE_MORE: return getString(R.string.path_more);
+            case STATE_USB_STORAGE: return "USB Storage";
             default:
                 if (mediaSuite != null) {
                     String mediaTitle = mediaSuite.statusTitleForState(currentScreenState);
@@ -7433,6 +7479,8 @@ public class MainActivity extends Activity {
                     }
                 }
             }, 1500);
+        } else if (state == STATE_USB_STORAGE) {
+            buildUsbStorageUI();
         }
         if (mediaSuite != null) {
             mediaSuite.onScreenEnter(state);
@@ -10694,9 +10742,11 @@ public class MainActivity extends Activity {
             @Override
             public void onClick(View v) {
                 clickFeedback();
+                isIntentionalFocusLoss = true;
                 if (!AppLauncher.launch(MainActivity.this, app.packageName)) {
                     Toast.makeText(MainActivity.this, getString(R.string.apps_launch_failed),
                             Toast.LENGTH_SHORT).show();
+                    isIntentionalFocusLoss = false;
                 }
             }
         };
@@ -11262,6 +11312,7 @@ public class MainActivity extends Activity {
         if (RowKeys.DT_MINUTE.equals(rowKey)) return String.format(Locale.US, "%02d", dtMinute);
         if (RowKeys.LANG_SYSTEM.equals(rowKey)) return "";
         if (RowKeys.LANG_EN.equals(rowKey) || RowKeys.LANG_KO.equals(rowKey)) return "";
+        if (RowKeys.USB_AUTO_CONNECT.equals(rowKey)) return stateOnOff(prefs.getBoolean("usb_auto_connect", false));
         if (RowKeys.STATUS_BAR_MATCH_FONT.equals(rowKey)) return stateOnOff(statusBarMatchFont);
         if (RowKeys.NOW_PLAYING_MATCH_FONT.equals(rowKey)) return stateOnOff(nowPlayingMatchFont);
         if (RowKeys.NOW_PLAYING_BACKDROP.equals(rowKey)) return stateOnOff(nowPlayingBackdrop);
@@ -11281,6 +11332,9 @@ public class MainActivity extends Activity {
             }
             if (RowKeys.LIB_SONG_SORT.equals(rowKey)) {
                 return getString(LibraryBrowsePrefs.songSortLabelRes(libraryBrowsePrefs.songSort()));
+            }
+            if (RowKeys.LIB_ALBUM_SONG_SORT.equals(rowKey)) {
+                return getString(LibraryBrowsePrefs.songSortLabelRes(libraryBrowsePrefs.albumSongSort()));
             }
             if (RowKeys.LIB_ALBUM_SUB.equals(rowKey)) return stateOnOff(libraryBrowsePrefs.albumOwnerSubtitles());
             if (RowKeys.LIB_GUEST_SUB.equals(rowKey)) return stateOnOff(libraryBrowsePrefs.guestSongSubtitles());
@@ -11709,6 +11763,9 @@ public class MainActivity extends Activity {
         String deezerPreview = resolveDeezerSettingsPreviewText(rowKey);
         if (deezerPreview != null) {
             stateText = deezerPreview;
+        }
+        if (RowKeys.USB_AUTO_CONNECT.equals(rowKey)) {
+            stateText = getString(R.string.settings_preview_usb_auto_connect) + "\n\n" + (stateText != null ? stateText : "");
         }
         boolean verticalMarquee = SettingsScreens.isSoulseek(settingsSubScreenKey);
         if (tvSettingsPreviewState != null) {
@@ -15730,6 +15787,84 @@ public class MainActivity extends Activity {
         }
     }
 
+    private void showUsbMassStorageDialog() {
+        java.util.ArrayList<String> labels = new java.util.ArrayList<String>();
+        java.util.ArrayList<String> states = new java.util.ArrayList<String>();
+        java.util.ArrayList<Boolean> headers = new java.util.ArrayList<Boolean>();
+        java.util.ArrayList<Runnable> actions = new java.util.ArrayList<Runnable>();
+
+        labels.add(getString(R.string.usb_mass_storage_title));
+        states.add(null);
+        headers.add(Boolean.TRUE);
+        actions.add(null);
+
+        labels.add(getString(R.string.usb_mass_storage_turn_on));
+        states.add(null);
+        headers.add(Boolean.FALSE);
+        actions.add(new Runnable() {
+            @Override
+            public void run() {
+                dismissThemedContextMenu();
+                enableUsbMassStorageFromRoot();
+            }
+        });
+
+        labels.add(getString(R.string.soulseek_pm_dismiss));
+        states.add(null);
+        headers.add(Boolean.FALSE);
+        actions.add(new Runnable() {
+            @Override
+            public void run() {
+                dismissThemedContextMenu();
+            }
+        });
+
+        if (!themedContextMenu.isShowing()) showThemedContextMenu();
+        contextMenuTierStack.clear();
+        contextMenuTierStack.addLast(CONTEXT_NAV_ROOT);
+        pushContextMenuTier("usb_storage");
+        showContextMenuTierInPlace(getString(R.string.usb_mass_storage_title), labels, states, headers, actions, true);
+    }
+
+    private void enableUsbMassStorageFromRoot() {
+        changeScreen(STATE_USB_STORAGE);
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    String apkPath = getPackageCodePath();
+                    String cmd = "export CLASSPATH=" + apkPath + " && app_process /system/bin com.solar.launcher.UmsEnabler 1 > /dev/null 2>&1";
+                    Runtime.getRuntime().exec(new String[]{"su", "-c", cmd}).waitFor();
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            }
+        }).start();
+    }
+
+    private void disableUsbMassStorageFromRoot() {
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    String apkPath = getPackageCodePath();
+                    String cmd = "export CLASSPATH=" + apkPath + " && app_process /system/bin com.solar.launcher.UmsEnabler 0 > /dev/null 2>&1";
+                    Runtime.getRuntime().exec(new String[]{"su", "-c", cmd}).waitFor();
+                    runOnUiThread(new Runnable() {
+                        @Override
+                        public void run() {
+                            if (currentScreenState == STATE_USB_STORAGE) {
+                                changeScreen(STATE_MENU);
+                            }
+                        }
+                    });
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            }
+        }).start();
+    }
+
     private void showThemedContextMenu() {
         if (themedContextMenu == null) return;
         if (layoutLoadingOverlay != null && layoutLoadingOverlay.getVisibility() == View.VISIBLE) return;
@@ -16922,6 +17057,7 @@ public class MainActivity extends Activity {
             return;
         }
         showPleaseWaitOverlay(getString(R.string.dialog_rockbox_rebooting));
+        isIntentionalFocusLoss = true;
         new Thread(new Runnable() {
             @Override
             public void run() {
@@ -16930,6 +17066,7 @@ public class MainActivity extends Activity {
                     @Override
                     public void run() {
                         if (!ok) {
+                            isIntentionalFocusLoss = false;
                             dismissPleaseWaitOverlay();
                             Toast.makeText(MainActivity.this, getString(R.string.dialog_rockbox_failed),
                                     Toast.LENGTH_SHORT).show();
@@ -17588,6 +17725,10 @@ public class MainActivity extends Activity {
             returnFromAuxScreen();
             return;
         }
+        if (currentScreenState == STATE_USB_STORAGE) {
+            Toast.makeText(this, "Please turn off USB storage before using the device", Toast.LENGTH_SHORT).show();
+            return;
+        }
         if (currentScreenState == STATE_STORAGE) {
             returnFromAuxScreen();
             return;
@@ -18150,6 +18291,18 @@ public class MainActivity extends Activity {
             });
             containerSettingsItems.addView(btnRockbox);
         }
+        LinearLayout btnUsbAutoConnect = createSettingsRow(RowKeys.USB_AUTO_CONNECT, R.string.settings_usb_auto_connect, false);
+        btnUsbAutoConnect.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                clickFeedback();
+                boolean currentState = prefs.getBoolean("usb_auto_connect", false);
+                prefs.edit().putBoolean("usb_auto_connect", !currentState).commit();
+                refreshSettingsPreview(RowKeys.USB_AUTO_CONNECT);
+            }
+        });
+        containerSettingsItems.addView(btnUsbAutoConnect);
+
         LinearLayout btnServerMenu = createSettingsRow(RowKeys.WEB_SERVER, R.string.settings_web_server, true);
         btnServerMenu.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -18443,6 +18596,18 @@ public class MainActivity extends Activity {
             }
         });
         containerSettingsItems.addView(btnSongSort);
+
+        LinearLayout btnAlbumSongSort = createSettingsRow(RowKeys.LIB_ALBUM_SONG_SORT, R.string.lib_album_song_sort, false);
+        btnAlbumSongSort.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                clickFeedback();
+                libraryBrowsePrefs.cycleAlbumSongSort();
+                refreshLibraryBrowseIfVisible();
+                refreshSettingsPreview(RowKeys.LIB_ALBUM_SONG_SORT);
+            }
+        });
+        containerSettingsItems.addView(btnAlbumSongSort);
 
         LinearLayout btnAlbumSub = createSettingsRow(RowKeys.LIB_ALBUM_SUB, R.string.lib_album_owner_sub, false);
         btnAlbumSub.setOnClickListener(new View.OnClickListener() {
@@ -23322,10 +23487,7 @@ public class MainActivity extends Activity {
     }
 
     private void sortSongItems(List<SongItem> list, boolean isAlbumContext) {
-        int sortMode = libraryBrowsePrefs.songSort();
-        if (isAlbumContext && sortMode == LibraryBrowsePrefs.SONG_SORT_TITLE) {
-            sortMode = LibraryBrowsePrefs.SONG_SORT_ALBUM;
-        }
+        int sortMode = isAlbumContext ? libraryBrowsePrefs.albumSongSort() : libraryBrowsePrefs.songSort();
         final int finalSortMode = sortMode;
         java.util.Collections.sort(list, new java.util.Comparator<SongItem>() {
             @Override
@@ -23338,7 +23500,7 @@ public class MainActivity extends Activity {
                     case LibraryBrowsePrefs.SONG_SORT_ALBUM:
                         c = a.album.compareToIgnoreCase(b.album);
                         if (c != 0) return c;
-                        if (a.trackNumber > 0 && b.trackNumber > 0 && a.trackNumber != b.trackNumber) {
+                        if (a.trackNumber != b.trackNumber) {
                             return Integer.compare(a.trackNumber, b.trackNumber);
                         }
                         return compareAlphanumeric(a.file.getName(), b.file.getName());
@@ -23399,6 +23561,57 @@ public class MainActivity extends Activity {
         if (containerBrowserItems.getChildCount() > 0) {
             containerBrowserItems.getChildAt(0).requestFocus();
         }
+    }
+
+    private void buildUsbStorageUI() {
+        if (scrollViewBrowser != null) scrollViewBrowser.setVisibility(View.VISIBLE);
+        if (listVirtualSongs != null) listVirtualSongs.setVisibility(View.GONE);
+        containerBrowserItems.removeAllViews();
+        browserStatusTitle = "USB Storage";
+        updateStatusBarTitle();
+        if (tvBrowserPath != null) {
+            tvBrowserPath.setVisibility(View.GONE);
+        }
+
+        // ponytail: themed USB storage screen — uses theme fonts, colors and row backgrounds
+        // instead of hardcoded values. Theme data is in memory (JSONObject) so it works
+        // even when the SD card is unmounted for USB mass storage.
+
+        // Spacer above notice
+        View spacer = new View(this);
+        int spacerH = (int)(30 * getResources().getDisplayMetrics().density);
+        containerBrowserItems.addView(spacer, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, spacerH));
+
+        // Notice text — themed
+        TextView notice = new TextView(this);
+        notice.setText("Device is in USB Storage mode");
+        notice.setGravity(android.view.Gravity.CENTER);
+        notice.setTypeface(ThemeManager.getCustomFont());
+        notice.setTextSize(18);
+        int pad = (int)(20 * getResources().getDisplayMetrics().density);
+        notice.setPadding(pad, pad, pad, pad);
+        ThemeManager.applyThemedTextStyle(notice, ThemeManager.getTextColorPrimary());
+        containerBrowserItems.addView(notice, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        // "Turn off" button — uses standard Y1 row theming
+        final Button btnDisconnect = createListButton("Turn off USB Storage mode");
+        btnDisconnect.setGravity(android.view.Gravity.CENTER);
+        btnDisconnect.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                clickFeedback();
+                // Record that user manually turned off USB storage mode
+                SharedPreferences.Editor editor = prefs.edit();
+                editor.putBoolean("usb_manual_disable", true);
+                editor.apply();
+                disableUsbMassStorageFromRoot();
+            }
+        });
+        containerBrowserItems.addView(btnDisconnect);
+
+        btnDisconnect.requestFocus();
     }
 
     private void buildAppsLauncherUI() {
@@ -31207,8 +31420,10 @@ public class MainActivity extends Activity {
             Intent intent = new Intent(Intent.ACTION_VIEW);
             intent.setDataAndType(Uri.fromFile(apkFile), "application/vnd.android.package-archive");
             intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            isIntentionalFocusLoss = true;
             startActivity(intent);
         } catch (Exception e) {
+            isIntentionalFocusLoss = false;
             Toast.makeText(this, getString(R.string.toast_install_failed), Toast.LENGTH_SHORT).show();
         }
     }
@@ -33620,6 +33835,20 @@ public class MainActivity extends Activity {
             if (event == null) return;
             MainActivity activity = MainActivity.instance;
             int keyCode = event.getKeyCode();
+            
+            if (activity.currentScreenState == STATE_USB_STORAGE && !activity.hasWindowFocus()) {
+                if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                    if (keyCode == KeyEvent.KEYCODE_MEDIA_PREVIOUS) {
+                        try { Runtime.getRuntime().exec(new String[]{"su", "-c", "input keyevent 21"}); } catch (Exception ignored) {}
+                    } else if (keyCode == KeyEvent.KEYCODE_MEDIA_NEXT) {
+                        try { Runtime.getRuntime().exec(new String[]{"su", "-c", "input keyevent 22"}); } catch (Exception ignored) {}
+                    } else if (keyCode == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE || keyCode == KeyEvent.KEYCODE_MEDIA_PLAY) {
+                        try { Runtime.getRuntime().exec(new String[]{"su", "-c", "input keyevent 23"}); } catch (Exception ignored) {}
+                    }
+                }
+                return;
+            }
+
             boolean allowBt = activity.isScreenOffControlEnabled || activity.hasActiveMediaPlayback();
             if (!allowBt) return;
 
