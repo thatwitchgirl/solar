@@ -5,8 +5,8 @@
     <!-- Common -->
     <string name="common_back">Back</string>
     <string name="common_enable">Enable</string>
-    <string name="common_cancel_back">〈 CANCEL &amp; BACK</string>
-    <string name="common_back_short">〈 BACK</string>
+    <string name="common_cancel_back">@string/common_back</string>
+    <string name="common_back_short">@string/common_back</string>
     <string name="common_on">On</string>
     <string name="common_off">Off</string>
     <string name="common_check">✓</string>
@@ -46,6 +46,9 @@
     <string name="settings_now_playing_lcd_art_hint">Low-res dithered cover tinted to theme font color</string>
     <string name="settings_now_playing_3d_album_art">3D album art</string>
     <string name="settings_now_playing_3d_album_art_hint">Cover Flow flip and animated handoff to Now Playing</string>
+    <string name="settings_artwork_perspective">Artwork perspective</string>
+    <string name="settings_artwork_perspective_3d_hint">Artwork will be shown in a 3D perspective</string>
+    <string name="settings_artwork_perspective_flat_hint">Artwork will be shown in a flat 2D style</string>
     <string name="settings_sub_themes">Settings: Themes</string>
     <string name="settings_sub_reach">Settings: Reach</string>
     <string name="settings_sub_soulseek">Settings: Reach / Soulseek</string>
@@ -53,6 +56,23 @@
     <string name="settings_sub_soulseek_about">Settings: Reach / Soulseek / About</string>
     <string name="settings_sub_system_update">Settings: System Update</string>
     <string name="settings_sub_about">Settings: About</string>
+    <string name="settings_sub_report_problem">Settings: Report a Problem</string>
+    <string name="settings_report_problem">Report a Problem</string>
+    <string name="settings_contact_developer">Contact the developer</string>
+    <string name="settings_diag_auto_report">Send diagnostic info</string>
+    <string name="settings_diag_auto_report_on_hint">Crash and error logs are sent to the developer over Reach.</string>
+    <string name="settings_diag_auto_report_off_hint">Diagnostic logs are not sent automatically.</string>
+    <string name="settings_report_intro">Report on GitHub or message us from this device when Reach is connected.</string>
+    <string name="settings_report_intro_offline">Reach reporting needs Wi‑Fi and peer connectivity. GitHub is always available.</string>
+    <string name="settings_report_from_device_focus_hint">Opens a private message thread to the Solar developer on Reach.</string>
+    <string name="settings_report_from_device">Report issue from %1$s</string>
+    <string name="settings_report_github_hint">Report bugs on the web at github.com/thesolarproject/solar — or message us from this device when Reach is connected.</string>
+    <string name="settings_report_unreachable">Connect to Wi‑Fi with Reach peer connectivity to report from this device.</string>
+    <string name="solar_development_display_name">Solar Development</string>
+    <string name="solar_developer_display_name">@string/solar_development_display_name</string>
+    <string name="solar_developer_message_from">Message from Solar Development</string>
+    <string name="solar_developer_pm_from_label">From the developer:</string>
+    <string name="solar_developer_reach_badge">Developer support</string>
     <string name="settings_sub_home">Settings: Home Screen</string>
     <string name="settings_sub_home_arrange">Settings: Home Screen / Arrange</string>
     <string name="settings_sub_home_more_arrange">Settings: More Menu</string>
@@ -184,9 +204,9 @@
     <string name="podcasts_download_paused">Download paused — offline playback limited to buffered audio.</string>
 
     <!-- Soulseek extras -->
-    <string name="soulseek_back_search">〈 Back to Search</string>
-    <string name="soulseek_back_settings">〈 Back to Settings</string>
-    <string name="soulseek_back_home">〈 Back to Home</string>
+    <string name="soulseek_back_search">@string/common_back</string>
+    <string name="soulseek_back_settings">@string/common_back</string>
+    <string name="soulseek_back_home">@string/common_back</string>
     <string name="soulseek_empty_results">No results yet</string>
     <string name="keyboard_enter">[ENT]</string>
     <string name="keyboard_blank_auto">blank = dictionary friend code</string>
@@ -221,8 +241,10 @@
     <!-- Settings main -->
     <string name="settings_title">Settings</string>
     <string name="settings_shuffle_mode">Shuffle Mode</string>
+    <string name="settings_playback">Playback</string>
+    <string name="settings_sub_playback">Settings: Playback</string>
     <string name="settings_repeat_mode">Repeat Mode</string>
-    <string name="settings_equalizer">Equalizer (EQ)</string>
+    <string name="settings_equalizer">Equalizer</string>
     <string name="settings_button_sound">Button Sound</string>
     <string name="settings_button_vibrate">Button Vibrate</string>
     <string name="settings_screen_off_control">Screen-Off Control</string>
@@ -232,10 +254,51 @@
     <string name="settings_status_title">Title</string>
     <string name="settings_screen_timeout">Screen Timeout</string>
     <string name="settings_full_width_menus">Full Width Menus</string>
-    <string name="settings_power_off">Power Off (Shutdown)</string>
-    <string name="settings_power_saving_shutdown">Auto Shutdown (30 Min)</string>
+    <string name="settings_menu_transitions">Menu Transitions</string>
+    <string name="settings_menu_transitions_hint">iPod-style slide animations between screens</string>
+    <string name="settings_power_off">Shut Down</string>
+    <string name="settings_power_restart">Restart</string>
+    <string name="settings_power_saving_shutdown">Auto Shut Down</string>
+    <string name="settings_wifi_sleep_power_off">Turn Off Wi‑Fi When Idle</string>
+    <string name="settings_preview_wifi_sleep_power_off">Turns off Wi‑Fi 15 minutes after the screen sleeps on battery. Wi‑Fi turns back on when you wake the device or plug in.</string>
+    <string name="settings_device">Device</string>
+    <string name="settings_sub_device">Settings: Device</string>
+    <string name="settings_library">Library</string>
+    <string name="settings_sub_library">Settings: Library</string>
+    <string name="settings_media">Media</string>
+    <string name="settings_sub_media">Settings: Media</string>
+    <string name="settings_power">Power</string>
+    <string name="settings_sub_power">Settings: Power</string>
+    <string name="settings_reset">Reset</string>
+    <string name="settings_sub_reset">Settings: Reset</string>
+    <string name="settings_reset_rockbox">Rockbox config</string>
+    <string name="settings_reset_solar">Solar config</string>
+    <string name="settings_reset_themes">Stored Y1 themes</string>
+    <string name="settings_reset_microsd">MicroSD contents</string>
+    <string name="settings_reset_caches">Caches</string>
+    <string name="settings_reset_everything">Everything</string>
+    <string name="settings_reset_continue">Continue</string>
+    <string name="settings_preview_reset_rockbox">Deletes the .rockbox folder from Internal Storage (/storage/sdcard0). Rockbox settings, themes, and playlists stored there will be removed.</string>
+    <string name="settings_preview_reset_solar">Clears all Solar app preferences (settings, library rules, Reach/Deezer options, and similar). Does not delete music files unless you also choose MicroSD contents.</string>
+    <string name="settings_preview_reset_themes">Deletes downloaded and custom theme folders on Internal Storage (Themes/ and JJ_Themes/) and Solar\u2019s internal theme cache.</string>
+    <string name="settings_preview_reset_microsd">Removes every file and folder on MicroSD. Files are overwritten once before deletion so standard recovery tools may still find them \u2014 this is not a secure wipe.</string>
+    <string name="settings_preview_reset_caches">Clears album-art caches, Flow thumbnails, stream/download temp files, and other Solar cache data.</string>
+    <string name="settings_preview_reset_everything">Selects all reset options below. Review each item before continuing.</string>
+    <string name="settings_preview_reset_continue">Runs the selected reset steps. You will be asked to confirm before anything is deleted.</string>
+    <string name="dialog_reset_title">Reset selected data?</string>
+    <string name="dialog_reset_message">This will permanently delete the items you selected:\n\n%1$s\n\nContinue?</string>
+    <string name="dialog_reset_confirm">Reset</string>
+    <string name="toast_reset_nothing_selected">Select at least one item to reset.</string>
+    <string name="toast_reset_usb_blocked">Turn off USB storage before resetting MicroSD contents.</string>
+    <string name="toast_reset_working">Resetting\u2026</string>
+    <string name="toast_reset_done">Reset complete.</string>
+    <string name="toast_reset_failed">Reset failed. Some items may be unchanged.</string>
+    <string name="settings_usb">USB</string>
+    <string name="settings_sub_usb">Settings: USB</string>
+    <string name="settings_connections">Connections</string>
+    <string name="settings_sub_connections">Settings: Connections</string>
     <string name="settings_web_server">Wi‑Fi Transfer</string>
-    <string name="settings_wifi_setup">Wi-Fi Setup</string>
+    <string name="settings_wifi_setup">Wi-Fi</string>
     <string name="settings_reach">Reach</string>
     <string name="settings_soulseek">Soulseek</string>
     <string name="settings_deezer">Deezer</string>
@@ -248,14 +311,16 @@
     <string name="about_brought_by_suffix"> Project</string>
     <string name="about_update_button">Update / Change App Version</string>
     <string name="about_update_unavailable">Updates unavailable — check Wi‑Fi connection</string>
-    <string name="settings_bluetooth_setup">Bluetooth Setup</string>
-    <string name="settings_display_brightness">Display Brightness</string>
+    <string name="settings_bluetooth_setup">Bluetooth</string>
+    <string name="settings_display_brightness">Brightness</string>
     <string name="settings_storage_info">Storage info</string>
     <string name="settings_background">Background source</string>
-    <string name="settings_usb_auto_connect">Automatic USB Connection</string>
-    <string name="settings_preview_usb_auto_connect">Skip connection dialogs. Useful for connecting to car stereos via USB automatically.</string>
-    <string name="settings_usb_turn_on">Turn on USB Mode</string>
-    <string name="settings_preview_usb_turn_on">Enable USB storage mode manually. Use this when you dismissed the USB connection prompt.</string>
+    <string name="settings_usb_auto_connect">Auto-Connect</string>
+    <string name="settings_preview_usb_auto_connect">Enable USB storage automatically when a PC connects.</string>
+    <string name="settings_usb_suppress_prompt">Skip Plug-In Prompt</string>
+    <string name="settings_preview_usb_suppress_prompt">Don\u2019t show USB storage prompt when a cable is connected.</string>
+    <string name="settings_usb_turn_on">Enable Now</string>
+    <string name="settings_preview_usb_turn_on">Turn on USB storage manually.</string>
     <string name="settings_background_source">Background Image Source</string>
     <string name="settings_player_album_blur">Blurred album artwork</string>
     <string name="bg_section_theme_wallpapers">Theme wallpapers (480×360)</string>
@@ -267,8 +332,8 @@
 
     <string name="settings_select_background">Select New Background</string>
     <string name="settings_clear_background">Clear Custom Background</string>
-    <string name="settings_clear_cache">Clear Album Art Cache</string>
-    <string name="settings_datetime">Date &amp; Time Settings</string>
+    <string name="settings_clear_cache">Clear Art Cache</string>
+    <string name="settings_datetime">Date &amp; Time</string>
     <string name="settings_widgets_section">Widgets</string>
     <string name="settings_theme_header">━ SELECT APP THEME ━</string>
     <string name="settings_focus_theme">Focus a theme</string>
@@ -430,7 +495,7 @@
     <string name="loading_connecting">Connecting…</string>
 
     <!-- Themes -->
-    <string name="theme_back_gallery">〈 BACK TO GALLERY</string>
+    <string name="theme_back_gallery">@string/common_back</string>
     <string name="theme_themes_title">Themes</string>
     <string name="theme_get_themes_title">Themes</string>
 
@@ -478,7 +543,7 @@
     <string name="soulseek_show_more">Show more (%1$d of %2$d)</string>
     <string name="soulseek_add_to_queue">Add to queue</string>
     <string name="soulseek_see_more_like_this">See more like this</string>
-    <string name="soulseek_back_results">〈 Back to Results</string>
+    <string name="soulseek_back_results">@string/common_back</string>
     <string name="soulseek_play">▶ Play</string>
     <string name="soulseek_save">Save to Library</string>
     <string name="soulseek_buffering">Buffering… %1$d%%</string>
@@ -564,7 +629,7 @@
     <string name="soulseek_user_unblocked">Unblocked %1$s</string>
     <string name="soulseek_user_favorited">Added %1$s to friends</string>
     <string name="soulseek_user_unfavorited">Removed %1$s from friends</string>
-    <string name="soulseek_back_find_reach">Back to Reach users</string>
+    <string name="soulseek_back_find_reach">@string/common_back</string>
     <string name="soulseek_user_lookup_loading">Looking up %1$s…</string>
     <string name="soulseek_user_lookup_failed">Could not look up %1$s: %2$s</string>
     <string name="soulseek_reach_status_line">%1$s · %2$s · %3$s</string>
@@ -604,7 +669,7 @@
     <string name="soulseek_browse_empty_library">This user has no browsable files right now.</string>
     <string name="soulseek_browse_empty_folder">This folder is empty.</string>
     <string name="soulseek_browse_failed">Browse failed: %1$s</string>
-    <string name="soulseek_browse_back">Back</string>
+    <string name="soulseek_browse_back">@string/common_back</string>
     <string name="soulseek_user_status">%1$s — %2$s · %3$d files</string>
     <string name="soulseek_user_offline">offline</string>
     <string name="soulseek_user_online">online</string>
@@ -626,8 +691,8 @@
     <string name="soulseek_enable_sharing_hint">Enable sharing in Reach settings to download from users who require reciprocity.</string>
     <string name="soulseek_user_no_files">No shared files listed</string>
     <string name="soulseek_peer_files">%1$d files shared</string>
-    <string name="soulseek_back_messages">Back to messages</string>
-    <string name="soulseek_back_chat_rooms">Back to chat rooms</string>
+    <string name="soulseek_back_messages">@string/common_back</string>
+    <string name="soulseek_back_chat_rooms">@string/common_back</string>
     <string name="soulseek_conversation_with">Conversation with %1$s</string>
     <string name="soulseek_conversation_empty">No messages yet. Select a message and press OK to reply.</string>
     <string name="soulseek_reply_to">Reply to \"%1$s\":</string>
@@ -671,9 +736,9 @@
     <string name="deezer_searching">Searching…</string>
     <string name="deezer_no_results">No results found.</string>
     <string name="deezer_search_error">Search failed: %1$s</string>
-    <string name="deezer_back_home">〈 Back</string>
-    <string name="deezer_back_search">〈 Back to Search</string>
-    <string name="deezer_back_results">〈 Back to Results</string>
+    <string name="deezer_back_home">@string/common_back</string>
+    <string name="deezer_back_search">@string/common_back</string>
+    <string name="deezer_back_results">@string/common_back</string>
     <string name="deezer_play">▶ Play</string>
     <string name="deezer_save">Save to Library</string>
     <string name="deezer_play_album">Play album</string>
@@ -688,8 +753,12 @@
     <string name="deezer_download_retrying">Retrying download…</string>
     <string name="deezer_download_failed">Download failed: %1$s</string>
     <string name="deezer_saved">Saved to library</string>
+    <string name="usb_connection_title">USB Connection</string>
     <string name="usb_mass_storage_title">USB connected</string>
     <string name="usb_mass_storage_turn_on">Turn on USB storage</string>
+    <string name="usb_storage_mode_title">Device is in USB Storage mode</string>
+    <string name="usb_storage_mode_body">Eject this player from your computer, then disconnect the USB cable to continue using Solar.</string>
+    <string name="usb_storage_queue_blocked">Please disconnect the USB to view your playback queue.</string>
     <string name="deezer_queued">Added to queue</string>
     <string name="deezer_error_unknown">Unknown error</string>
     <string name="deezer_show_more">Show more (%1$d)</string>
@@ -726,9 +795,9 @@
     <string name="get_music_searching_reach">Searching Reach…</string>
     <string name="get_music_recent_searches">Recent searches</string>
     <string name="get_music_type_search">Type search…</string>
-    <string name="get_music_back_home">Back to Home</string>
-    <string name="get_music_back_search">Back to search</string>
-    <string name="get_music_back_results">Back to results</string>
+    <string name="get_music_back_home">@string/common_back</string>
+    <string name="get_music_back_search">@string/common_back</string>
+    <string name="get_music_back_results">@string/common_back</string>
     <string name="get_music_empty_results">No results</string>
     <string name="get_music_empty_unified">No matches on Deezer or Reach</string>
     <string name="get_music_search_again">Search again</string>
@@ -745,7 +814,7 @@
     <string name="get_music_searching_soulseek">Searching Soulseek…</string>
     <string name="get_music_deezer_error">Deezer search failed: %1$s</string>
     <string name="get_music_status_title">Get Music</string>
-    <string name="deezer_back_settings">〈 Deezer</string>
+    <string name="deezer_back_settings">@string/common_back</string>
     <string name="deezer_playlists_section">Deezer playlists</string>
     <string name="deezer_playlists_loading">Loading playlists…</string>
     <string name="deezer_playlists_empty">No Deezer playlists</string>
@@ -764,7 +833,7 @@
     <string name="get_music_loading_container">Loading…</string>
     <string name="get_music_folder_row">Folder · %1$s</string>
     <string name="get_music_container_tracks">%1$d tracks</string>
-    <string name="get_music_back_containers">Back to results</string>
+    <string name="get_music_back_containers">@string/common_back</string>
     <string name="get_music_path_container">Get Music / %1$s</string>
     <string name="back_force_quit_hint">Keep holding Back to quit Solar…</string>
     <string name="soulseek_interests">Interests</string>
@@ -831,9 +900,9 @@
 
     <!-- Podcasts -->
     <string name="podcasts_title">Podcasts</string>
-    <string name="podcasts_back_home">Back to Home</string>
-    <string name="podcasts_back_search">Back to Search</string>
-    <string name="podcasts_back_results">Back to Results</string>
+    <string name="podcasts_back_home">@string/common_back</string>
+    <string name="podcasts_back_search">@string/common_back</string>
+    <string name="podcasts_back_results">@string/common_back</string>
     <string name="podcasts_wifi_required_stream">Internet connection required for podcast streaming.</string>
     <string name="podcasts_wifi_required_search">Internet connection required for podcast search.</string>
     <string name="podcasts_wifi_required_episodes">Internet connection required to load episodes.</string>
@@ -852,15 +921,15 @@
     <string name="podcasts_save_hint">Hold center: Save to Library</string>
     <string name="podcasts_saved_badge">[Saved]</string>
     <string name="context_menu_title">Options</string>
-    <string name="context_back">Back</string>
+    <string name="context_back">@string/common_back</string>
     <string name="context_browse_artist">Artist: %1$s</string>
     <string name="context_browse_album">Album: %1$s</string>
     <string name="context_browse_genre">Genre: %1$s</string>
     <string name="context_browse_playlist">Playlist: %1$s</string>
     <string name="context_action_save_episode">Save to Library</string>
-    <string name="context_action_back_episodes">Back to episodes</string>
+    <string name="context_action_back_episodes">@string/common_back</string>
     <string name="context_action_play_now">Play now</string>
-    <string name="context_action_back_library">Back to library</string>
+    <string name="context_action_back_library">@string/common_back</string>
     <string name="context_action_shuffle_toggle">Toggle shuffle</string>
     <string name="context_action_repeat_cycle">Cycle repeat</string>
     <string name="context_action_play_pause">Play / Pause</string>
@@ -904,6 +973,7 @@
     <string name="context_action_open_reach">Get Music</string>
     <string name="context_action_open_apps">Open Apps</string>
     <string name="context_action_lock_screen">Lock Screen</string>
+    <string name="context_go_to_home">Go to Home</string>
     <string name="context_quick_volume">Volume</string>
     <string name="context_quick_brightness">Brightness</string>
     <string name="context_hold_back_hint">Hold back button for Options</string>
@@ -927,6 +997,9 @@
     <string name="context_shutdown_title">Shut down?</string>
     <string name="context_shutdown_message">The device will power off.</string>
     <string name="context_shutdown_confirm">Shut down</string>
+    <string name="context_restart_title">Restart?</string>
+    <string name="context_restart_message">The device will restart.</string>
+    <string name="context_restart_confirm">Restart</string>
     <string name="context_find_like_this">Find like this</string>
     <string name="update_installing_title">Installing update</string>
     <string name="update_install_reboot">Installing update… device will reboot.</string>
@@ -1004,17 +1077,27 @@
     <string name="dialog_rockbox_rebooting">Please wait…\nSwitching to Rockbox.</string>
     <string name="dialog_rockbox_failed">Failed: Root access required.</string>
     <string name="dialog_rockbox_unavailable">Rockbox is not installed on this device.</string>
-    <string name="settings_switch_rockbox">Switch to Rockbox</string>
+    <string name="settings_switch_rockbox">Rockbox</string>
     <string name="settings_switch_rockbox_hint">No reboot. Switch back from Rockbox System menu or hold Back+Play.</string>
-    <string name="settings_sub_debug">Debug</string>
-    <string name="settings_debug_jj_themes">JJ theme engine (experimental)</string>
+    <string name="settings_sub_debug">Debug and Experiments</string>
+    <string name="settings_appearance_status">Status bar &amp; fonts</string>
+    <string name="settings_appearance_layout">Layout &amp; motion</string>
+    <string name="settings_sub_appearance_status">Settings: Appearance / Status bar</string>
+    <string name="settings_sub_appearance_layout">Settings: Appearance / Layout</string>
+    <string name="settings_debug_jj_themes">JJ Themes</string>
     <string name="settings_debug_jj_themes_hint">Use themes from /JJ_Themes/ instead of Y1 Themes/</string>
     <string name="playlist_stream_save_failed">Could not save stream track to playlist: %1$s</string>
-    <string name="settings_debug_show_error_toasts">Show error toasts</string>
+    <string name="settings_debug_show_error_toasts">Error Toasts</string>
     <string name="settings_debug_show_error_toasts_hint">Soulseek and Deezer download warnings</string>
-    <string name="settings_debug_flow_enabled">Flow (experimental)</string>
-    <string name="settings_debug_flow_ok_library">Flow OK opens Library browse</string>
-    <string name="settings_debug_flow_theme">Flow theme decoration (experimental)</string>
+    <string name="settings_debug_dev_support_experiment">Developer support (experiment)</string>
+    <string name="settings_debug_flow_enabled">Flow Mode</string>
+    <string name="settings_debug_flow_ok_library">OK → Library</string>
+    <string name="settings_debug_flow_theme">Theme Decoration</string>
+    <string name="settings_debug_flow_no_reflections">No Reflections</string>
+    <string name="settings_sub_flow">Flow</string>
+    <string name="settings_flow_multi_track_albums">Multi-Track Albums</string>
+    <string name="flow_building_library">Building library…</string>
+    <string name="flow_starting">Starting Flow…</string>
     <string name="status_flow">Flow</string>
     <string name="flow_open">Flow</string>
     <string name="flow_open_section">Open in Flow</string>
@@ -1025,6 +1108,9 @@
     <string name="flow_empty">Nothing to show</string>
     <string name="flow_loading">Loading…</string>
     <string name="flow_loading_episodes">Loading episodes…</string>
+    <string name="library_scanning">Scanning library…</string>
+    <string name="library_scan_progress">Scanning… %1$d tracks</string>
+    <string name="library_art_cache_progress">Building album art… %1$d / %2$d</string>
     <string name="context_wifi_scanning">Scanning for networks…</string>
     <string name="context_bluetooth_scanning">Scanning for devices…</string>
     <string name="dialog_clear_cache_title">Clear Cache</string>
@@ -1085,7 +1171,7 @@
     <string name="status_photos">Photos</string>
     <string name="status_photo_viewer">Photo</string>
 
-    <string name="radio_back_home">〈 Radio</string>
+    <string name="radio_back_home">@string/common_back</string>
     <string name="radio_fm_row">FM Radio</string>
     <string name="radio_internet_row">Internet Radio</string>
     <string name="radio_fm_tune_manual">Tune manually</string>

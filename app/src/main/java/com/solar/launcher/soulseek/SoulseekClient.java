@@ -1,9 +1,11 @@
 package com.solar.launcher.soulseek;
 
 import android.content.Context;
+import android.content.SharedPreferences;
 import android.net.wifi.WifiManager;
 import android.os.PowerManager;
 
+import com.solar.launcher.Debug843b96Log;
 import com.solar.launcher.DeviceFeatures;
 import com.solar.launcher.ReachPeerConnectivity;
 
@@ -628,27 +630,37 @@ public final class SoulseekClient extends Thread {
   }
 
   /** Lightweight login probe — no listen socket or background reader. */
-  public static String testLogin(String user, String pass) {
-    Socket sock = null;
-    try {
-      sock = new Socket();
-      sock.connect(new InetSocketAddress(SoulseekWire.SERVER_HOST, SoulseekWire.SERVER_PORT), 15000);
-      OutputStream out = sock.getOutputStream();
-      out.write(SoulseekWire.serverMessage(SoulseekWire.MSG_LOGIN, SoulseekWire.loginBody(user, pass)));
-      out.flush();
-      SoulseekWire.ServerFrame greet = SoulseekWire.readServerFrame(sock.getInputStream());
-      if (greet.code != SoulseekWire.MSG_LOGIN) return "Unexpected login response";
-      SoulseekWire.Reader r = new SoulseekWire.Reader(greet.body);
-      if (!r.readBool()) {
-        return r.hasRemaining() ? r.readString() : "rejected";
-      }
-      return null;
-    } catch (Exception e) {
-      return e.getMessage() != null ? e.getMessage() : "Login failed";
-    } finally {
-      closeQuietly(sock);
+    public static String testLogin(String user, String pass) {
+        return testLoginWithMajor(user, pass, SoulseekWire.CLIENT_MAJOR, SoulseekWire.clientMinor());
     }
-  }
+
+    /** Probe/register PM identities with Nicotine+ client id (same as diag relay session). */
+    public static String testLoginPm(String user, String pass) {
+        return testLoginWithMajor(user, pass, SoulseekWire.CLIENT_MAJOR_PM, SoulseekWire.CLIENT_MINOR_PM);
+    }
+
+    private static String testLoginWithMajor(String user, String pass, int major, int minor) {
+        Socket sock = null;
+        try {
+            sock = new Socket();
+            sock.connect(new InetSocketAddress(SoulseekWire.SERVER_HOST, SoulseekWire.SERVER_PORT), 15000);
+            OutputStream out = sock.getOutputStream();
+            out.write(SoulseekWire.serverMessage(SoulseekWire.MSG_LOGIN,
+                    SoulseekWire.loginBody(user, pass, major, minor)));
+            out.flush();
+            SoulseekWire.ServerFrame greet = SoulseekWire.readServerFrame(sock.getInputStream());
+            if (greet.code != SoulseekWire.MSG_LOGIN) return "Unexpected login response";
+            SoulseekWire.Reader r = new SoulseekWire.Reader(greet.body);
+            if (!r.readBool()) {
+                return r.hasRemaining() ? r.readString() : "rejected";
+            }
+            return null;
+        } catch (Exception e) {
+            return e.getMessage() != null ? e.getMessage() : "Login failed";
+        } finally {
+            closeQuietly(sock);
+        }
+    }
 
   private void markPeerDenied(String peerUser, String reason) {
     if (peerUser == null) return;
@@ -1894,8 +1906,16 @@ public final class SoulseekClient extends Thread {
         } catch (Exception ignored) {}
         return;
       }
-      if (messagingEnabled && socialListener != null) {
-        socialListener.onPrivateMessage(msgId, timestamp, from, text);
+      if (socialListener != null) {
+        // Developer support PMs when experiment is on — even if Reach messaging is off.
+        SharedPreferences reachPrefs = appContext.getSharedPreferences(
+                "SOLAR_SETTINGS", Context.MODE_PRIVATE);
+        boolean devSupport = SolarDeveloperAccounts.isDeveloper(from)
+                && SolarDeveloperAccounts.isExperimentEnabled(reachPrefs);
+        boolean deliver = messagingEnabled || devSupport;
+        if (deliver) {
+          socialListener.onPrivateMessage(msgId, timestamp, from, text);
+        }
       }
     } catch (Exception e) {
       debugLog("pm parse fail: " + e);
@@ -2035,6 +2055,23 @@ public final class SoulseekClient extends Thread {
         }
       }
     }, "SoulseekPM").start();
+  }
+
+  /** Blocking PM send for multi-recipient batches — call from a worker thread only. */
+  void sendPrivateMessageSync(String peerUser, String text) throws Exception {
+    // #region agent log
+    try {
+      org.json.JSONObject d = new org.json.JSONObject();
+      d.put("peer", peerUser);
+      d.put("textLen", text != null ? text.length() : 0);
+      d.put("loggedIn", loggedIn);
+      d.put("running", running.get());
+      d.put("sender", username);
+      agentLog("SoulseekClient.sendPrivateMessageSync", "enter", "C", d);
+      Debug843b96Log.log(appContext, "SoulseekClient.sendPrivateMessageSync", "enter", "C-F", d);
+    } catch (Exception ignored) {}
+    // #endregion
+    sendPrivateMessageInternal(peerUser, text);
   }
 
   private void sendPrivateMessageInternal(String peerUser, String text) throws Exception {
@@ -2483,15 +2520,23 @@ public final class SoulseekClient extends Thread {
         }
         closeQuietly(peer);
       }
-    } catch (Exception e) {
+    } catch (Throwable e) {
       debugLog("incoming peer fail: " + e);
       closeQuietly(peer);
     }
   }
 
+  /** Whether inbound P socket stays open for async upload after queue accept. */
+  enum UploadHandoffResult { DENIED, QUEUED, ACTIVE }
+
+  static boolean shouldRetainPeerSocketAfterQueueUpload(UploadHandoffResult result) {
+    return result == UploadHandoffResult.QUEUED || result == UploadHandoffResult.ACTIVE;
+  }
+
   private void handlePeerSocket(Socket peer, String peerUser) {
     final String key = peerUser.toLowerCase(Locale.US);
     peerPSockets.put(key, peer);
+    boolean handoffPeer = false;
     try {
       InputStream in = peer.getInputStream();
       while (running.get() && !peer.isClosed()) {
@@ -2517,7 +2562,8 @@ public final class SoulseekClient extends Thread {
         } else if (frame.code == SoulseekWire.PEER_QUEUE_UPLOAD) {
           SoulseekWire.Reader rq = new SoulseekWire.Reader(frame.body);
           String filename = rq.readString();
-          handleQueueUpload(peer, peerUser, filename);
+          UploadHandoffResult handoff = handleQueueUpload(peer, peerUser, filename);
+          handoffPeer = shouldRetainPeerSocketAfterQueueUpload(handoff);
           return;
         } else if (frame.code == SoulseekWire.PEER_TRANSFER_REQUEST) {
           SoulseekWire.Reader tr = new SoulseekWire.Reader(frame.body);
@@ -2525,7 +2571,8 @@ public final class SoulseekClient extends Thread {
           if (direction == SoulseekWire.TRANSFER_DOWNLOAD && tr.hasRemaining()) {
             tr.readUInt32();
             String filename = tr.readString();
-            handleQueueUpload(peer, peerUser, filename);
+            UploadHandoffResult handoff = handleQueueUpload(peer, peerUser, filename);
+            handoffPeer = shouldRetainPeerSocketAfterQueueUpload(handoff);
             return;
           }
           if (direction == SoulseekWire.TRANSFER_UPLOAD && pendingDownload != null) {
@@ -2571,7 +2618,10 @@ public final class SoulseekClient extends Thread {
       debugLog("peer socket end " + peerUser + ": " + e);
     } finally {
       peerPSockets.remove(key);
-      closeQuietly(peer);
+      // runUpload owns P until transfer handshake completes; queued uploads keep socket too.
+      if (!handoffPeer) {
+        closeQuietly(peer);
+      }
     }
   }
 
@@ -2640,18 +2690,18 @@ public final class SoulseekClient extends Thread {
     peer.getOutputStream().flush();
   }
 
-  private void handleQueueUpload(Socket peer, String peerUser, String filename) {
+  private UploadHandoffResult handleQueueUpload(Socket peer, String peerUser, String filename) {
     try {
       if (!sharePolicy.acceptNewUploads()) {
         sendUploadDenied(peer, filename, "Not sharing");
         closeQuietly(peer);
-        return;
+        return UploadHandoffResult.DENIED;
       }
       final File file = shareIndex.resolve(filename);
       if (file == null) {
         sendUploadDenied(peer, filename, "File not shared");
         closeQuietly(peer);
-        return;
+        return UploadHandoffResult.DENIED;
       }
       QueuedUpload deferred = null;
       synchronized (uploadLock) {
@@ -2663,7 +2713,7 @@ public final class SoulseekClient extends Thread {
         } else {
           sendUploadDenied(peer, filename, "Busy");
           closeQuietly(peer);
-          return;
+          return UploadHandoffResult.DENIED;
         }
       }
       int place;
@@ -2673,11 +2723,14 @@ public final class SoulseekClient extends Thread {
       sendPlaceInQueue(peer, filename, place);
       if (deferred == null) {
         runUpload(peer, peerUser, filename, file);
+        return UploadHandoffResult.ACTIVE;
       }
+      return UploadHandoffResult.QUEUED;
     } catch (Exception e) {
       debugLog("queue upload fail: " + e);
       finishUploadSlot(null);
       closeQuietly(peer);
+      return UploadHandoffResult.DENIED;
     }
   }
 

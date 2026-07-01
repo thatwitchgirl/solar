@@ -1,5 +1,9 @@
 package com.solar.launcher;
 
+import com.solar.launcher.Debug843b96Log;
+
+import org.json.JSONObject;
+
 /** ponytail: stop background work when leaving a feature screen. */
 public final class SessionLifecycle {
 
@@ -9,7 +13,17 @@ public final class SessionLifecycle {
         if (from == to) return;
 
         if (from == MainActivity.STATE_SOULSEEK && to != MainActivity.STATE_SOULSEEK) {
-            if (activity.keepReachStreamHandoffForScreen(to)) {
+            final boolean keep = activity.keepSoulseekSessionForScreen(to);
+            // #region agent log
+            try {
+                JSONObject d = new JSONObject();
+                d.put("from", from);
+                d.put("to", to);
+                d.put("keep", keep);
+                Debug843b96Log.log(null, "SessionLifecycle.onLeaveScreen", "soulseek leave", "GM-C", d);
+            } catch (Exception ignored) {}
+            // #endregion
+            if (keep) {
                 activity.pauseSoulseekUiOnly();
             } else {
                 activity.teardownSoulseekSession();
@@ -32,7 +46,8 @@ public final class SessionLifecycle {
         if (from == MainActivity.STATE_BROWSER && to != MainActivity.STATE_BROWSER) {
             activity.teardownBrowserSession();
         }
-        if (from == MainActivity.STATE_FLOW && to != MainActivity.STATE_FLOW) {
+        if (from == MainActivity.STATE_FLOW && to != MainActivity.STATE_FLOW
+                && to != MainActivity.STATE_PLAYER) {
             activity.teardownFlowSession();
         }
         if (from == MainActivity.STATE_DEEZER && to != MainActivity.STATE_DEEZER) {

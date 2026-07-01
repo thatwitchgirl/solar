@@ -31,15 +31,22 @@ public final class FlowCatalog {
         public final String album;
         public final String albumArtist;
         public final long lastModified;
+        public final int trackNumber;
 
         public SongRow(File file, String title, String artist, String album,
                 String albumArtist, long lastModified) {
+            this(file, title, artist, album, albumArtist, lastModified, 0);
+        }
+
+        public SongRow(File file, String title, String artist, String album,
+                String albumArtist, long lastModified, int trackNumber) {
             this.file = file;
             this.title = title != null ? title : "";
             this.artist = artist != null ? artist : "";
             this.album = album != null ? album : "";
             this.albumArtist = albumArtist != null ? albumArtist : "";
             this.lastModified = lastModified;
+            this.trackNumber = trackNumber;
         }
     }
 
@@ -71,11 +78,20 @@ public final class FlowCatalog {
 
     public static List<FlowItem> buildAlbums(List<SongRow> library, LibraryBrowsePrefs prefs,
             List<ArtistBrowsePolicy.Track> policyTracks) {
+        return buildAlbums(library, prefs, policyTracks, false);
+    }
+
+    /**
+     * Two-pass album catalog — artist vote pass then item build; O(n) not O(n²).
+     * @param multiTrackOnly when true, omit albums with only one track (Flow settings).
+     */
+    public static List<FlowItem> buildAlbums(List<SongRow> library, LibraryBrowsePrefs prefs,
+            List<ArtistBrowsePolicy.Track> policyTracks, boolean multiTrackOnly) {
         if (library == null || library.isEmpty()) return Collections.emptyList();
         Map<String, String> albumByKey = new HashMap<String, String>();
-        Map<String, String> albumSubtitle = new HashMap<String, String>();
-        Map<String, List<File>> tracksByKey = new HashMap<String, List<File>>();
-        Map<String, String> primaryArtistByKey = new HashMap<String, String>();
+        Map<String, List<File>> tracksByAlbumKey = new HashMap<String, List<File>>();
+        // ponytail: pass 1 counts artist votes per albumKey; pass 2 groups tracks; finalize picks primary artist.
+        Map<String, Map<String, Integer>> artistVotesByAlbumKey = new HashMap<String, Map<String, Integer>>();
 
         for (SongRow song : library) {
             if (song.album == null || song.album.trim().isEmpty()
@@ -84,28 +100,35 @@ public final class FlowCatalog {
             String albumKey = AlbumNames.matchKey(album);
             if (prefs != null && prefs.normalizeAlbumCase()) {
                 registerAlbumVariant(albumByKey, album);
-                album = albumByKey.get(albumKey);
             } else {
                 albumByKey.put(albumKey, album);
             }
-            String artist = primaryArtistForAlbum(album, song, library, prefs, policyTracks);
-            String itemKey = FlowCoverResolver.albumMatchKey(album, artist);
-            if (!primaryArtistByKey.containsKey(itemKey)) {
-                primaryArtistByKey.put(itemKey, artist);
+            String rawArtist = song.artist != null ? song.artist.trim() : "";
+            if (!rawArtist.isEmpty()) {
+                Map<String, Integer> votes = artistVotesByAlbumKey.get(albumKey);
+                if (votes == null) {
+                    votes = new HashMap<String, Integer>();
+                    artistVotesByAlbumKey.put(albumKey, votes);
+                }
+                Integer n = votes.get(rawArtist);
+                votes.put(rawArtist, n != null ? n + 1 : 1);
             }
-            List<File> tracks = tracksByKey.get(itemKey);
-            if (tracks == null) {
-                tracks = new ArrayList<File>();
-                tracksByKey.put(itemKey, tracks);
-            }
-            if (song.file != null && song.file.isFile()) tracks.add(song.file);
-            if (!albumByKey.containsKey(itemKey)) albumByKey.put(itemKey, album);
-            String sub = ArtistBrowsePolicy.albumBrowseSubtitle(album, artist, policyTracks, prefs);
-            if (sub != null && !sub.isEmpty()) albumSubtitle.put(itemKey, sub);
         }
 
-        List<String> keys = new ArrayList<String>(tracksByKey.keySet());
-        Collections.sort(keys, new Comparator<String>() {
+        for (SongRow song : library) {
+            if (song.album == null || song.album.trim().isEmpty()
+                    || "Unknown Album".equalsIgnoreCase(song.album.trim())) continue;
+            String albumKey = AlbumNames.matchKey(song.album.trim());
+            List<File> tracks = tracksByAlbumKey.get(albumKey);
+            if (tracks == null) {
+                tracks = new ArrayList<File>();
+                tracksByAlbumKey.put(albumKey, tracks);
+            }
+            if (song.file != null && song.file.isFile()) tracks.add(song.file);
+        }
+
+        List<String> albumKeys = new ArrayList<String>(tracksByAlbumKey.keySet());
+        Collections.sort(albumKeys, new Comparator<String>() {
             @Override
             public int compare(String a, String b) {
                 String aa = albumByKey.get(a);
@@ -115,13 +138,33 @@ public final class FlowCatalog {
         });
 
         List<FlowItem> out = new ArrayList<FlowItem>();
-        for (String key : keys) {
-            String album = albumByKey.get(key);
-            String artist = primaryArtistByKey.get(key);
-            String sub = albumSubtitle.containsKey(key) ? albumSubtitle.get(key) : artist;
-            out.add(FlowItem.album(album, sub, key, sortTracks(tracksByKey.get(key), prefs), ""));
+        for (String albumKey : albumKeys) {
+            List<File> tracks = tracksByAlbumKey.get(albumKey);
+            if (multiTrackOnly && (tracks == null || tracks.size() <= 1)) continue;
+            String album = albumByKey.get(albumKey);
+            String artist = primaryArtistFromVotes(artistVotesByAlbumKey.get(albumKey), "");
+            String itemKey = FlowCoverResolver.albumMatchKey(album, artist);
+            String sub = ArtistBrowsePolicy.albumBrowseSubtitle(album, artist, policyTracks, prefs);
+            if (sub == null || sub.isEmpty()) sub = artist;
+            out.add(FlowItem.album(album, sub, itemKey, sortTracks(tracks, prefs, library), ""));
         }
         return out;
+    }
+
+    /** Pick dominant artist tag for an album — same policy as legacy primaryArtistForAlbum. */
+    public static String primaryArtistFromVotes(Map<String, Integer> votes, String seedArtist) {
+        if (votes == null || votes.isEmpty()) {
+            return seedArtist != null ? seedArtist.trim() : "";
+        }
+        String best = seedArtist != null ? seedArtist.trim() : "";
+        int bestCount = 0;
+        for (Map.Entry<String, Integer> e : votes.entrySet()) {
+            if (e.getValue() > bestCount) {
+                bestCount = e.getValue();
+                best = e.getKey();
+            }
+        }
+        return best != null ? best : "";
     }
 
     private static void registerAlbumVariant(Map<String, String> albumByKey, String raw) {
@@ -191,7 +234,7 @@ public final class FlowCatalog {
             LibraryBrowsePrefs prefs) {
         if (item == null || library == null) return Collections.emptyList();
         if (item.tracks != null && !item.tracks.isEmpty()) {
-            return sortTracks(new ArrayList<File>(item.tracks), prefs);
+            return sortTracks(new ArrayList<File>(item.tracks), prefs, library);
         }
         String artistFilter = null;
         int pipe = item.matchKey != null ? item.matchKey.indexOf('|') : -1;
@@ -207,7 +250,7 @@ public final class FlowCatalog {
             }
             if (song.file != null && song.file.isFile()) out.add(song.file);
         }
-        return sortTracks(out, prefs);
+        return sortTracks(out, prefs, library);
     }
 
     /** Tracks for artist — respects guest browse policy. */
@@ -221,7 +264,7 @@ public final class FlowCatalog {
                 out.add(song.file);
             }
         }
-        return sortTracks(out, prefs);
+        return sortTracks(out, prefs, library);
     }
 
     /** Album sub-items on artist flip-back. */
@@ -257,27 +300,67 @@ public final class FlowCatalog {
             String album = display.get(key);
             String sub = ArtistBrowsePolicy.albumBrowseSubtitle(album, artist, policyTracks, prefs);
             String match = FlowCoverResolver.albumMatchKey(album, artist);
-            out.add(FlowItem.album(album, sub, match, sortTracks(byAlbum.get(key), prefs), artist));
+            out.add(FlowItem.album(album, sub, match, sortTracks(byAlbum.get(key), prefs, library), artist));
         }
         return out;
     }
 
-    private static List<File> sortTracks(List<File> tracks, LibraryBrowsePrefs prefs) {
-        if (tracks == null || tracks.size() <= 1) return tracks != null ? tracks : Collections.<File>emptyList();
+    private static List<File> sortTracks(List<File> tracks, LibraryBrowsePrefs prefs,
+            List<SongRow> library) {
+        if (tracks == null || tracks.size() <= 1) {
+            return tracks != null ? tracks : Collections.<File>emptyList();
+        }
+        final Map<File, SongRow> byFile = new HashMap<File, SongRow>();
+        if (library != null) {
+            for (SongRow row : library) {
+                if (row.file != null) byFile.put(row.file, row);
+            }
+        }
         final int sort = prefs != null ? prefs.songSort() : LibraryBrowsePrefs.SONG_SORT_TITLE;
         List<File> copy = new ArrayList<File>(tracks);
         Collections.sort(copy, new Comparator<File>() {
             @Override
             public int compare(File a, File b) {
+                SongRow sa = byFile.get(a);
+                SongRow sb = byFile.get(b);
                 if (sort == LibraryBrowsePrefs.SONG_SORT_DATE) {
                     return Long.signum(a.lastModified() - b.lastModified());
                 }
-                String ta = trackLabel(a);
-                String tb = trackLabel(b);
-                return ta.compareToIgnoreCase(tb);
+                if (sort == LibraryBrowsePrefs.SONG_SORT_ALBUM
+                        || sort == LibraryBrowsePrefs.SONG_SORT_ARTIST) {
+                    int ta = sa != null ? sa.trackNumber : 0;
+                    int tb = sb != null ? sb.trackNumber : 0;
+                    if (ta > 0 && tb > 0 && ta != tb) return Integer.compare(ta, tb);
+                }
+                String la = sa != null && !sa.title.isEmpty() ? sa.title : trackLabel(a);
+                String lb = sb != null && !sb.title.isEmpty() ? sb.title : trackLabel(b);
+                return la.compareToIgnoreCase(lb);
             }
         });
         return copy;
+    }
+
+    /** Display label for a track file — ID3 title with optional track number prefix. */
+    public static String trackDisplayLabel(File f, List<SongRow> library) {
+        if (f == null) return "";
+        SongRow row = findSongRow(f, library);
+        String title = row != null && !row.title.isEmpty() ? row.title : trackLabel(f);
+        if (row != null && row.trackNumber > 0) {
+            return String.format(Locale.US, "%02d %s", row.trackNumber, title);
+        }
+        return title;
+    }
+
+    static SongRow findSongRow(File f, List<SongRow> library) {
+        if (f == null || library == null) return null;
+        for (SongRow row : library) {
+            if (f.equals(row.file)) return row;
+        }
+        return null;
+    }
+
+    private static List<File> sortTracks(List<File> tracks, LibraryBrowsePrefs prefs) {
+        return sortTracks(tracks, prefs, null);
     }
 
     private static String trackLabel(File f) {
@@ -286,23 +369,4 @@ public final class FlowCatalog {
         return dot > 0 ? n.substring(0, dot) : n;
     }
 
-    private static String primaryArtistForAlbum(String album, SongRow seed, List<SongRow> library,
-            LibraryBrowsePrefs prefs, List<ArtistBrowsePolicy.Track> policyTracks) {
-        Map<String, Integer> counts = new HashMap<String, Integer>();
-        for (SongRow song : library) {
-            if (!AlbumNames.equals(song.album, album)) continue;
-            String a = song.artist != null ? song.artist.trim() : "";
-            if (a.isEmpty()) continue;
-            counts.put(a, counts.containsKey(a) ? counts.get(a) + 1 : 1);
-        }
-        String best = seed.artist;
-        int bestCount = 0;
-        for (Map.Entry<String, Integer> e : counts.entrySet()) {
-            if (e.getValue() > bestCount) {
-                bestCount = e.getValue();
-                best = e.getKey();
-            }
-        }
-        return best != null ? best : "";
-    }
 }

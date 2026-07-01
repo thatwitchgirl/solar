@@ -1,7 +1,7 @@
 #!/system/bin/sh
 # Solar Y1 launcher switch — no full restart; unified Y1-Rockbox.kl + codec lib sync.
 # Rockbox APK calls bare script → Solar. Solar calls with --rockbox → Rockbox.
-# ponytail: enable + start target launcher, then force-stop + disable the other (no clash).
+# ponytail: disable outgoing launcher before starting incoming — no dual-HOME race.
 
 SOLAR_PKG="com.solar.launcher"
 ROCKBOX_PKG="org.rockbox"
@@ -17,27 +17,43 @@ case "$1" in
         ;;
 esac
 
+verify_rockbox_disabled() {
+    pm list packages -d 2>/dev/null | grep -q "^package:${ROCKBOX_PKG}$"
+}
+
+verify_solar_disabled() {
+    pm list packages -d 2>/dev/null | grep -q "^package:${SOLAR_PKG}$"
+}
+
 switch_to_rockbox() {
+    echo "Disabling Solar"
+    am force-stop "$SOLAR_PKG"
+    pm disable "$SOLAR_PKG"
     echo "Enabling Rockbox"
     pm enable "$ROCKBOX_PKG"
     echo "Starting Rockbox"
     am start -n "$ROCKBOX_ACTIVITY"
-    echo "Stopping and disabling Solar"
-    am force-stop "$SOLAR_PKG"
-    pm disable "$SOLAR_PKG"
+    if ! verify_solar_disabled; then
+        pm disable "$SOLAR_PKG" 2>/dev/null
+        log -p w -t SolarRockbox "Solar still enabled after switch to Rockbox — retried disable"
+    fi
 }
 
 switch_to_stock() {
     if [ -f /system/etc/solar/sync-y1-keymap.sh ]; then
         sh /system/etc/solar/sync-y1-keymap.sh
     fi
+    echo "Disabling Rockbox"
+    am force-stop "$ROCKBOX_PKG"
+    pm disable "$ROCKBOX_PKG"
+    if ! verify_rockbox_disabled; then
+        pm disable "$ROCKBOX_PKG" 2>/dev/null
+        log -p w -t SolarRockbox "Rockbox still enabled after disable — retried"
+    fi
     echo "Enabling Solar"
     pm enable "$SOLAR_PKG"
     echo "Starting Solar"
     am start -n "$SOLAR_ACTIVITY"
-    echo "Stopping and disabling Rockbox"
-    am force-stop "$ROCKBOX_PKG"
-    pm disable "$ROCKBOX_PKG"
 }
 
 if [ "$TARGET" = "rockbox" ]; then

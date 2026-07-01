@@ -17,8 +17,9 @@ public final class FlowFlipController {
     public static final int STATE_FLIP_TO_FRONT = 3;
     public static final int STATE_HANDOFF = 4;
 
-    private static final int FLIP_MS = 280;
-    private static final int VISIBLE_BACK_ROWS = 8;
+    private static final int FLIP_MS = 340;
+    /** ponytail: default until FlowView measures card; no hard cap at 7. */
+    private static final int DEFAULT_VISIBLE_ROWS = 99;
 
     /** Saved back-face for artist → album drill-down. */
     private static final class BackLevel {
@@ -40,6 +41,7 @@ public final class FlowFlipController {
     private long flipStartMs;
     private int backIndex;
     private int scrollOffset;
+    private int maxVisibleRows = DEFAULT_VISIBLE_ROWS;
     private String headerTitle = "";
     private String headerSubtitle = "";
     private final List<FlowScreenHost.FlowBackRow> backRows = new ArrayList<FlowScreenHost.FlowBackRow>();
@@ -84,18 +86,29 @@ public final class FlowFlipController {
         return !backStack.isEmpty();
     }
 
+  /** Set from {@link FlowView#drawBackFace} so scroll window matches drawn rows. */
+    public void setMaxVisibleRows(int max) {
+        maxVisibleRows = max < 1 ? 1 : max;
+        visibleBackRowStart();
+    }
+
+    public int maxVisibleRows() {
+        return maxVisibleRows;
+    }
+
     public int visibleBackRowStart() {
-        if (backRows.size() <= VISIBLE_BACK_ROWS) return 0;
-        int maxStart = backRows.size() - VISIBLE_BACK_ROWS;
+        int window = Math.min(maxVisibleRows, backRows.size());
+        if (backRows.size() <= window) return 0;
+        int maxStart = backRows.size() - window;
         if (backIndex < scrollOffset) scrollOffset = backIndex;
-        if (backIndex >= scrollOffset + VISIBLE_BACK_ROWS) scrollOffset = backIndex - VISIBLE_BACK_ROWS + 1;
+        if (backIndex >= scrollOffset + window) scrollOffset = backIndex - window + 1;
         if (scrollOffset > maxStart) scrollOffset = maxStart;
         if (scrollOffset < 0) scrollOffset = 0;
         return scrollOffset;
     }
 
     public int visibleBackRowCount() {
-        return Math.min(VISIBLE_BACK_ROWS, backRows.size());
+        return Math.min(maxVisibleRows, backRows.size());
     }
 
     public void reset() {
@@ -112,12 +125,18 @@ public final class FlowFlipController {
     }
 
     public void setBackContent(String title, String subtitle, List<FlowScreenHost.FlowBackRow> rows) {
+        setBackContent(title, subtitle, rows, 0);
+    }
+
+    public void setBackContent(String title, String subtitle, List<FlowScreenHost.FlowBackRow> rows,
+            int selectedIndex) {
         backRows.clear();
         if (rows != null) backRows.addAll(rows);
         headerTitle = title != null ? title : "";
         headerSubtitle = subtitle != null ? subtitle : "";
-        backIndex = 0;
+        backIndex = selectedIndex >= 0 && selectedIndex < backRows.size() ? selectedIndex : 0;
         scrollOffset = 0;
+        visibleBackRowStart();
     }
 
     /** Push current back-face before drilling into album tracks. */
@@ -192,6 +211,7 @@ public final class FlowFlipController {
         int next = backIndex + delta;
         if (next < 0 || next >= backRows.size()) return false;
         backIndex = next;
+        visibleBackRowStart();
         return true;
     }
 
@@ -200,11 +220,98 @@ public final class FlowFlipController {
         return backRows.get(backIndex);
     }
 
-    /** Side carousel dim factor during flip/back. */
+    /** Side carousel dim factor during flip/back (~45–50% at STATE_BACK — visible shadow, not blackout). */
     public float sideDimAlpha() {
         if (state == STATE_IDLE) return 1f;
-        if (state == STATE_BACK) return 0.4f;
-        return 0.4f + 0.6f * (1f - Math.abs(flipProgress * 2f - 1f));
+        if (state == STATE_BACK) return 0.47f;
+        return 0.47f + 0.53f * (1f - Math.abs(flipProgress * 2f - 1f));
+    }
+
+    /** Immutable flip-back snapshot for Now Playing → Flow restore. */
+    public static final class Snapshot {
+        public final String headerTitle;
+        public final String headerSubtitle;
+        public final List<FlowScreenHost.FlowBackRow> rows;
+        public final int backIndex;
+        public final List<BackLevel> stack;
+
+        Snapshot(String headerTitle, String headerSubtitle, List<FlowScreenHost.FlowBackRow> rows,
+                int backIndex, List<BackLevel> stack) {
+            this.headerTitle = headerTitle != null ? headerTitle : "";
+            this.headerSubtitle = headerSubtitle != null ? headerSubtitle : "";
+            this.rows = copyRows(rows);
+            this.backIndex = backIndex;
+            this.stack = stack != null ? stack : Collections.<BackLevel>emptyList();
+        }
+    }
+
+    public Snapshot captureSnapshot() {
+        if (state != STATE_BACK || backRows.isEmpty()) return null;
+        return new Snapshot(headerTitle, headerSubtitle, backRows, backIndex, backStack);
+    }
+
+    /** Restore flipped tracklist without animation (after returning from Now Playing). */
+    public void restoreSnapshot(Snapshot snap) {
+        if (snap == null || snap.rows.isEmpty()) {
+            reset();
+            return;
+        }
+        applySnapshotContent(snap);
+        state = STATE_BACK;
+        flipProgress = 1f;
+        onFlipComplete = null;
+        onHandoffReady = null;
+    }
+
+    /** Flip card back in after crossfade from Now Playing (plan 2c). */
+    public void animateRestoreSnapshot(Snapshot snap) {
+        if (snap == null || snap.rows.isEmpty()) {
+            reset();
+            return;
+        }
+        applySnapshotContent(snap);
+        state = STATE_IDLE;
+        flipProgress = 0f;
+        onFlipComplete = null;
+        onHandoffReady = null;
+        startFlipToBack(null);
+    }
+
+    private void applySnapshotContent(Snapshot snap) {
+        backRows.clear();
+        backRows.addAll(snap.rows);
+        headerTitle = snap.headerTitle;
+        headerSubtitle = snap.headerSubtitle;
+        backIndex = snap.backIndex >= 0 && snap.backIndex < backRows.size() ? snap.backIndex : 0;
+        backStack.clear();
+        if (snap.stack != null) {
+            for (int i = 0; i < snap.stack.size(); i++) {
+                backStack.push(snap.stack.get(i));
+            }
+        }
+        scrollOffset = 0;
+        visibleBackRowStart();
+    }
+
+    private static List<FlowScreenHost.FlowBackRow> copyRows(List<FlowScreenHost.FlowBackRow> src) {
+        if (src == null || src.isEmpty()) return Collections.emptyList();
+        ArrayList<FlowScreenHost.FlowBackRow> out = new ArrayList<FlowScreenHost.FlowBackRow>(src.size());
+        for (FlowScreenHost.FlowBackRow r : src) {
+            if (r == null) continue;
+            out.add(new FlowScreenHost.FlowBackRow(r.title, r.subtitle, r.track, r.episode,
+                    r.nestedItem, r.deezerTrack));
+        }
+        return out;
+    }
+
+    private static List<BackLevel> copyStack(Stack<BackLevel> src) {
+        if (src == null || src.isEmpty()) return Collections.emptyList();
+        BackLevel[] arr = src.toArray(new BackLevel[src.size()]);
+        ArrayList<BackLevel> out = new ArrayList<BackLevel>(arr.length);
+        for (int i = arr.length - 1; i >= 0; i--) {
+            out.add(arr[i]);
+        }
+        return out;
     }
 
     /** ponytail: test hook. */

@@ -20,6 +20,9 @@ import android.widget.TextView;
 
 import com.solar.launcher.soulseek.SoulseekCountryFlags;
 import com.solar.launcher.theme.ThemeManager;
+import com.solar.launcher.ui.ListDrillTransition;
+import com.solar.launcher.ui.ModalTransition;
+import com.solar.launcher.ui.ScreenTransition;
 
 import org.json.JSONObject;
 
@@ -96,7 +99,6 @@ public final class ThemedContextMenu {
     private LinearLayout panel;
     private LinearLayout titleRow;
     private FrameLayout titleChip;
-    private TextView titleView;
     private ImageView titleBackIcon;
     private HorizontalScrollView quickBarScroll;
     private LinearLayout quickBarHost;
@@ -111,8 +113,9 @@ public final class ThemedContextMenu {
     private TextView brightnessLabel;
     private int brightnessMax = 255;
     private int brightnessValue = 255;
-    private int volumeQuickIndex = 6;
-    private int brightnessQuickIndex = 5;
+  /** Match MainActivity CONTEXT_QUICK_VOLUME_INDEX / CONTEXT_QUICK_BRIGHTNESS_INDEX (home chip at 0). */
+    private int volumeQuickIndex = 7;
+    private int brightnessQuickIndex = 6;
     private int volumeQuickIconRes = R.drawable.ic_volume_mid;
     private int brightnessQuickIconRes = R.drawable.ic_brightness_half;
     private String[] labels;
@@ -166,6 +169,10 @@ public final class ThemedContextMenu {
     private Runnable queueConfirmClearTask;
     private static final int QUEUE_CONFIRM_SHOW_MS = 220;
     private static final int QUEUE_CONFIRM_HOLD_MS = 750;
+    /** Bumped in dismiss() so posted layout runnables skip after the menu is torn down. */
+    private int dismissGeneration = 0;
+    /** True while modal shell enter/exit animation runs. */
+    private boolean modalEnterExitAnimating = false;
 
     public ThemedContextMenu(Activity activity) {
         this.activity = activity;
@@ -173,6 +180,72 @@ public final class ThemedContextMenu {
 
     public boolean isShowing() {
         return overlay != null && overlay.getParent() != null;
+    }
+
+    public boolean isEnterExitAnimating() {
+        return modalEnterExitAnimating || ModalTransition.isAnimating();
+    }
+
+    private void addOverlayWithPresentAnim(ViewGroup root, Runnable afterPresent) {
+        if (ModalTransition.enabled(activity)) {
+            ScreenTransition.prepareModalPresent(overlay, panel);
+        }
+        root.addView(overlay, new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        runModalPresentAfterAdd(afterPresent);
+    }
+
+    /** Present animation after overlay is on screen — rest state first, anim on next frame. */
+    private void runModalPresentAnimation() {
+        if (overlay == null || panel == null) return;
+        if (!ModalTransition.enabled(activity)) {
+            overlay.setAlpha(1f);
+            panel.setScaleX(1f);
+            panel.setScaleY(1f);
+            panel.setAlpha(1f);
+            return;
+        }
+        modalEnterExitAnimating = true;
+        ScreenTransition.prepareModalPresent(overlay, panel);
+        ModalTransition.animatePresent(overlay, panel, new Runnable() {
+            @Override
+            public void run() {
+                modalEnterExitAnimating = false;
+            }
+        });
+    }
+
+    private void runModalPresentAfterAdd(final Runnable after) {
+        runModalPresentAnimation();
+        if (overlay == null) {
+            if (after != null) after.run();
+            return;
+        }
+        overlay.post(new Runnable() {
+            @Override
+            public void run() {
+                if (!isShowing() || overlay == null) return;
+                overlay.requestFocus();
+                if (after != null) after.run();
+            }
+        });
+    }
+
+    private boolean menuAlive(int generation) {
+        return generation == dismissGeneration && isShowing();
+    }
+
+    /** Post a runnable that no-ops if dismiss() ran before it executes (USB HOME / screen change). */
+    private void postSafe(View anchor, final Runnable action) {
+        if (anchor == null || !isShowing()) return;
+        final int gen = dismissGeneration;
+        anchor.post(new Runnable() {
+            @Override
+            public void run() {
+                if (!menuAlive(gen) || anchor == null) return;
+                action.run();
+            }
+        });
     }
 
     public FocusZone focusZone() {
@@ -184,8 +257,12 @@ public final class ThemedContextMenu {
     }
 
     public void setMediaSliderQuickIndices(int volumeIndex, int brightnessIndex) {
+        boolean changed = volumeQuickIndex != volumeIndex || brightnessQuickIndex != brightnessIndex;
         volumeQuickIndex = volumeIndex;
         brightnessQuickIndex = brightnessIndex;
+        if (changed && isShowing() && !volumeOnlyMode) {
+            refreshQuickChipIcons();
+        }
     }
 
     /** Quick-bar chip to restore when leaving a tier list upward (e.g. Wi-Fi → index 1). */
@@ -222,7 +299,7 @@ public final class ThemedContextMenu {
     }
 
     private boolean hasBackChip() {
-        return titleView != null;
+        return titleChip != null;
     }
 
     /** Context modal top bar always includes Back (unless dialog-style confirm). */
@@ -266,7 +343,7 @@ public final class ThemedContextMenu {
 
     /** Highlight Back chip without collapsing tier content. */
     public void focusBackChip() {
-        if (titleView == null) return;
+        if (titleChip == null) return;
         focusZone = FocusZone.OPTIONS_TITLE;
         scrollQuickBarToStart();
         refreshAll();
@@ -280,7 +357,7 @@ public final class ThemedContextMenu {
 
     /** Collapse contextual action rows and highlight Back. */
     public void focusOptionsTitle() {
-        if (titleView == null) return;
+        if (!hasBackChip()) return;
         if (queueMode) {
             focusBackChip();
             return;
@@ -340,9 +417,10 @@ public final class ThemedContextMenu {
         ensureSubmenuListVisible();
         enterMenuListFocus(firstFocusableIndex(0));
         if (overlay != null) {
-            overlay.post(new Runnable() {
+            postSafe(overlay, new Runnable() {
                 @Override
                 public void run() {
+                    if (overlay == null) return;
                     ensureSubmenuListVisible();
                     updateListHeightToContent();
                     scrollFocusIntoView();
@@ -462,22 +540,11 @@ public final class ThemedContextMenu {
     }
 
     private void refreshTitleRow() {
-        if (titleView == null) return;
+        if (titleChip == null) return;
         boolean titleFocused = focusZone == FocusZone.OPTIONS_TITLE;
-        ThemeManager.applyThemedTextStyle(titleView, titleFocused ? textSelected() : textNormal());
-        titleView.setSelected(titleFocused);
-        if (titleFocused) {
-            titleView.setEllipsize(TextUtils.TruncateAt.MARQUEE);
-            titleView.setHorizontallyScrolling(true);
-        } else {
-            titleView.setEllipsize(TextUtils.TruncateAt.END);
-            titleView.setHorizontallyScrolling(false);
-        }
-        if (titleChip != null) {
-            int w = titleChip.getWidth() > 0 ? titleChip.getWidth()
-                    : (int) (rowHeightPx * 2.05f);
-            titleChip.setBackground(rowBackground(titleFocused, w, rowHeightPx));
-        }
+        int w = titleChip.getWidth() > 0 ? titleChip.getWidth()
+                : (int) (rowHeightPx * 1.05f);
+        titleChip.setBackground(rowBackground(titleFocused, w, rowHeightPx));
         if (titleBackIcon != null) {
             int iconColor = titleFocused ? textSelected() : textNormal();
             titleBackIcon.setColorFilter(iconColor, PorterDuff.Mode.SRC_IN);
@@ -491,7 +558,7 @@ public final class ThemedContextMenu {
 
     private void clampQuickBarScroll() {
         if (quickBarScroll == null || quickBarHost == null) return;
-        quickBarScroll.post(new Runnable() {
+        postSafe(quickBarScroll, new Runnable() {
             @Override
             public void run() {
                 if (quickBarScroll == null || quickBarHost == null) return;
@@ -512,44 +579,20 @@ public final class ThemedContextMenu {
     /** Title chip + quick-bar row at top of panel. */
     private void populateTitleRow(boolean showBackChip, boolean hasQuick, float density) {
         titleChip = null;
-        titleView = null;
         titleBackIcon = null;
         quickBarScroll = null;
         quickBarHost = null;
         if (showBackChip) {
-            int textPadLeft = (int) activity.getResources().getDimension(R.dimen.y1_menu_text_pad_left);
-            int textPadRight = (int) activity.getResources().getDimension(R.dimen.y1_context_back_pad_right);
-            titleChip = new FrameLayout(activity);
-            LinearLayout titleInner = new LinearLayout(activity);
-            titleInner.setOrientation(LinearLayout.HORIZONTAL);
-            titleInner.setGravity(Gravity.CENTER_VERTICAL);
             int iconSize = (int) (rowHeightPx * 0.42f);
+            titleChip = new FrameLayout(activity);
             titleBackIcon = new ImageView(activity);
             titleBackIcon.setImageResource(R.drawable.ic_back);
             titleBackIcon.setScaleType(ImageView.ScaleType.FIT_CENTER);
-            titleBackIcon.setVisibility(View.VISIBLE);
-            LinearLayout.LayoutParams iconLp = new LinearLayout.LayoutParams(iconSize, iconSize);
-            iconLp.rightMargin = (int) (2 * density);
-            titleInner.addView(titleBackIcon, iconLp);
-            titleView = new TextView(activity);
-            titleView.setText(activity.getString(R.string.context_back));
-            titleView.setTypeface(ThemeManager.getCustomFont(), android.graphics.Typeface.BOLD);
-            titleView.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX,
-                    activity.getResources().getDimension(R.dimen.y1_menu_text_size));
-            ThemeManager.applyThemedTextStyle(titleView, textNormal());
-            titleView.setSingleLine(true);
-            titleView.setEllipsize(TextUtils.TruncateAt.END);
-            titleView.setGravity(Gravity.CENTER_VERTICAL | Gravity.START);
-            LinearLayout.LayoutParams textLp = new LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-            textLp.rightMargin = textPadRight;
-            titleInner.addView(titleView, textLp);
-            FrameLayout.LayoutParams innerLp = new FrameLayout.LayoutParams(
-                    FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.MATCH_PARENT);
-            innerLp.leftMargin = textPadLeft;
-            innerLp.gravity = Gravity.CENTER_VERTICAL | Gravity.START;
-            titleChip.addView(titleInner, innerLp);
-            titleChip.setMinimumWidth((int) (rowHeightPx * 2.05f));
+            FrameLayout.LayoutParams iconLp = new FrameLayout.LayoutParams(iconSize, iconSize);
+            iconLp.gravity = Gravity.CENTER;
+            titleChip.addView(titleBackIcon, iconLp);
+            titleChip.setContentDescription(activity.getString(R.string.context_back));
+            titleChip.setMinimumWidth((int) (rowHeightPx * 1.05f));
             LinearLayout.LayoutParams chipLp = new LinearLayout.LayoutParams(
                     hasQuick ? LinearLayout.LayoutParams.WRAP_CONTENT : LinearLayout.LayoutParams.MATCH_PARENT,
                     rowHeightPx, 0f);
@@ -863,7 +906,7 @@ public final class ThemedContextMenu {
         if (itemsScroll == null || itemsHost == null) return;
         if (queueMode && !isQueueMoveActive()) {
             // Browse: padding / virtual window updates shift row tops — re-scroll after layout.
-            itemsHost.post(new Runnable() {
+            postSafe(itemsHost, new Runnable() {
                 @Override
                 public void run() {
                     scrollQueueRowToViewportSlotNow(index);
@@ -871,11 +914,11 @@ public final class ThemedContextMenu {
             });
             return;
         }
-        itemsHost.post(new Runnable() {
+        postSafe(itemsHost, new Runnable() {
             @Override
             public void run() {
                 scrollQueueRowToViewportSlotNow(index);
-                itemsScroll.post(new Runnable() {
+                postSafe(itemsScroll, new Runnable() {
                     @Override
                     public void run() {
                         scrollQueueRowToViewportSlotNow(index);
@@ -1365,19 +1408,19 @@ public final class ThemedContextMenu {
         panelLp.gravity = Gravity.CENTER;
         overlay.addView(panel, panelLp);
 
-        root.addView(overlay, new ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        overlay.post(new Runnable() {
+        addOverlayWithPresentAnim(root, new Runnable() {
             @Override
             public void run() {
-                overlay.requestFocus();
+                if (!isShowing() || overlay == null) return;
                 refreshAll();
+                if (itemsHost == null || itemsHost.getChildCount() == 0 || !isMenuListZone()) {
+                    return;
+                }
                 scrollFocusIntoView();
             }
         });
-        refreshAll();
-        scrollFocusIntoView();
         syncMediaQuickIconResFromItems();
+        refreshQuickChipIcons();
     }
 
     private void rebuildListRows(String[] itemIconKeys, String[] itemStateTexts) {
@@ -1403,12 +1446,46 @@ public final class ThemedContextMenu {
         }
     }
 
+    public static final int LIST_DRILL_NONE = 0;
+    public static final int LIST_DRILL_FORWARD = 1;
+    public static final int LIST_DRILL_BACK = 2;
+
     public void replaceListContent(String title, String[] itemLabels, String[] itemIconKeys,
             String[] itemStateTexts, boolean[] itemHeaders, Listener listener) {
-        replaceListContent(title, itemLabels, itemIconKeys, itemStateTexts, itemHeaders, listener, true);
+        replaceListContent(title, itemLabels, itemIconKeys, itemStateTexts, itemHeaders, listener, true,
+                LIST_DRILL_NONE);
     }
 
     public void replaceListContent(String title, String[] itemLabels, String[] itemIconKeys,
+            String[] itemStateTexts, boolean[] itemHeaders, Listener listener, boolean resetFocus) {
+        replaceListContent(title, itemLabels, itemIconKeys, itemStateTexts, itemHeaders, listener,
+                resetFocus, LIST_DRILL_NONE);
+    }
+
+    public void replaceListContent(String title, String[] itemLabels, String[] itemIconKeys,
+            String[] itemStateTexts, boolean[] itemHeaders, Listener listener, boolean resetFocus,
+            int listDrill) {
+        final Runnable apply = new Runnable() {
+            @Override
+            public void run() {
+                applyListContentReplace(title, itemLabels, itemIconKeys, itemStateTexts, itemHeaders,
+                        listener, resetFocus);
+            }
+        };
+        if (itemsScroll != null && ModalTransition.enabled(activity)) {
+            if (listDrill == LIST_DRILL_FORWARD) {
+                ListDrillTransition.push((ViewGroup) itemsScroll, apply);
+                return;
+            }
+            if (listDrill == LIST_DRILL_BACK) {
+                ListDrillTransition.pop((ViewGroup) itemsScroll, apply);
+                return;
+            }
+        }
+        apply.run();
+    }
+
+    private void applyListContentReplace(String title, String[] itemLabels, String[] itemIconKeys,
             String[] itemStateTexts, boolean[] itemHeaders, Listener listener, boolean resetFocus) {
         mediaSliderExclusive = false;
         queueMode = false;
@@ -1818,10 +1895,10 @@ public final class ThemedContextMenu {
         } catch (Exception ignored) {}
         // #endregion
         if (rowCount > 0 && itemsHost != null && childCount == 0) {
-            itemsHost.post(new Runnable() {
+            postSafe(itemsHost, new Runnable() {
                 @Override
                 public void run() {
-                    if (!queueMode || queueRows.length == 0) return;
+                    if (!queueMode || queueRows.length == 0 || itemsHost == null) return;
                     if (itemsHost.getChildCount() > 0) return;
                     rebuildQueueList();
                     ensureQueueListVisible();
@@ -1839,7 +1916,7 @@ public final class ThemedContextMenu {
                 }
             });
         } else if (rowCount > 0 && itemsScroll != null && scrollH <= 0) {
-            itemsScroll.post(new Runnable() {
+            postSafe(itemsScroll, new Runnable() {
                 @Override
                 public void run() {
                     if (!queueMode) return;
@@ -2219,11 +2296,11 @@ public final class ThemedContextMenu {
     private void scrollQueueRowIntoViewImmediate(final int index) {
         scrollQueueRowIntoViewNow(index);
         if (itemsScroll == null || itemsHost == null) return;
-        itemsHost.post(new Runnable() {
+        postSafe(itemsHost, new Runnable() {
             @Override
             public void run() {
                 scrollQueueRowIntoViewNow(index);
-                itemsScroll.post(new Runnable() {
+                postSafe(itemsScroll, new Runnable() {
                     @Override
                     public void run() {
                         scrollQueueRowIntoViewNow(index);
@@ -2723,8 +2800,7 @@ public final class ThemedContextMenu {
                 ViewGroup.LayoutParams.WRAP_CONTENT);
         panelLp.gravity = Gravity.CENTER;
         overlay.addView(panel, panelLp);
-        root.addView(overlay, new ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        addOverlayWithPresentAnim(root, null);
         focusZone = FocusZone.TIER_CONTENT;
     }
 
@@ -2788,8 +2864,7 @@ public final class ThemedContextMenu {
                 ViewGroup.LayoutParams.WRAP_CONTENT);
         panelLp.gravity = Gravity.CENTER;
         overlay.addView(panel, panelLp);
-        root.addView(overlay, new ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        addOverlayWithPresentAnim(root, null);
         focusZone = FocusZone.SLIDER;
     }
 
@@ -2871,6 +2946,7 @@ public final class ThemedContextMenu {
         refreshAll();
         scrollQuickFocusIntoView();
         syncMediaQuickIconResFromItems();
+        refreshQuickChipIcons();
         requestOverlayFocus();
     }
 
@@ -3094,8 +3170,7 @@ public final class ThemedContextMenu {
         panelLp.leftMargin = (int) (10 * density);
         panelLp.rightMargin = panelLp.leftMargin;
         overlay.addView(panel, panelLp);
-        root.addView(overlay, new ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        addOverlayWithPresentAnim(root, null);
         focusZone = FocusZone.SLIDER;
     }
 
@@ -3116,14 +3191,56 @@ public final class ThemedContextMenu {
     }
 
     public void dismiss() {
-        if (overlay != null && overlay.getParent() instanceof ViewGroup) {
-            ((ViewGroup) overlay.getParent()).removeView(overlay);
+        dismissInternal(null, false);
+    }
+
+    /** Animate modal out, then tear down. */
+    public void dismissAnimated(final Runnable onComplete) {
+        dismissInternal(onComplete, true);
+    }
+
+    private void dismissInternal(final Runnable onComplete, boolean animated) {
+        if (isEnterExitAnimating() && overlay != null) {
+            ScreenTransition.resetView(overlay);
+            ScreenTransition.resetView(panel);
+            modalEnterExitAnimating = false;
         }
+        dismissGeneration++;
+        final FrameLayout scrim = overlay;
+        final LinearLayout panelView = panel;
+        if (!animated || scrim == null || scrim.getParent() == null
+                || !ModalTransition.enabled(activity)) {
+            removeOverlayFromParent(scrim);
+            clearOverlayState();
+            if (onComplete != null) onComplete.run();
+            return;
+        }
+        modalEnterExitAnimating = true;
+        panelView.setPivotX(panelView.getWidth() * 0.5f);
+        panelView.setPivotY(panelView.getHeight() * 0.5f);
+        ModalTransition.animateDismiss(scrim, panelView, new Runnable() {
+            @Override
+            public void run() {
+                modalEnterExitAnimating = false;
+                removeOverlayFromParent(scrim);
+                clearOverlayState();
+                if (onComplete != null) onComplete.run();
+            }
+        });
+    }
+
+    private void removeOverlayFromParent(FrameLayout scrim) {
+        if (scrim != null && scrim.getParent() instanceof ViewGroup) {
+            ((ViewGroup) scrim.getParent()).removeView(scrim);
+        }
+    }
+
+    private void clearOverlayState() {
         overlay = null;
         panel = null;
         titleRow = null;
         titleChip = null;
-        titleView = null;
+        titleBackIcon = null;
         quickBarScroll = null;
         quickBarHost = null;
         itemsScroll = null;
@@ -3164,7 +3281,7 @@ public final class ThemedContextMenu {
         }
         if (quickBarHost != null && quickBarHost.getChildCount() > 0) {
             focusQuickBarFromListExit();
-        } else if (titleView != null && labels != null && labels.length > 0) {
+        } else if (hasBackChip() && labels != null && labels.length > 0) {
             focusOptionsTitle();
         }
     }
@@ -3329,7 +3446,7 @@ public final class ThemedContextMenu {
                 focusBackChip();
                 return;
             }
-            if (titleView != null && labels != null && labels.length > 0) {
+            if (hasBackChip() && labels != null && labels.length > 0) {
                 focusOptionsTitle();
             }
             return;
@@ -3421,6 +3538,13 @@ public final class ThemedContextMenu {
         return rowHeaders != null && index >= 0 && index < rowHeaders.length && rowHeaders[index];
     }
 
+    /** Menu row slot height for scrollable message blocks (two rows minimum). */
+    private int menuRowSlotPx() {
+        if (rowHeightPx > 0) return rowHeightPx + 2;
+        int itemH = (int) activity.getResources().getDimension(R.dimen.y1_menu_item_height);
+        return itemH + 2;
+    }
+
     /** Reserve list height so the first action row peeks below a scrollable message header. */
     private void computeDetailHeaderMaxHeight() {
         detailHeaderMaxHeightPx = 0;
@@ -3430,17 +3554,19 @@ public final class ThemedContextMenu {
             if (!isHeaderRow(i) && !isDecorRow(i)) actionRows++;
         }
         int defaultMax = VerticalTextMarqueeHelper.defaultMaxHeightPx(activity);
+        int rowSlot = menuRowSlotPx();
+        int twoRowMin = rowSlot * 2;
         if (actionRows < 1) {
-            detailHeaderMaxHeightPx = defaultMax;
+            detailHeaderMaxHeightPx = Math.max(defaultMax, twoRowMin);
             return;
         }
-        int rowSlot = rowHeightPx > 0 ? rowHeightPx + 2 : 0;
         int reserved = rowSlot;
         if (actionRows >= 2 && maxListHeightPx >= rowSlot * 2 + defaultMax / 2) {
             reserved = rowSlot * 2;
         }
         int cap = maxListHeightPx > 0 ? maxListHeightPx - reserved : defaultMax;
         detailHeaderMaxHeightPx = Math.max((int) (defaultMax * 0.45f), Math.min(defaultMax, cap));
+        detailHeaderMaxHeightPx = Math.max(detailHeaderMaxHeightPx, twoRowMin);
     }
 
     private int scrollableDetailHeaderHeightPx() {
@@ -3467,6 +3593,14 @@ public final class ThemedContextMenu {
         int w = panelWidthPx > 0 ? panelWidthPx : row.getWidth();
         VerticalTextMarqueeHelper.updateCappedPanel(activity, panel, detailHeaderText, maxH, w);
         int panelH = panel.getLayoutParams() != null ? panel.getLayoutParams().height : maxH;
+        int rowSlot = menuRowSlotPx();
+        panelH = Math.max(panelH, rowSlot * 2);
+        if (panel.getLayoutParams() != null) {
+            panel.getLayoutParams().height = panelH;
+        }
+        if (row.getLayoutParams() != null) {
+            row.getLayoutParams().height = panelH;
+        }
         row.setBackground(rowBackground(focused, w, panelH));
     }
 
@@ -3480,6 +3614,9 @@ public final class ThemedContextMenu {
         row.setFocusable(true);
         row.setFocusableInTouchMode(true);
         int panelH = panel.getLayoutParams() != null ? panel.getLayoutParams().height : maxH;
+        // ponytail: message tiers reserve two list rows so author + preview lines stay visible; wheel scrolls longer bodies.
+        int rowSlot = menuRowSlotPx();
+        panelH = Math.max(panelH, rowSlot * 2);
         LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, panelH);
         rowLp.setMargins(0, 1, 0, 1);
@@ -3597,7 +3734,7 @@ public final class ThemedContextMenu {
             Object tag = chip.getTag();
             if (tag instanceof Integer && ((Integer) tag).intValue() == quickFocusIndex) {
                 final View target = chip;
-                quickBarScroll.post(new Runnable() {
+                postSafe(quickBarScroll, new Runnable() {
                     @Override
                     public void run() {
                         if (quickBarScroll == null || quickBarHost == null) return;
@@ -3686,7 +3823,10 @@ public final class ThemedContextMenu {
     public void replaceQuickBar(QuickItem[] items) {
         if (volumeOnlyMode || !isShowing()) return;
         QuickItem[] next = items != null ? items : new QuickItem[0];
-        if (quickItemsEqual(quickItems, next)) return;
+        if (quickItemsEqual(quickItems, next)) {
+            refreshQuickChipIcons();
+            return;
+        }
         quickItems = next;
         if (quickBarHost == null) return;
         quickBarHost.removeAllViews();
@@ -3695,7 +3835,7 @@ public final class ThemedContextMenu {
             quickBarHost.addView(createQuickChip(quickItems[i], rowHeightPx, i));
         }
         syncMediaQuickIconResFromItems();
-        refreshQuickBar();
+        refreshQuickChipIcons();
     }
 
     /** ponytail: skip removeAllViews when chip set unchanged — BT scan was rebuilding every tick. */
@@ -3722,6 +3862,39 @@ public final class ThemedContextMenu {
         if (index == volumeQuickIndex) return volumeQuickIconRes;
         if (index == brightnessQuickIndex) return brightnessQuickIconRes;
         return fallbackResId;
+    }
+
+    /** Re-apply chip drawables after slider-index fix or replaceQuickBar no-op (BT scan ticks). */
+    private void refreshQuickChipIcons() {
+        if (quickBarHost == null) return;
+        for (int i = 0; i < quickBarHost.getChildCount(); i++) {
+            View chip = quickBarHost.getChildAt(i);
+            Object tag = chip.getTag();
+            if (!(tag instanceof Integer)) continue;
+            int idx = (Integer) tag;
+            if (idx < 0 || idx >= quickItems.length) continue;
+            QuickItem item = quickItems[idx];
+            ImageView icon = (ImageView) chip.findViewWithTag("quick_icon");
+            if (icon == null) continue;
+            int iconRes = iconResForQuickIndex(idx, item.iconResId);
+            android.graphics.Bitmap bmp = item.iconKey != null
+                    ? ThemeManager.getSettingIcon(item.iconKey) : null;
+            if (bmp != null) {
+                icon.setImageBitmap(bmp);
+            } else if (iconRes != 0) {
+                icon.setImageResource(iconRes);
+            }
+        }
+        refreshQuickBar();
+        // #region agent log
+        try {
+            org.json.JSONObject d = new org.json.JSONObject();
+            d.put("volIdx", volumeQuickIndex);
+            d.put("brightIdx", brightnessQuickIndex);
+            d.put("chipCount", quickBarHost.getChildCount());
+            QueueDebugLog.log("ThemedContextMenu.refreshQuickChipIcons", "icons synced", "H-QBAR", d);
+        } catch (Exception ignored) {}
+        // #endregion
     }
 
     private android.graphics.Bitmap resolveContextMenuIcon(String iconKey) {

@@ -25,6 +25,9 @@ public final class SoulseekWire {
      * unknown majors, but peer browse/profile depend on TCP/NAT, not client id.
      */
     static final int CLIENT_MAJOR = 177;
+    /** Nicotine+ major — Soulseek server relays PMs to standard desktop clients. */
+    static final int CLIENT_MAJOR_PM = 160;
+    static final int CLIENT_MINOR_PM = 3;
 
     /** Upload permission codes in user-info response (peer code 16). */
     static final int UPLOAD_PERM_NO_ONE = 0;
@@ -109,6 +112,14 @@ public final class SoulseekWire {
 
     static final int MAX_FILES_PER_RESPONSE = 200;
     static final int DISPLAY_MAX_LEN = 120;
+    /** Reject absurd peer/server frame bodies before allocation (OOM guard on Y1). */
+    static final int MAX_FRAME_BODY_BYTES = 1024 * 1024;
+
+    private static void ensureFrameBodyLen(int bodyLen) throws IOException {
+        if (bodyLen < 0 || bodyLen > MAX_FRAME_BODY_BYTES) {
+            throw new IOException("frame body too large: " + bodyLen);
+        }
+    }
 
     /** Safe label for UI: strip controls/bidi marks, truncate. */
     static String sanitizeDisplay(String s) {
@@ -222,13 +233,22 @@ public final class SoulseekWire {
     }
 
     static byte[] loginBody(String username, String password) throws Exception {
+        return loginBody(username, password, CLIENT_MAJOR, clientMinor());
+    }
+
+    /** PM / diag sessions impersonate Nicotine+ so the server relays to legacy inboxes. */
+    static byte[] loginBodyPm(String username, String password) throws Exception {
+        return loginBody(username, password, CLIENT_MAJOR_PM, CLIENT_MINOR_PM);
+    }
+
+    static byte[] loginBody(String username, String password, int major, int minor) throws Exception {
         ByteArrayOutputStream bos = new ByteArrayOutputStream();
         bos.write(packString(username));
         bos.write(packString(password));
-        bos.write(packUInt32(CLIENT_MAJOR));
+        bos.write(packUInt32(major));
         String hash = md5Hex(username + password);
         bos.write(packString(hash));
-        bos.write(packUInt32(clientMinor()));
+        bos.write(packUInt32(minor));
         return bos.toByteArray();
     }
 
@@ -478,6 +498,7 @@ public final class SoulseekWire {
         if (len < 4) throw new IOException("bad frame len " + len);
         int code = Integer.reverseBytes(din.readInt());
         int bodyLen = len - 4;
+        ensureFrameBodyLen(bodyLen);
         byte[] body = new byte[bodyLen];
         if (bodyLen > 0) readFully(din, body);
         return new ServerFrame(code, body);
@@ -489,6 +510,7 @@ public final class SoulseekWire {
         if (len < 4) throw new IOException("bad peer frame len " + len);
         int code = Integer.reverseBytes(din.readInt());
         int bodyLen = len - 4;
+        ensureFrameBodyLen(bodyLen);
         byte[] body = new byte[bodyLen];
         if (bodyLen > 0) readFully(din, body);
         return new PeerFrame(code, body);
@@ -500,6 +522,7 @@ public final class SoulseekWire {
         if (len < 1) throw new IOException("bad peer init len " + len);
         int code = din.readUnsignedByte();
         int bodyLen = len - 1;
+        ensureFrameBodyLen(bodyLen);
         byte[] body = new byte[bodyLen];
         if (bodyLen > 0) readFully(din, body);
         return new PeerInitFrame(code, body);
@@ -522,6 +545,7 @@ public final class SoulseekWire {
         if (len < 1) throw new IOException("bad distrib len " + len);
         int code = din.readUnsignedByte();
         int bodyLen = len - 1;
+        ensureFrameBodyLen(bodyLen);
         byte[] body = new byte[bodyLen];
         if (bodyLen > 0) readFully(din, body);
         return new DistribFrame(code, body);

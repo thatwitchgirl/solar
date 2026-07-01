@@ -65,6 +65,10 @@ public final class ConversationDisplayBuilder {
         skipIndices.add(i);
         continue;
       }
+      if (SolarDeveloperAccounts.isAutoDiagnosticText(m.text)) {
+        skipIndices.add(i);
+        continue;
+      }
 
       ReachMessageFormat.ReactionWire wire = ReachMessageFormat.parseReactionWire(m.text);
       if (wire != null) {

@@ -3,6 +3,8 @@ package com.solar.launcher;
 /** Stable settings sub-screen keys (locale-independent navigation). */
 public final class SettingsScreens {
     public static final String APPEARANCE = "settings.appearance";
+    public static final String APPEARANCE_STATUS = "settings.appearance.status";
+    public static final String APPEARANCE_LAYOUT = "settings.appearance.layout";
     public static final String THEMES = "settings.themes";
     public static final String THEME_PICKER = "settings.theme_picker";
     public static final String REACH = "settings.reach";
@@ -22,7 +24,17 @@ public final class SettingsScreens {
     public static final String DEEZER_ACCOUNT = "settings.deezer.account";
     public static final String DEEZER_CONNECTION = "settings.deezer.connection";
     public static final String ABOUT = "settings.about";
+    public static final String REPORT_PROBLEM = "settings.report_problem";
+    public static final String CONNECTIONS = "settings.connections";
+    public static final String USB = "settings.usb";
+    public static final String DEVICE = "settings.device";
+    public static final String PLAYBACK = "settings.playback";
+    public static final String LIBRARY = "settings.library";
+    public static final String MEDIA = "settings.media";
+    public static final String POWER = "settings.power";
+    public static final String RESET = "settings.reset";
     public static final String DEBUG = "settings.debug";
+    public static final String FLOW = "settings.flow";
     public static final String SYSTEM_UPDATE = "settings.system_update";
     public static final String HOME = "settings.home";
     public static final String HOME_ARRANGE = "settings.home.arrange";
@@ -45,6 +57,8 @@ public final class SettingsScreens {
     public static int titleResId(String key) {
         if (key == null) return 0;
         if (APPEARANCE.equals(key)) return R.string.settings_sub_appearance;
+        if (APPEARANCE_STATUS.equals(key)) return R.string.settings_sub_appearance_status;
+        if (APPEARANCE_LAYOUT.equals(key)) return R.string.settings_sub_appearance_layout;
         if (THEMES.equals(key)) return R.string.settings_sub_themes;
         if (THEME_PICKER.equals(key)) return R.string.settings_sub_theme_picker;
         if (REACH.equals(key)) return R.string.settings_sub_reach;
@@ -64,7 +78,17 @@ public final class SettingsScreens {
         if (DEEZER_ACCOUNT.equals(key)) return R.string.settings_sub_deezer_account;
         if (DEEZER_CONNECTION.equals(key)) return R.string.settings_sub_deezer_connection;
         if (ABOUT.equals(key)) return R.string.settings_sub_about;
+        if (REPORT_PROBLEM.equals(key)) return R.string.settings_sub_report_problem;
+        if (CONNECTIONS.equals(key)) return R.string.settings_sub_connections;
+        if (USB.equals(key)) return R.string.settings_sub_usb;
+        if (DEVICE.equals(key)) return R.string.settings_sub_device;
+        if (PLAYBACK.equals(key)) return R.string.settings_sub_playback;
+        if (LIBRARY.equals(key)) return R.string.settings_sub_library;
+        if (MEDIA.equals(key)) return R.string.settings_sub_media;
+        if (POWER.equals(key)) return R.string.settings_sub_power;
+        if (RESET.equals(key)) return R.string.settings_sub_reset;
         if (DEBUG.equals(key)) return R.string.settings_sub_debug;
+        if (FLOW.equals(key)) return R.string.settings_sub_flow;
         if (SYSTEM_UPDATE.equals(key)) return R.string.settings_sub_system_update;
         if (HOME.equals(key)) return R.string.settings_sub_home;
         if (HOME_ARRANGE.equals(key)) return R.string.settings_sub_home_arrange;
@@ -101,7 +125,8 @@ public final class SettingsScreens {
     }
 
     public static boolean isAppearance(String key) {
-        return APPEARANCE.equals(key) || HOME.equals(key) || HOME_ARRANGE.equals(key)
+        return APPEARANCE.equals(key) || APPEARANCE_STATUS.equals(key) || APPEARANCE_LAYOUT.equals(key)
+                || HOME.equals(key) || HOME_ARRANGE.equals(key)
                 || HOME_MORE.equals(key) || HOME_MORE_ARRANGE.equals(key)
                 || BACKGROUND.equals(key) || NOW_PLAYING.equals(key) || THEME_PICKER.equals(key) || THEMES.equals(key)
                 || THEME_VARIANT.equals(key);

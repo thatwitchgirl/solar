@@ -8,15 +8,15 @@ import java.io.File;
 import java.io.FileWriter;
 
 /**
- * Debug-mode NDJSON logger — session a76d20.
- * ponytail: writes to SD card; pull with adb to workspace .cursor/debug-a76d20.log
+ * Debug-mode NDJSON logger — session 6a585a.
+ * ponytail: writes to SD card + app files; pull with adb to .cursor/debug-6a585a.log
  */
 public final class DebugSessionLog {
-    private static final String TAG = "SolarDbga76d20";
-    private static final String SESSION = "a76d20";
-    private static final String FILE = "debug-a76d20.log";
-    /** Enabled for this debug session — sync append; keep calls sparse. */
-    public static volatile boolean ENABLED = true;
+    private static final String TAG = "SolarDbg6a585a";
+    private static final String SESSION = "6a585a";
+    private static final String FILE = "debug-6a585a.log";
+    /** ponytail: hot-path sync SD I/O — on only for short debug sessions. */
+    public static volatile boolean ENABLED = false;
 
     private DebugSessionLog() {}
 

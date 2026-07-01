@@ -202,7 +202,9 @@ public final class ReachInboxAdapter extends BaseAdapter {
             @Override
             public void bind(boolean highlighted) {
                 boolean show = highlighted || position == selectedPosition;
-                ReachMessageRow.bindInboxRow(activity, rowView, row.peer, previewFinal, timestamp,
+                ReachMessageRow.bindInboxRow(activity, rowView,
+                        SolarDeveloperAccounts.displayNameForPeer(activity, row.peer),
+                        previewFinal, timestamp,
                         show, rowWidthPx, rowHeightPx, cc);
             }
         });

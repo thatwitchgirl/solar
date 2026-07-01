@@ -23,6 +23,7 @@ public final class FlowEngine {
 
     private float viewportW = 480f;
     private float viewportH = 360f;
+    private CoverFlowLayout.Metrics viewportMetrics;
 
     public FlowEngine() {
         for (int i = 0; i < CoverFlowLayout.SIDE_SLIDES; i++) {
@@ -51,9 +52,52 @@ public final class FlowEngine {
         return centerIndex;
     }
 
+    /**
+     * Album visually nearest carousel center — may differ from {@link #getFocusIndex()} mid-scroll.
+     * OK / flip must use this so fast wheel + select flips the cover on screen, not the target index.
+     */
+    public int getVisualCenterIndex() {
+        if (step == 0 || itemCount <= 0) return centerIndex;
+        CoverFlowLayout.Metrics m = metrics();
+        int bestIdx = centerSlide.itemIndex;
+        float best = CoverFlowLayout.centernessFromPose(centerSlide, m);
+        CoverFlowLayout.SlidePose incoming = step > 0 ? rightSlides[0] : leftSlides[0];
+        if (incoming.itemIndex >= 0 && incoming.itemIndex < itemCount) {
+            float c = CoverFlowLayout.centernessFromPose(incoming, m);
+            if (c > best) {
+                best = c;
+                bestIdx = incoming.itemIndex;
+            }
+        }
+        return bestIdx;
+    }
+
+    /** End scroll animation on the cover the user sees at center (wheel OK during motion). */
+    public void snapToVisualCenter() {
+        if (step == 0) return;
+        int visual = getVisualCenterIndex();
+        centerIndex = visual;
+        targetIndex = visual;
+        slideFrameInt = visual << 16;
+        step = 0;
+        resetSlides(null);
+    }
+
     public void setViewport(float w, float h) {
         if (w > 0f) viewportW = w;
         if (h > 0f) viewportH = h;
+    }
+
+    /** Cached metrics from {@link FlowView} — avoids rebuilding reflect_table each tick. */
+    public void setViewportMetrics(CoverFlowLayout.Metrics metrics, float w, float h) {
+        viewportMetrics = metrics;
+        setViewport(w, h);
+    }
+
+    private CoverFlowLayout.Metrics metrics() {
+        return viewportMetrics != null
+                ? viewportMetrics
+                : CoverFlowLayout.metricsForViewport(viewportW, viewportH);
     }
 
     public float getVisualOffset() {
@@ -104,6 +148,15 @@ public final class FlowEngine {
         return step != 0;
     }
 
+    /** True while carousel scroll animation is running (step != 0). */
+    public boolean isCarouselScrolling() {
+        return step != 0;
+    }
+
+    public int getScrollStep() {
+        return step;
+    }
+
     public int visibleSlotMin() {
         return centerIndex - VISIBLE_RADIUS - 1;
     }
@@ -124,15 +177,13 @@ public final class FlowEngine {
     }
 
     public SlotTransform slotTransform(int itemIndex, float viewW, float viewH, float ignoredVisual) {
-        CoverFlowLayout.Metrics m = CoverFlowLayout.metricsForViewport(viewW, viewH);
+        CoverFlowLayout.Metrics m = metrics();
         CoverFlowLayout.SlidePose pose = poseForItem(itemIndex);
-        boolean center = pose == centerSlide;
-        return CoverFlowLayout.toSlotTransform(pose, m, center);
+        return CoverFlowLayout.toSlotTransform(pose, m);
     }
 
     public SlotTransform centerSlotTransform(float viewW, float viewH) {
-        CoverFlowLayout.Metrics m = CoverFlowLayout.metricsForViewport(viewW, viewH);
-        return CoverFlowLayout.toSlotTransform(centerSlide, m, true);
+        return CoverFlowLayout.toSlotTransform(centerSlide, metrics());
     }
 
     public int findIndexForKey(java.util.List<FlowItem> items, String focusKey) {
@@ -144,8 +195,14 @@ public final class FlowEngine {
         for (int i = 0; i < items.size(); i++) {
             FlowItem item = items.get(i);
             if (focusKey.equalsIgnoreCase(item.title)) return i;
+            if (item.matchKey == null) continue;
             int pipe = item.matchKey.indexOf('|');
-            if (pipe > 0 && focusKey.equals(item.matchKey.substring(0, pipe))) return i;
+            if (pipe <= 0) continue;
+            String itemAlbum = item.matchKey.substring(0, pipe);
+            // Album-only key or playing artist differs from catalog primary artist.
+            if (focusKey.equals(itemAlbum)) return i;
+            int focusPipe = focusKey.indexOf('|');
+            if (focusPipe > 0 && focusKey.substring(0, focusPipe).equals(itemAlbum)) return i;
         }
         return -1;
     }
@@ -185,7 +242,7 @@ public final class FlowEngine {
     }
 
     private void resetSlides(CoverFlowLayout.Metrics m) {
-        if (m == null) m = CoverFlowLayout.metricsForViewport(viewportW, viewportH);
+        if (m == null) m = metrics();
         centerSlide.itemIndex = centerIndex;
         centerSlide.cx = 0f;
         centerSlide.cy = 0f;
@@ -217,7 +274,7 @@ public final class FlowEngine {
 
     private void updateScrollAnimation() {
         if (step == 0) return;
-        CoverFlowLayout.Metrics m = CoverFlowLayout.metricsForViewport(viewportW, viewportH);
+        CoverFlowLayout.Metrics m = metrics();
 
         int speed = PictureFlowLayout.rockboxScrollSpeed(slideFrameInt, targetIndex);
         slideFrameInt += speed * step;
@@ -309,6 +366,33 @@ public final class FlowEngine {
     }
 
     public int fillDrawOrder(int[] out) {
+        return fillDrawOrder(out, null);
+    }
+
+    /** Fills draw list sorted back-to-front by {@link CoverFlowLayout} depthOrder. */
+    public int fillDrawOrder(int[] out, float[] depthOut) {
+        int raw = fillDrawOrderUnsorted(out);
+        if (raw <= 1 || depthOut == null) return raw;
+        CoverFlowLayout.Metrics m = metrics();
+        for (int i = 0; i < raw; i++) {
+            depthOut[i] = CoverFlowLayout.depthOrderFromPose(poseForItem(out[i]), m);
+        }
+        for (int i = 1; i < raw; i++) {
+            int idx = out[i];
+            float depth = depthOut[i];
+            int j = i;
+            while (j > 0 && depthOut[j - 1] > depth) {
+                out[j] = out[j - 1];
+                depthOut[j] = depthOut[j - 1];
+                j--;
+            }
+            out[j] = idx;
+            depthOut[j] = depth;
+        }
+        return raw;
+    }
+
+    private int fillDrawOrderUnsorted(int[] out) {
         int n = 0;
         int startSide = step != 0 ? CoverFlowLayout.SIDE_SLIDES - 1 : CoverFlowLayout.SIDE_SLIDES - 2;
         if (startSide < 0) startSide = 0;
@@ -339,6 +423,12 @@ public final class FlowEngine {
         empty.itemIndex = -1;
         empty.alpha = 0;
         return empty;
+    }
+
+    /** Exposed for flip fan-out in {@link FlowView}. */
+    CoverFlowLayout.SlidePose poseForItemPublic(int itemIndex) {
+        CoverFlowLayout.SlidePose p = poseForItem(itemIndex);
+        return p.itemIndex >= 0 ? p : null;
     }
 
     private static int clamp(int v, int lo, int hi) {

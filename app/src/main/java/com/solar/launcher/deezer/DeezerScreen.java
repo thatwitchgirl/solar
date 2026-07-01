@@ -100,6 +100,8 @@ public final class DeezerScreen {
         boolean onDeezerBatchTransferStep(DeezerResult finished);
         /** Suppress per-track save/queue toasts while batching an album. */
         boolean isDeezerAlbumBatchTransfer();
+        /** True while Now Playing is foreground — skip rebuilding browse/action chrome on top. */
+        boolean isNowPlayingScreen();
     }
 
     private final Host host;
@@ -597,8 +599,17 @@ public final class DeezerScreen {
     }
 
     public void buildActionUi(final DeezerResult r) {
+        if (host.isNowPlayingScreen()) return;
         actionResult = r;
         uiMode = UI_ACTION;
+        // #region agent log
+        try {
+            org.json.JSONObject d = new org.json.JSONObject();
+            d.put("embedded", host.getMusicEmbedded());
+            d.put("title", r != null ? r.displayTitle() : "");
+            com.solar.launcher.DebugSessionLog.log("DeezerScreen.buildActionUi", "rebuild action ui", "H-D", d);
+        } catch (Exception ignored) {}
+        // #endregion
         host.prepareBrowserChrome();
         host.applyReachBrowseLayoutMode();
         host.updateStatusBarTitle(r.displayTitle());
@@ -831,6 +842,16 @@ public final class DeezerScreen {
 
     private void afterDownloadComplete(DeezerResult r) {
         if (host.onDeezerBatchTransferStep(r)) return;
+        // Partial play already moved to Now Playing — don't repaint action sheet underneath.
+        if (host.isNowPlayingScreen()) return;
+        // #region agent log
+        try {
+            org.json.JSONObject d = new org.json.JSONObject();
+            d.put("embedded", host.getMusicEmbedded());
+            d.put("title", r != null ? r.displayTitle() : "");
+            com.solar.launcher.DebugSessionLog.log("DeezerScreen.afterDownloadComplete", "download done", "H-D", d);
+        } catch (Exception ignored) {}
+        // #endregion
         if (host.getMusicEmbedded()) {
             host.onGetMusicBackToResults();
         } else {
@@ -839,6 +860,7 @@ public final class DeezerScreen {
     }
 
     private void buildDownloadUi(DeezerResult r, int action) {
+        if (host.isNowPlayingScreen()) return;
         uiMode = UI_DOWNLOAD;
         host.prepareBrowserChrome();
         host.applyReachBrowseLayoutMode();

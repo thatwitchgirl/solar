@@ -41,6 +41,14 @@ public class ThemeManagerTest {
     }
 
     @Test
+    public void internalThemesDir_nullContextUsesTempFallback() {
+        java.io.File dir = ThemeManager.internalThemesDir(null);
+        if (!dir.getPath().endsWith("Themes")) {
+            throw new AssertionError("expected Themes suffix: " + dir);
+        }
+    }
+
+    @Test
     public void persistPathForTheme_builtinUsesThemesDefaultDir() {
         ThemeManager.ThemeEntry builtIn = new ThemeManager.ThemeEntry(
                 "asset://themes/default", "Default", "Aura", new JSONObject());
@@ -104,6 +112,37 @@ public class ThemeManagerTest {
     public void settingsAboutUsesSolarConfigKey() {
         if (!"settingsAbout".equals(ThemeManager.solarSettingsConfigKey("About"))) {
             throw new AssertionError("settingsAbout key");
+        }
+    }
+
+    @Test
+    public void connectionsSettingsKeys() {
+        if (!"settingsWi_Fi".equals(ThemeManager.solarSettingsConfigKey("Wi-Fi"))) {
+            throw new AssertionError("settingsWi_Fi");
+        }
+        if (!"settingsBluetooth".equals(ThemeManager.solarSettingsConfigKey("Bluetooth"))) {
+            throw new AssertionError("settingsBluetooth");
+        }
+        if (!"settingsConnections".equals(ThemeManager.solarSettingsConfigKey("Connections"))) {
+            throw new AssertionError("settingsConnections");
+        }
+        if (!"settingsDevice".equals(ThemeManager.solarSettingsConfigKey("Device"))) {
+            throw new AssertionError("settingsDevice");
+        }
+        if (!"settingsLibrary".equals(ThemeManager.solarSettingsConfigKey("Library"))) {
+            throw new AssertionError("settingsLibrary");
+        }
+        if (!"settingsMedia".equals(ThemeManager.solarSettingsConfigKey("Media"))) {
+            throw new AssertionError("settingsMedia");
+        }
+        if (!"settingsPower".equals(ThemeManager.solarSettingsConfigKey("Power"))) {
+            throw new AssertionError("settingsPower");
+        }
+        if (!"settingsUSB".equals(ThemeManager.solarSettingsConfigKey("USB"))) {
+            throw new AssertionError("settingsUSB");
+        }
+        if (!"settingsPlayback".equals(ThemeManager.solarSettingsConfigKey("Playback"))) {
+            throw new AssertionError("settingsPlayback");
         }
     }
 

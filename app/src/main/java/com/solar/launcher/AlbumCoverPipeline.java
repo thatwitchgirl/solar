@@ -21,11 +21,23 @@ public final class AlbumCoverPipeline {
         return AlbumArtLcdFilter.apply(raw, LcdArtPalette.fromTheme(), targetW, targetH);
     }
 
-    /** Flow carousel covers — scale only, never LCD / pixel art. */
+    /** Flow carousel covers — scale only, never LCD / pixel art; RGB_565 saves RAM on MT6572. */
     public static Bitmap scaleForFlow(Bitmap raw, int targetW, int targetH) {
         if (raw == null) return null;
-        if (raw.getWidth() == targetW && raw.getHeight() == targetH) return raw;
-        return Bitmap.createScaledBitmap(raw, targetW, targetH, false);
+        Bitmap scaled;
+        if (raw.getWidth() == targetW && raw.getHeight() == targetH) {
+            scaled = raw;
+        } else {
+            scaled = Bitmap.createScaledBitmap(raw, targetW, targetH, false);
+        }
+        if (scaled.getConfig() != Bitmap.Config.RGB_565) {
+            Bitmap rgb = scaled.copy(Bitmap.Config.RGB_565, false);
+            if (rgb != null && rgb != scaled) {
+                if (scaled != raw && !scaled.isRecycled()) scaled.recycle();
+                return rgb;
+            }
+        }
+        return scaled;
     }
 
     /** Built-in "no artwork" drawable through the same LCD / scale path as embedded art. */
