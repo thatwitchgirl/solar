@@ -20,17 +20,18 @@ public final class RockboxDisable {
 
     private RockboxDisable() {}
 
-    /** Run once per flash / first Solar start when Rockbox is co-installed. */
+    /** Run when Rockbox is co-installed — re-run disable if both launchers ended up enabled. */
     public static void ensureOnce(Context context) {
         if (context == null) return;
-        if (new File(MARKER_PATH).exists()) return;
         if (!LauncherSwitch.isRockboxAvailable(context)) return;
         if (!isSolarEnabled(context)) return;
+        final boolean dualEnabled = LauncherSwitch.isRockboxEnabled(context);
+        if (!dualEnabled && new File(MARKER_PATH).exists()) return;
         new Thread(new Runnable() {
             @Override
             public void run() {
                 try {
-                    if (new File(MARKER_PATH).exists()) return;
+                    if (!dualEnabled && new File(MARKER_PATH).exists()) return;
                     boolean ok = runDisableScript(context);
                     Log.i(TAG, ok ? "Rockbox disabled (one-shot)" : "disable script failed");
                 } catch (Exception e) {

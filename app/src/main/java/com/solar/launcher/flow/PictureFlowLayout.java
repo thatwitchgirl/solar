@@ -108,10 +108,12 @@ public final class PictureFlowLayout {
         return xp - xs * cosr + xp * (zo + xs * sinr) / camDist;
     }
 
-    /** Rockbox {@code init_reflect_table}. */
-    /** Shared reflect_table for CoverFlowLayout floor fade. */
+    /** Max reflection bands — full viewH/3 (~120) is too heavy for bake + per-row draw on MT6572. */
+    static final int REFLECT_TABLE_MAX_ROWS = 28;
+
+    /** Rockbox {@code init_reflect_table} — capped row count for carousel perf. */
     static int[] buildReflectTable(float reflectHeight) {
-        int h = Math.max(1, Math.round(reflectHeight));
+        int h = Math.max(1, Math.min(REFLECT_TABLE_MAX_ROWS, Math.round(reflectHeight)));
         int[] table = new int[h];
         for (int i = 0; i < h; i++) {
             table[i] = (768 * (h - i) + (5 * h / 2)) / (5 * h);

@@ -23,18 +23,61 @@ public final class FlowCoverResolver {
     public interface Host {
         File coverFileForTrack(File track);
         File getCoversFolder();
+        /** Internal {@code filesDir/Solar_AlbumArt} — 240px ingest cache. */
+        File getAlbumArtCacheDir();
+        /** Internal {@code filesDir/Solar_FlowThumb} — exact carousel thumb JPEGs. */
+        File getFlowThumbCacheDir();
         android.content.SharedPreferences prefs();
         Typeface labelFont();
     }
 
     private FlowCoverResolver() {}
 
+    /**
+     * Synchronous disk-cache hit only — FlowThumb JPEG, then 240px AlbumArt.
+     * Rockbox .pfraw: read display-size slide on UI thread; no decode queue for hits.
+     */
+    public static Bitmap resolveDiskCached(FlowItem item, Host host, int thumbPx) {
+        if (item == null || host == null) return null;
+        switch (item.kind) {
+            case ALBUM:
+            case PLAYLIST: {
+                File flowDir = host.getFlowThumbCacheDir();
+                if (flowDir != null && item.coverKey != null) {
+                    Bitmap flowThumb = FlowThumbCache.get(flowDir, item.coverKey, thumbPx);
+                    if (flowThumb != null) return flowThumb;
+                }
+                File artDir = host.getAlbumArtCacheDir();
+                if (artDir != null && item.coverKey != null) {
+                    Bitmap disk = AlbumArtCache.get(artDir, item.coverKey);
+                    if (disk != null) {
+                        Bitmap scaled = scale(disk, thumbPx);
+                        maybeCacheFlowThumb(flowDir, item.coverKey, scaled, thumbPx);
+                        return scaled;
+                    }
+                }
+                return null;
+            }
+            case ARTIST: {
+                Bitmap cached = ArtistImageCache.get(host.getCoversFolder(), item.coverKey);
+                if (cached != null) return scale(cached, thumbPx);
+                return null;
+            }
+            default:
+                return null;
+        }
+    }
+
     public static Bitmap resolve(FlowItem item, Host host, int thumbPx) {
         if (item == null || host == null) return placeholder(thumbPx, "?", 0xFF444444);
         switch (item.kind) {
             case ALBUM:
             case PLAYLIST:
-                return resolveFromTracks(item.tracks, host, thumbPx);
+                Bitmap diskHit = resolveDiskCached(item, host, thumbPx);
+                if (diskHit != null) return diskHit;
+                File artDir = host.getAlbumArtCacheDir();
+                File flowDir = host.getFlowThumbCacheDir();
+                return resolveFromTracks(item.tracks, host, thumbPx, item.coverKey, artDir, flowDir);
             case ARTIST:
                 Bitmap cached = ArtistImageCache.get(host.getCoversFolder(), item.coverKey);
                 if (cached != null) return scale(cached, thumbPx);
@@ -51,20 +94,40 @@ public final class FlowCoverResolver {
     }
 
     public static Bitmap resolveFromTracks(List<File> tracks, Host host, int thumbPx) {
+        return resolveFromTracks(tracks, host, thumbPx, null,
+                host != null ? host.getAlbumArtCacheDir() : null,
+                host != null ? host.getFlowThumbCacheDir() : null);
+    }
+
+    /** @param albumKey when set, successful resolve is written to {@link AlbumArtCache}. */
+    public static Bitmap resolveFromTracks(List<File> tracks, Host host, int thumbPx,
+            String albumKey, File artDir) {
+        return resolveFromTracks(tracks, host, thumbPx, albumKey, artDir,
+                host != null ? host.getFlowThumbCacheDir() : null);
+    }
+
+    public static Bitmap resolveFromTracks(List<File> tracks, Host host, int thumbPx,
+            String albumKey, File artDir, File flowThumbDir) {
         if (tracks == null || tracks.isEmpty()) {
-            return placeholder(thumbPx, "♪", 0xFF333333);
+            return cachePlaceholder(thumbPx, albumKey, artDir, flowThumbDir);
         }
         for (File track : tracks) {
             if (track == null || !track.isFile()) continue;
             File sidecar = host.coverFileForTrack(track);
             if (sidecar != null && sidecar.isFile()) {
                 Bitmap b = decodeFile(sidecar, thumbPx);
-                if (b != null) return b;
+                if (b != null) {
+                    maybeCacheAlbumArt(artDir, albumKey, b);
+                    maybeCacheFlowThumb(flowThumbDir, albumKey, b, thumbPx);
+                    return b;
+                }
             }
             Bitmap embedded = readEmbeddedArt(track);
             if (embedded != null) {
                 Bitmap out = AlbumCoverPipeline.scaleForFlow(embedded, thumbPx, thumbPx);
                 if (embedded != out && !embedded.isRecycled()) embedded.recycle();
+                maybeCacheAlbumArt(artDir, albumKey, out);
+                maybeCacheFlowThumb(flowThumbDir, albumKey, out, thumbPx);
                 return out;
             }
             android.content.SharedPreferences prefs = host.prefs();
@@ -72,11 +135,37 @@ public final class FlowCoverResolver {
                 String url = DeezerMetadata.coverUrl(prefs, track.getAbsolutePath());
                 if (url != null && !url.isEmpty()) {
                     Bitmap net = downloadBitmap(url, thumbPx);
-                    if (net != null) return net;
+                    if (net != null) {
+                        maybeCacheAlbumArt(artDir, albumKey, net);
+                        maybeCacheFlowThumb(flowThumbDir, albumKey, net, thumbPx);
+                        return net;
+                    }
                 }
             }
         }
-        return placeholder(thumbPx, "♪", 0xFF333333);
+        return cachePlaceholder(thumbPx, albumKey, artDir, flowThumbDir);
+    }
+
+    /** ♪ tile for art-less albums — cached like real art so Flow indexing and handoffs stay aligned. */
+    private static Bitmap cachePlaceholder(int thumbPx, String albumKey, File artDir, File flowThumbDir) {
+        Bitmap ph = placeholder(thumbPx, "♪", 0xFF333333);
+        maybeCacheAlbumArt(artDir, albumKey, ph);
+        maybeCacheFlowThumb(flowThumbDir, albumKey, ph, thumbPx);
+        return ph;
+    }
+
+    private static void maybeCacheAlbumArt(File artDir, String albumKey, Bitmap bmp) {
+        if (artDir == null || albumKey == null || albumKey.isEmpty() || bmp == null) return;
+        if (!AlbumArtCache.has(artDir, albumKey)) {
+            AlbumArtCache.put(artDir, albumKey, bmp);
+        }
+    }
+
+    private static void maybeCacheFlowThumb(File flowDir, String coverKey, Bitmap bmp, int thumbPx) {
+        if (flowDir == null || coverKey == null || coverKey.isEmpty() || bmp == null) return;
+        if (!FlowThumbCache.has(flowDir, coverKey, thumbPx)) {
+            FlowThumbCache.put(flowDir, coverKey, bmp, thumbPx);
+        }
     }
 
     public static Bitmap artistInitials(String name, int sizePx, Typeface font) {
@@ -133,6 +222,7 @@ public final class FlowCoverResolver {
         try {
             android.graphics.BitmapFactory.Options opts = new android.graphics.BitmapFactory.Options();
             opts.inSampleSize = sampleSize(f, thumbPx);
+            opts.inPreferredConfig = Bitmap.Config.RGB_565;
             Bitmap raw = android.graphics.BitmapFactory.decodeStream(new FileInputStream(f), null, opts);
             if (raw == null) return null;
             Bitmap out = AlbumCoverPipeline.scaleForFlow(raw, thumbPx, thumbPx);

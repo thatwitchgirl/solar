@@ -68,6 +68,17 @@ public final class SolarLog {
             String header = "\n--- CRASH " + ts() + " thread=" + thread.getName() + " ---\n";
             append(CRASH_FILE, header + body);
             append(ERROR_FILE, header + body);
+            // #region agent log
+            try {
+                org.json.JSONObject d = new org.json.JSONObject();
+                d.put("thread", thread.getName());
+                d.put("exception", e.getClass().getName());
+                d.put("message", e.getMessage() != null ? e.getMessage() : "");
+                d.put("stack", body.length() > 2000 ? body.substring(0, 2000) : body);
+                DebugSessionLog.log("SolarLog.logCrash", "uncaught", "H1", d);
+                DebugB8b871Log.log(null, "SolarLog.logCrash", "uncaught", "H-E", d);
+            } catch (Exception ignoredDbg) {}
+            // #endregion
         } catch (Exception ignored) {}
     }
 

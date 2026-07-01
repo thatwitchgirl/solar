@@ -3,7 +3,7 @@
     "title": "Aura",
     "author": "The Solar Project",
     "authorUrl": "https://github.com/thesolarproject/solar",
-    "description": "The Default Look for Solar",
+    "description": "The default look for Solar",
     "externalDownloadUrl": ""
   },
   "themeCover": "cover_YS.png",
@@ -15,7 +15,11 @@
     "appGet_Music": "Music_YS.png",
     "appPodcasts": "Audiobooks_YS.png",
     "setStatus_Bar_Text": "Clock",
-    "enableMatch_Now_Playing_To_Theme": "true"
+    "enableMatch_Now_Playing_To_Theme": "true",
+    "enableLCD_album_art": "false",
+    "setArtwork_Perspective": "3D",
+    "enableStatus_Bar_Match_Font": "true",
+    "enableMenu_Transitions": "true"
   },
   "itemConfig": {
     "itemTextColor": "#ffffff",

@@ -20,10 +20,10 @@ public class MusicLibraryStoreTest {
     @Test
     public void durationSecFromMs() {
         MusicLibraryStore.Track t = new MusicLibraryStore.Track(
-                "/music/a.mp3", 1L, 100L, "T", "A", "Al", "G", "AA", "180000");
+                "/music/a.mp3", 1L, 100L, "T", "A", "Al", "G", "AA", "180000", 0);
         if (t.durationSec() != 180) throw new AssertionError("durationSec=" + t.durationSec());
         MusicLibraryStore.Track empty = new MusicLibraryStore.Track(
-                "/b.mp3", 0L, 0L, "", "", "", "", "", "");
+                "/b.mp3", 0L, 0L, "", "", "", "", "", "", 0);
         if (empty.durationSec() != 0) throw new AssertionError("expected zero duration");
     }
 

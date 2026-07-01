@@ -23,7 +23,12 @@ public final class FlowLaunchRequest {
     }
 
     public static FlowLaunchRequest picker(int returnScreen) {
-        return new FlowLaunchRequest(FlowMode.UNSPECIFIED, null, returnScreen,
+        return albums(returnScreen);
+    }
+
+    /** Flow opens directly to albums carousel (no in-Flow mode picker). */
+    public static FlowLaunchRequest albums(int returnScreen) {
+        return new FlowLaunchRequest(FlowMode.ALBUM, null, returnScreen,
                 0, -1, false);
     }
 

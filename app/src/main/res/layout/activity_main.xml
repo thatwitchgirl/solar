@@ -4,19 +4,54 @@
     android:layout_height="match_parent"
     android:background="#000000">
 
-    <ImageView
-        android:id="@+id/iv_main_bg"
+    <!-- Double-buffered wallpaper stack — animates in lockstep with screen transitions. -->
+    <FrameLayout
+        android:id="@+id/backdrop_stack"
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:scaleType="centerCrop"
-        android:src="#000000" />
+        android:layout_height="match_parent">
 
-    <ImageView
-        android:id="@+id/iv_screen_mask"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:scaleType="centerCrop"
-        android:visibility="gone" />
+        <FrameLayout
+            android:id="@+id/backdrop_out"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent">
+
+            <ImageView
+                android:id="@+id/iv_main_bg"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:scaleType="centerCrop"
+                android:src="#000000" />
+
+            <ImageView
+                android:id="@+id/iv_screen_mask"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:scaleType="centerCrop"
+                android:visibility="gone" />
+        </FrameLayout>
+
+        <FrameLayout
+            android:id="@+id/backdrop_in"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:alpha="0"
+            android:visibility="gone">
+
+            <ImageView
+                android:id="@+id/iv_main_bg_in"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:scaleType="centerCrop"
+                android:src="#000000" />
+
+            <ImageView
+                android:id="@+id/iv_screen_mask_in"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:scaleType="centerCrop"
+                android:visibility="gone" />
+        </FrameLayout>
+    </FrameLayout>
 
     <FrameLayout
         android:id="@+id/layout_main_menu"
@@ -488,8 +523,13 @@
                 android:id="@+id/player_album_container"
                 android:layout_width="@dimen/y1_player_art_width"
                 android:layout_height="match_parent"
-                android:layout_marginTop="20dp">
+                android:layout_marginTop="26dp">
                 <ImageView android:id="@+id/iv_album_art" android:layout_width="match_parent" android:layout_height="200dp" android:scaleType="centerCrop" android:src="@drawable/default_album" android:background="#222222" />
+                <com.solar.launcher.flow.PlayerAlbumArt3dView
+                    android:id="@+id/iv_album_art_3d"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:visibility="gone" />
                 <ImageView android:id="@+id/iv_pause_overlay" android:layout_width="70dp" android:layout_height="70dp" android:layout_gravity="center" android:src="@android:drawable/ic_media_pause" android:visibility="gone" />
             </FrameLayout>
 

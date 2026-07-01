@@ -525,14 +525,17 @@ sudo cp "$SCRIPT_DIR/switch-to-rockbox.sh" "$MOUNT_SYS/etc/solar/switch-to-rockb
 sudo cp "$SCRIPT_DIR/sync-rockbox-libs.sh" "$MOUNT_SYS/etc/solar/sync-rockbox-libs.sh"
 sudo cp "$SCRIPT_DIR/sync-y1-keymap.sh" "$MOUNT_SYS/etc/solar/sync-y1-keymap.sh"
 sudo cp "$SCRIPT_DIR/disable-rockbox-for-solar.sh" "$MOUNT_SYS/etc/solar/disable-rockbox-for-solar.sh"
+sudo cp "$SCRIPT_DIR/solar-usb-recovery-agent.sh" "$MOUNT_SYS/etc/solar/solar-usb-recovery-agent.sh"
 sudo cp "$SCRIPT_DIR/Y1-Rockbox.kl" "$MOUNT_SYS/etc/solar/Y1-Rockbox.kl"
 sudo chmod 755 "$MOUNT_SYS/etc/solar/switch-to-stock.sh" "$MOUNT_SYS/etc/solar/switch-to-rockbox.sh" \
     "$MOUNT_SYS/etc/solar/sync-rockbox-libs.sh" "$MOUNT_SYS/etc/solar/sync-y1-keymap.sh" \
-    "$MOUNT_SYS/etc/solar/disable-rockbox-for-solar.sh"
+    "$MOUNT_SYS/etc/solar/disable-rockbox-for-solar.sh" \
+    "$MOUNT_SYS/etc/solar/solar-usb-recovery-agent.sh"
 sudo chmod 644 "$MOUNT_SYS/etc/solar/Y1-Rockbox.kl"
 sudo chown root:root "$MOUNT_SYS/etc/solar/switch-to-stock.sh" "$MOUNT_SYS/etc/solar/switch-to-rockbox.sh" \
     "$MOUNT_SYS/etc/solar/sync-rockbox-libs.sh" "$MOUNT_SYS/etc/solar/sync-y1-keymap.sh" \
-    "$MOUNT_SYS/etc/solar/disable-rockbox-for-solar.sh" "$MOUNT_SYS/etc/solar/Y1-Rockbox.kl"
+    "$MOUNT_SYS/etc/solar/disable-rockbox-for-solar.sh" \
+    "$MOUNT_SYS/etc/solar/solar-usb-recovery-agent.sh" "$MOUNT_SYS/etc/solar/Y1-Rockbox.kl"
 
 sudo cp "$REPO_ROOT/solar-rom/system/99Y1ButtonScript" "$MOUNT_SYS/etc/init.d/99Y1ButtonScript"
 sudo chmod 755 "$MOUNT_SYS/etc/init.d/99Y1ButtonScript"

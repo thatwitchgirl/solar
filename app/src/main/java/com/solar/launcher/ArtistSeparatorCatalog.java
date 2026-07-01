@@ -93,6 +93,18 @@ public final class ArtistSeparatorCatalog {
         } catch (Exception ignored) {}
     }
 
+    /** ponytail: cold start — avoid blocking onCreate on CSV disk/asset read. */
+    public static void ensureLoadedAsync(final Context ctx) {
+        if (ctx == null) return;
+        if (active != null) return;
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                ensureLoaded(ctx);
+            }
+        }, "ArtistSepCatalog").start();
+    }
+
     /** Background refresh when stale and online — e.g. during album art lookup. */
     public static void maybeRefreshAsync(final Context ctx) {
         if (ctx == null) return;

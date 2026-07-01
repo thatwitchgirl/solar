@@ -7,6 +7,7 @@ import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteOpenHelper;
 
 import com.solar.launcher.soulseek.ReachIntroMessage;
+import com.solar.launcher.soulseek.SolarDeveloperAccounts;
 import com.solar.launcher.soulseek.SoulseekChatRooms;
 import com.solar.launcher.soulseek.SoulseekMessaging;
 import com.solar.launcher.soulseek.SoulseekWire;
@@ -450,9 +451,11 @@ public class ReachDatabase extends SQLiteOpenHelper {
                     while (c.moveToNext()) {
                         String peer = c.getString(0);
                         if (peer == null || peer.isEmpty()) continue;
+                        if (SolarDeveloperAccounts.hideFromReachUi(peer)) continue;
                         String text = c.getString(1);
                         int ts = c.getInt(2);
-                        if (ReachIntroMessage.isIntro(text)) {
+                        if (ReachIntroMessage.isIntro(text)
+                                || SolarDeveloperAccounts.isAutoDiagnosticText(text)) {
                             SoulseekMessaging.Message visible = lastVisibleMessageForPeerSync(peer);
                             if (visible == null) continue;
                             text = visible.text;
@@ -518,6 +521,7 @@ public class ReachDatabase extends SQLiteOpenHelper {
                     while (c.moveToNext()) {
                         String text = c.getString(3);
                         if (ReachIntroMessage.isIntro(text)) continue;
+                        if (SolarDeveloperAccounts.isAutoDiagnosticText(text)) continue;
                         holder[0] = new SoulseekMessaging.Message(
                                 c.getInt(0), c.getInt(1), c.getString(2),
                                 text, c.getInt(4) != 0);

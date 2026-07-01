@@ -55,5 +55,32 @@ public final class SolarTheming {
         if (!"appGet_Music".equals(ThemeManager.solarAppConfigKey("Get Music"))) {
             throw new AssertionError("appGet_Music");
         }
+        if (!"settingsWi_Fi".equals(ThemeManager.solarSettingsConfigKey("Wi-Fi"))) {
+            throw new AssertionError("settingsWi_Fi");
+        }
+        if (!"settingsBluetooth".equals(ThemeManager.solarSettingsConfigKey("Bluetooth"))) {
+            throw new AssertionError("settingsBluetooth");
+        }
+        if (!"settingsConnections".equals(ThemeManager.solarSettingsConfigKey("Connections"))) {
+            throw new AssertionError("settingsConnections");
+        }
+        if (!"settingsDevice".equals(ThemeManager.solarSettingsConfigKey("Device"))) {
+            throw new AssertionError("settingsDevice");
+        }
+        if (!"settingsLibrary".equals(ThemeManager.solarSettingsConfigKey("Library"))) {
+            throw new AssertionError("settingsLibrary");
+        }
+        if (!"settingsMedia".equals(ThemeManager.solarSettingsConfigKey("Media"))) {
+            throw new AssertionError("settingsMedia");
+        }
+        if (!"settingsPower".equals(ThemeManager.solarSettingsConfigKey("Power"))) {
+            throw new AssertionError("settingsPower");
+        }
+        if (!"settingsUSB".equals(ThemeManager.solarSettingsConfigKey("USB"))) {
+            throw new AssertionError("settingsUSB");
+        }
+        if (!"settingsPlayback".equals(ThemeManager.solarSettingsConfigKey("Playback"))) {
+            throw new AssertionError("settingsPlayback");
+        }
     }
 }

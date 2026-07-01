@@ -1,16 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- ponytail: no paddingTop here — clipToPadding was cropping the flipped back face at the
+     status-bar inset; status bar is drawn in activity_main overlay. Picker keeps top inset. -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/layout_flow_mode"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="#000000"
-    android:paddingTop="@dimen/y1_status_bar_height"
+    android:clipChildren="false"
+    android:clipToPadding="false"
     android:visibility="gone">
 
     <com.solar.launcher.flow.FlowView
         android:id="@+id/flow_carousel_view"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
+        android:clipChildren="false"
+        android:clipToPadding="false"
         android:visibility="gone" />
 
     <com.solar.launcher.Y1SafeScrollView
@@ -18,6 +23,7 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:fillViewport="true"
+        android:paddingTop="@dimen/y1_status_bar_height"
         android:scrollbars="none"
         android:visibility="gone">
 

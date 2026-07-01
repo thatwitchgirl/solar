@@ -163,8 +163,9 @@ public final class ReachUsersAdapter extends BaseAdapter {
             @Override
             public void bind(boolean highlighted) {
                 boolean show = highlighted || position == selectedPosition;
-                ReachMessageRow.bindInboxRow(activity, rowView, user.username, preview, "",
-                        show, rowWidthPx, rowHeightPx, cc);
+                ReachMessageRow.bindInboxRow(activity, rowView,
+                        SolarDeveloperAccounts.displayNameForPeer(activity, user.username),
+                        preview, "", show, rowWidthPx, rowHeightPx, cc);
             }
         });
         row.setOnClickListener(new View.OnClickListener() {

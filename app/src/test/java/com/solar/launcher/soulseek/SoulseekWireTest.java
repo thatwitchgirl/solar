@@ -265,4 +265,19 @@ public class SoulseekWireTest {
             bos.write(SoulseekWire.packUInt32(0));
         }
     }
+
+    @Test
+    public void readPeerInitFrame_rejectsOversizedBody() throws Exception {
+        java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
+        java.io.DataOutputStream out = new java.io.DataOutputStream(bos);
+        int len = SoulseekWire.MAX_FRAME_BODY_BYTES + 2;
+        out.writeInt(Integer.reverseBytes(len));
+        out.writeByte(1);
+        try {
+            SoulseekWire.readPeerInitFrame(new java.io.ByteArrayInputStream(bos.toByteArray()));
+            throw new AssertionError("expected IOException");
+        } catch (java.io.IOException expected) {
+            // ok
+        }
+    }
 }

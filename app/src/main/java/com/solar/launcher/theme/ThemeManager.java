@@ -65,6 +65,8 @@ public class ThemeManager {
     private static final Map<String, Bitmap> scaledRowBitmapCache = new HashMap<>();
     private static Typeface cachedFont;
     private static String cachedFontKey = "";
+    /** While UMS exports SD card, avoid mmap on theme files so vold can unmount without killing us. */
+    private static volatile boolean blockSdcardThemeAssets = false;
     private static boolean statusBarMatchItemText = false;
     /** User pref: Now Playing title/artist use list item text colour (default off — Y1 white). */
     private static boolean nowPlayingMatchItemText = false;
@@ -114,6 +116,132 @@ public class ThemeManager {
         }
         new File(root, ".cache/covers").mkdirs();
         return root.canWrite();
+    }
+
+    /** Asset-only theme for first paint — no SD scan or Default folder copy on cold start. */
+    public static void ensureFastStartupTheme(Context ctx) {
+        if (ctx != null) assetContext = ctx.getApplicationContext();
+        ensureBundledFallback(ctx);
+        ensureThemesRootReady(ctx);
+    }
+
+    /**
+     * Release SD-backed theme mmap before UMS export/unmount.
+     * ponytail: vold kills processes holding open filemaps on the exported volume.
+     */
+    public static void releaseSdcardFileHandles() {
+        bitmapCache.clear();
+        scaledRowBitmapCache.clear();
+        cachedFont = null;
+        cachedFontKey = "";
+    }
+
+    /** App-private MMC copy of themes — survives USB mass-storage export of MicroSD. */
+    public static File internalThemesDir(Context ctx) {
+        if (ctx == null) return new File("/data/local/tmp/Themes");
+        return new File(ctx.getApplicationContext().getFilesDir(), "Themes");
+    }
+
+    private static boolean isPathOnExternalSd(String path) {
+        if (path == null || path.isEmpty() || path.startsWith("asset://")) return false;
+        if (assetContext != null
+                && path.startsWith(assetContext.getFilesDir().getAbsolutePath())) {
+            return false;
+        }
+        try {
+            File ext = Environment.getExternalStorageDirectory();
+            if (ext != null && path.startsWith(ext.getAbsolutePath())) return true;
+        } catch (Exception ignored) {}
+        return path.startsWith("/storage/sdcard") || path.startsWith(PATH_THEMES);
+    }
+
+    private static boolean shouldSkipExternalThemeFile(String absolutePath) {
+        return blockSdcardThemeAssets && isPathOnExternalSd(absolutePath);
+    }
+
+    /**
+     * Sync active theme SD → internal MMC and point the in-memory entry at the internal copy.
+     * ponytail: call on theme apply, boot, and before UMS so USB lock screen keeps the user's theme.
+     */
+    public static void cacheActiveTheme(Context ctx) {
+        if (ctx == null) return;
+        Context app = ctx.getApplicationContext();
+        assetContext = app;
+        ThemeEntry active = getCurrentTheme();
+        if (active == null || active == bundledFallback || active.folderPath.startsWith("asset://")) {
+            return;
+        }
+        File cacheDir = new File(internalThemesDir(app), active.folderName);
+        File sourceDir;
+        if (active.folderPath.startsWith(app.getFilesDir().getAbsolutePath())) {
+            File sdDir = new File(resolveThemesRoot(app), active.folderName);
+            if (!sdDir.isDirectory()) return;
+            sourceDir = sdDir;
+        } else {
+            sourceDir = new File(active.folderPath);
+        }
+        if (!sourceDir.isDirectory()) return;
+        if (!cacheDir.exists() && !cacheDir.mkdirs()) return;
+        try {
+            copyDirectory(sourceDir, cacheDir);
+        } catch (Exception ignored) {}
+        switchThemeEntryToInternal(app, active, cacheDir);
+    }
+
+    /** Prefer MMC cache for the active theme when config.json is present (faster + UMS-safe). */
+    public static void preferInternalCacheForActiveTheme(Context ctx) {
+        if (ctx == null) return;
+        Context app = ctx.getApplicationContext();
+        ThemeEntry cur = getCurrentTheme();
+        if (cur == null || cur.folderName == null) return;
+        File cacheDir = new File(internalThemesDir(app), cur.folderName);
+        File cachedCfg = new File(cacheDir, "config.json");
+        if (cachedCfg.isFile() && cachedCfg.length() > 0) {
+            switchThemeEntryToInternal(app, cur, cacheDir);
+        }
+    }
+
+    /** Copy active theme to MMC, switch entry off SD, then drop SD mmap before export. */
+    public static void prepareThemeForUsbStorage(Context ctx) {
+        if (ctx == null) return;
+        assetContext = ctx.getApplicationContext();
+        cacheActiveTheme(ctx);
+        preferInternalCacheForActiveTheme(ctx);
+        ensureActiveThemeOrFallback(ctx);
+        blockSdcardThemeAssets = true;
+        releaseSdcardFileHandles();
+        // #region agent log
+        try {
+            org.json.JSONObject d = new org.json.JSONObject();
+            ThemeEntry t = getCurrentTheme();
+            d.put("folderPath", t != null ? t.folderPath : "");
+            d.put("folderName", t != null ? t.folderName : "");
+            com.solar.launcher.DebugSessionLog.log(
+                    "ThemeManager.prepareThemeForUsbStorage", "mmc cache ready", "H-THEME-MMC", d);
+        } catch (Exception ignored) {}
+        // #endregion
+    }
+
+    public static void setBlockSdcardThemeAssets(boolean block) {
+        setBlockSdcardThemeAssets(block, assetContext);
+    }
+
+    public static void setBlockSdcardThemeAssets(boolean block, Context ctx) {
+        if (block) {
+            if (ctx != null) {
+                prepareThemeForUsbStorage(ctx);
+            } else {
+                blockSdcardThemeAssets = true;
+                releaseSdcardFileHandles();
+            }
+            return;
+        }
+        blockSdcardThemeAssets = false;
+        releaseSdcardFileHandles();
+    }
+
+    public static boolean isBlockSdcardThemeAssets() {
+        return blockSdcardThemeAssets;
     }
 
     /** Extract bundled Default → themes root; load in-memory fallback if copy fails. */
@@ -259,16 +387,19 @@ public class ThemeManager {
         } catch (Exception ignored) {}
     }
 
-    public static void cacheActiveTheme(Context ctx) {
-        if (ctx == null) return;
-        ThemeEntry active = getCurrentTheme();
-        if (active == null || active == bundledFallback || active.folderPath.startsWith("asset://")) return;
-        if (active.folderPath.startsWith(ctx.getFilesDir().getAbsolutePath())) return; // Already cached
-        
-        File cacheDir = new File(ctx.getFilesDir(), "Themes/" + active.folderName);
-        if (!cacheDir.exists()) cacheDir.mkdirs();
+    /** Point active theme at internal cache so assets load when SD is USB-exported. */
+    private static void switchThemeEntryToInternal(Context ctx, ThemeEntry active, File cacheDir) {
+        File cachedCfg = new File(cacheDir, "config.json");
+        if (!cachedCfg.isFile() || cachedCfg.length() == 0) return;
         try {
-            copyDirectory(new File(active.folderPath), cacheDir);
+            byte[] data = readAll(cachedCfg);
+            JSONObject json = new JSONObject(new String(data, "UTF-8"));
+            ThemeEntry cached = new ThemeEntry(
+                    cacheDir.getAbsolutePath(), active.folderName, active.name, json);
+            int idx = currentThemeIndex;
+            if (idx >= 0 && idx < availableThemes.size()) {
+                availableThemes.set(idx, cached);
+            }
         } catch (Exception ignored) {}
     }
 
@@ -285,6 +416,12 @@ public class ThemeManager {
             }
         } else {
             InputStream in = new java.io.FileInputStream(sourceLocation);
+            if (targetLocation.isFile()
+                    && targetLocation.length() == sourceLocation.length()
+                    && targetLocation.lastModified() >= sourceLocation.lastModified()) {
+                in.close();
+                return;
+            }
             OutputStream out = new java.io.FileOutputStream(targetLocation);
             byte[] buf = new byte[8192];
             int len;
@@ -520,9 +657,20 @@ public class ThemeManager {
 
     /** Disk path to persist when applying a theme (Default always uses Themes/Default). */
     public static String persistPathForTheme(ThemeEntry theme) {
+        return persistPathForTheme(theme, null);
+    }
+
+    public static String persistPathForTheme(ThemeEntry theme, Context ctx) {
         if (theme == null) return "";
         if (isBuiltInDefault(theme)) {
             return new File(themesRootPath, BUILTIN_DEFAULT_FOLDER).getAbsolutePath();
+        }
+        if (ctx != null && theme.folderName != null) {
+            File cachedDir = new File(internalThemesDir(ctx), theme.folderName);
+            File cachedCfg = new File(cachedDir, "config.json");
+            if (cachedCfg.isFile() && cachedCfg.length() > 0) {
+                return cachedDir.getAbsolutePath();
+            }
         }
         return theme.folderPath != null ? theme.folderPath : "";
     }
@@ -540,7 +688,7 @@ public class ThemeManager {
             // ponytail: SD card may be unmounted (USB storage mode). Try internal cache
             // before falling back to the builtin default theme.
             if (ctx != null && cur.folderName != null) {
-                File cachedDir = new File(ctx.getFilesDir(), "Themes/" + cur.folderName);
+                File cachedDir = new File(internalThemesDir(ctx), cur.folderName);
                 File cachedCfg = new File(cachedDir, "config.json");
                 if (cachedCfg.isFile() && cachedCfg.length() > 0) {
                     // Switch to cached copy — same theme, internal storage path
@@ -669,6 +817,43 @@ public class ThemeManager {
 
     public static boolean isNowPlayingLcdArtEnabled() {
         return nowPlayingLcdArtEnabled;
+    }
+
+    /** solarConfig.enableLCD_album_art — theme default; null when unset or both album-art keys set. */
+    public static final String SOLAR_LCD_ALBUM_ART = "enableLCD_album_art";
+    public static final String SOLAR_3D_ALBUM_ART = "enableNowPlaying3d_album_art";
+    /** Theme string override — "Flat" or "3D" (default); syncs now_playing_3d_album_art pref. */
+    public static final String SOLAR_ARTWORK_PERSPECTIVE = "setArtwork_Perspective";
+
+    /** When theme sets both LCD and 3D keys, ignore theme and follow user prefs only. */
+    public static boolean themeSetsBothAlbumArtKeys() {
+        return hasThemeSolarConfigKey(SOLAR_LCD_ALBUM_ART)
+                && hasThemeSolarConfigKey(SOLAR_3D_ALBUM_ART);
+    }
+
+    /** Theme default for LCD album art; null = leave user pref. */
+    public static Boolean themeDefaultLcdAlbumArt() {
+        if (themeSetsBothAlbumArtKeys()) return null;
+        JSONObject solar = solarBlock();
+        if (solar == null || !hasThemeSolarConfigKey(SOLAR_LCD_ALBUM_ART)) return null;
+        return parseSolarBool(solar, SOLAR_LCD_ALBUM_ART);
+    }
+
+    /** Theme default for 3D album art; null = leave user pref. */
+    public static Boolean themeDefault3dAlbumArt() {
+        if (themeSetsBothAlbumArtKeys()) return null;
+        JSONObject solar = solarBlock();
+        if (solar == null || !hasThemeSolarConfigKey(SOLAR_3D_ALBUM_ART)) return null;
+        return parseSolarBool(solar, SOLAR_3D_ALBUM_ART);
+    }
+
+  private static boolean parseSolarBool(JSONObject solar, String key) {
+        if (solar == null || key == null) return false;
+        String raw = solar.optString(key, "").trim();
+        if (!raw.isEmpty()) {
+            return "true".equalsIgnoreCase(raw) || "1".equals(raw);
+        }
+        return solar.optBoolean(key, false);
     }
 
     /** Tint for LCD album-art filter — same source as Now Playing match text. */
@@ -1239,6 +1424,11 @@ public class ThemeManager {
         String cacheKey = fontKey + ":" + fontFile;
         if (cachedFont != null && cacheKey.equals(cachedFontKey)) return cachedFont;
         File f = new File(t.folderPath, fontFile);
+        if (!f.isFile() && assetContext != null && t.folderName != null) {
+            File mmc = new File(internalThemesDir(assetContext), t.folderName + "/" + fontFile);
+            if (mmc.isFile()) f = mmc;
+        }
+        if (shouldSkipExternalThemeFile(f.getAbsolutePath())) return Typeface.DEFAULT;
         if (f.isFile()) {
             try {
                 cachedFont = Typeface.createFromFile(f);
@@ -1387,6 +1577,10 @@ public class ThemeManager {
     public static Bitmap getThemeBitmap(String relativePath) {
         if (relativePath == null || relativePath.isEmpty()) return null;
         ThemeEntry t = getCurrentTheme();
+        if (shouldSkipExternalThemeFile(t.folderPath)) {
+            preferInternalCacheForActiveTheme(assetContext);
+            t = getCurrentTheme();
+        }
         String cacheKey = t.folderPath + ":" + relativePath;
         if (bitmapCache.containsKey(cacheKey)) return bitmapCache.get(cacheKey);
         Bitmap bmp = decodeThemeBitmapForEntry(t, relativePath, 0);
@@ -1400,6 +1594,9 @@ public class ThemeManager {
         ThemeEntry t = getCurrentTheme();
         if (t.folderPath != null && !t.folderPath.startsWith("asset://")) {
             File iconFile = new File(t.folderPath, iconFileName);
+            if (shouldSkipExternalThemeFile(iconFile.getAbsolutePath())) {
+                return BitmapFactory.decodeResource(context.getResources(), defaultResId);
+            }
             if (iconFile.isFile()) {
                 try {
                     return BitmapFactory.decodeFile(iconFile.getAbsolutePath());
